@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Yamaha PSR-SX920 Style & Pad 透視檢視器</title>
+  <link rel="stylesheet" href="./src/ui/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- 頂部導航列 -->
+    <header class="header">
+      <div class="logo">
+        <span class="logo-badge">Yamaha PSR-SX920</span>
+        <h1>STY & PAD 透視編輯工具 <small>v0.1 Preview</small></h1>
+      </div>
+      <div class="header-actions">
+        <button id="btn-load-sample-sty" class="btn btn-secondary">載入範例 STY</button>
+        <button id="btn-load-sample-pad" class="btn btn-secondary">載入範例 PAD</button>
+      </div>
+    </header>
+
+    <!-- 狀態通知條 -->
+    <div id="status-message" style="display: none; padding: 10px 16px; border-radius: 6px; margin-bottom: 16px; color: #fff; font-size: 0.9rem;"></div>
+
+    <!-- 拖曳上傳區塊 -->
+    <section class="upload-container" id="drop-zone">
+      <div class="upload-box">
+        <div class="upload-icon">📂</div>
+        <h3>將 .STY 或 .PAD 檔案拖曳至此處</h3>
+        <p>或點擊此區域選擇本地檔案（完全在瀏覽器本地安全解析，不需上傳伺服器）</p>
+        <input type="file" id="file-input" accept=".sty,.pad,.STY,.PAD,.mid,.MID" style="display: none;">
+        <button type="button" id="btn-select-file" class="btn btn-primary">選擇本地檔案</button>
+      </div>
+    </section>
+
+    <!-- 檔案內容檢視區域 (預設隱藏，載入後顯示) -->
+    <main class="content-container" id="viewer-container" style="display: none;">
+      <!-- 基本資訊摘要卡片 -->
+      <section class="meta-grid">
+        <div class="meta-card">
+          <div class="meta-label">檔案名稱</div>
+          <div class="meta-value" id="meta-filename">-</div>
+        </div>
+        <div class="meta-card">
+          <div class="meta-label">格式類型</div>
+          <div class="meta-value highlight" id="meta-format">-</div>
+        </div>
+        <div class="meta-card">
+          <div class="meta-label">預設速度 (BPM)</div>
+          <div class="meta-value" id="meta-bpm">-</div>
+        </div>
+        <div class="meta-card">
+          <div class="meta-label">拍號</div>
+          <div class="meta-value" id="meta-timesig">-</div>
+        </div>
+        <div class="meta-card">
+          <div class="meta-label">Yamaha CASM 區塊</div>
+          <div class="meta-value" id="meta-casm">-</div>
+        </div>
+        <div class="meta-card">
+          <div class="meta-label">操作</div>
+          <button id="btn-export" class="btn btn-success" style="margin-top: 4px; padding: 4px 12px;">無損重新導出</button>
+        </div>
+      </section>
+
+      <!-- 段落結構 (Sections) -->
+      <section class="panel-section">
+        <div class="panel-header">
+          <h2 id="panel-sections-title">🎼 段落結構 (Sections)</h2>
+          <span class="badge" id="section-count">0 個段落</span>
+        </div>
+        <div class="section-grid" id="sections-list">
+          <!-- 動態產生段落卡片 -->
+        </div>
+
+        <!-- Pad 專屬音符透視面板 (預設隱藏，點擊 Pad 卡片時展開) -->
+        <div id="pad-detail-container" class="pad-detail-panel" style="display: none; margin-top: 20px;">
+          <div class="pad-detail-header">
+            <div>
+              <h3 id="pad-detail-title" style="font-size: 1.1rem; color: #fff;">Pad 1 詳細音符內容</h3>
+              <p id="pad-detail-summary" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 2px;">共 16 顆音符 | 音域: C3 ~ G4</p>
+            </div>
+            <span class="badge" id="pad-detail-badge">Tick 0 ~ 2688</span>
+          </div>
+
+          <!-- 音符視覺化 Canvas (Mini Piano Roll) -->
+          <div class="canvas-wrapper" style="margin-top: 14px; background: #15171c; border-radius: 8px; border: 1px solid var(--border-color); padding: 10px;">
+            <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 6px; display: flex; justify-content: space-between;">
+              <span>🎼 迷你音符卷軸 (橫軸: 時間小節 / 縱軸: 音高)</span>
+              <span id="canvas-legend">高力度(亮藍) ➔ 低力度(暗藍)</span>
+            </div>
+            <canvas id="pad-note-canvas" width="1120" height="160" style="width: 100%; height: 160px; display: block; border-radius: 4px;"></canvas>
+          </div>
+        </div>
+      </section>
+
+      <!-- 伴奏 8 聲部混音配置 (Tracks / Parts) -->
+      <section class="panel-section">
+        <div class="panel-header">
+          <h2>🎛️ 伴奏聲部與音色配置 (Parts & Voices)</h2>
+          <span class="badge" id="parts-count">0 個聲部</span>
+        </div>
+        <div class="parts-table-container">
+          <table class="parts-table">
+            <thead>
+              <tr>
+                <th>聲部名稱</th>
+                <th>MIDI 軌道</th>
+                <th>Bank MSB - LSB</th>
+                <th>Program (PC)</th>
+                <th>音量 (Volume)</th>
+                <th>左右平衡 (Pan)</th>
+                <th>混響 (Reverb)</th>
+              </tr>
+            </thead>
+            <tbody id="parts-tbody">
+              <!-- 動態產生各聲部清單 -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="./src/ui/app.ts"></script>
+</body>
+</html>
