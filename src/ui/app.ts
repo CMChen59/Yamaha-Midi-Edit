@@ -446,6 +446,9 @@ function renderSections(parsed: YamahaFileParsed) {
         currentActivePadNum = padNum;
         document.querySelectorAll('.pad-button-card').forEach(el => el.classList.remove('active'));
         item.classList.add('active');
+        document.querySelectorAll('.pad-table-row').forEach(el => el.classList.remove('active-row'));
+        const matchingRow = document.querySelector(`.pad-table-row-${padNum}`);
+        if (matchingRow) matchingRow.classList.add('active-row');
         if (sec) {
           showPadNotesDetail(parsed, sec, nameInput.value, padNum);
         } else {
@@ -458,6 +461,8 @@ function renderSections(parsed: YamahaFileParsed) {
         currentActivePadNum = 1;
         setTimeout(() => {
           item.classList.add('active');
+          const matchingRow = document.querySelector('.pad-table-row-1');
+          if (matchingRow) matchingRow.classList.add('active-row');
           if (sec) showPadNotesDetail(parsed, sec, customName, 1);
           else showEmptyPadDetail(customName, 1);
         }, 50);
@@ -1210,15 +1215,32 @@ function renderParts(parsed: YamahaFileParsed) {
   partsTbody.innerHTML = '';
 
   const isPad = parsed.format === 'PAD';
+  const panelPartsTitle = document.getElementById('panel-parts-title');
+  if (panelPartsTitle) {
+    panelPartsTitle.textContent = isPad
+      ? '🎛️ Multi Pad 混音器與音色細節 (Pad Mixer & Voices)'
+      : '🎛️ 伴奏聲部與音色配置 (Parts & Voices)';
+  }
 
   if (isPad) {
     // PAD 模式：精確對齊 4 個 Pad 的聲部 (依據 Track 1 ~ 4)
     partsCount.textContent = '4 組打擊墊聲部配置';
 
+    const themeColors = [
+      { bg: 'rgba(59, 130, 246, 0.15)', border: '#3b82f6', text: '#60a5fa' }, // Pad 1 藍
+      { bg: 'rgba(16, 185, 129, 0.15)', border: '#10b981', text: '#34d399' }, // Pad 2 綠
+      { bg: 'rgba(245, 158, 11, 0.15)', border: '#f59e0b', text: '#fbbf24' }, // Pad 3 琥珀
+      { bg: 'rgba(236, 72, 153, 0.15)', border: '#ec4899', text: '#f472b6' }, // Pad 4 粉紅
+    ];
+
     for (let padNum = 1; padNum <= 4; padNum++) {
       const padIdx = padNum - 1;
       const track = parsed.tracks[padNum]; // Track 1 ~ 4
       const customName = parsed.padConfig?.names[padIdx] || `Pad ${padNum}`;
+      const theme = themeColors[padIdx];
+      const displayName = (!customName || customName === `Pad ${padNum}` || customName === `Pad${padNum}`)
+        ? `Pad ${padNum}`
+        : `Pad ${padNum} (${customName})`;
 
       // 提取該 Track 內部的 Controller 資訊
       let vol = 100;
@@ -1246,9 +1268,20 @@ function renderParts(parsed: YamahaFileParsed) {
       }
 
       const tr = document.createElement('tr');
+      tr.className = `pad-table-row pad-table-row-${padNum}`;
+      if (currentActivePadNum === padNum) {
+        tr.classList.add('active-row');
+      }
+      tr.title = `點擊展開並檢視 Pad ${padNum} 的詳細音符與小節`;
+      tr.style.cursor = 'pointer';
       tr.innerHTML = `
-        <td><span class="part-badge part-name-text-${padNum}" style="color: #60a5fa;">Pad ${padNum} (${customName})</span></td>
-        <td>Track ${padNum} (Ch ${channel + 1})</td>
+        <td>
+          <span class="part-badge part-name-text-${padNum}" style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 5px; background: ${theme.bg}; border: 1px solid ${theme.border}; color: ${theme.text}; font-weight: 600; font-size: 0.78rem;">
+            <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ${theme.border};"></span>
+            ${displayName}
+          </span>
+        </td>
+        <td><span style="color: #94a3b8; font-family: monospace;">Track ${padNum} (Ch ${channel + 1})</span></td>
         <td>
           <div style="display: flex; gap: 4px; align-items: center;">
             <input type="number" min="0" max="127" class="mixing-num-input bank-msb-${padNum}" value="${bankMsb ?? 0}" title="Bank MSB (CC0)" />
@@ -1341,6 +1374,14 @@ function renderParts(parsed: YamahaFileParsed) {
       inputMsb.addEventListener('change', onVoiceChange);
       inputLsb.addEventListener('change', onVoiceChange);
       inputPc.addEventListener('change', onVoiceChange);
+
+      // 點擊該列直接連動展開上方對應的 Pad 卡片
+      tr.addEventListener('click', (e) => {
+        const target = e.target as HTMLElement;
+        if (target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.tagName === 'SELECT') return;
+        const targetCard = document.querySelector(`.pad-card-${padNum}`) as HTMLElement | null;
+        if (targetCard) targetCard.click();
+      });
 
       partsTbody.appendChild(tr);
     }
