@@ -283,6 +283,7 @@ function renderSections(parsed: YamahaFileParsed) {
   sectionCount.textContent = isPad ? '4 組打擊墊設定' : `${parsed.sections.length} 個標記段落`;
 
   if (isPad) {
+    sectionsList.className = 'section-grid pad-grid';
     // PAD 模式：固定渲染 4 顆打擊墊卡片 (Pad 1 ~ Pad 4)
     for (let padNum = 1; padNum <= 4; padNum++) {
       const padIdx = padNum - 1;
@@ -360,7 +361,7 @@ function renderSections(parsed: YamahaFileParsed) {
       item.innerHTML = `
         <div class="pad-header">
           <input type="text" class="pad-name-input" value="${customName}" title="點擊修改名稱" />
-          <span class="pad-raw-tag">${sec ? sec.name : 'Track ' + padNum}</span>
+          <span class="pad-raw-tag" title="Yamaha 底層段落標記: ${sec ? sec.name : 'Track ' + padNum}">${sec ? sec.name : 'Track ' + padNum}</span>
         </div>
         <div class="pad-body">
           <div class="pad-bars-text">${barsText}</div>
@@ -465,6 +466,7 @@ function renderSections(parsed: YamahaFileParsed) {
       sectionsList.appendChild(item);
     }
   } else {
+    sectionsList.className = 'section-grid';
     // STY 模式：傳統伴奏積木
     for (const sec of parsed.sections) {
       const item = document.createElement('div');
