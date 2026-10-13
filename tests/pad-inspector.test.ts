@@ -9,6 +9,7 @@ describe('PAD 內部細節探測', () => {
     const buf = fs.readFileSync(pad1Path);
     const parsed = YamahaParser.parse(new Uint8Array(buf), 'PAD');
 
+    console.log('Division (PPQ):', parsed.division, 'TimeSignature:', parsed.timeSignature);
     console.log('--- 段落 Marker 詳細清單 ---');
     parsed.sections.forEach((s) => {
       console.log(`段落: ${s.name}, 起始 Tick: ${s.startTick}, 結束 Tick: ${s.endTick}, 小節數: ${s.measureCount}`);

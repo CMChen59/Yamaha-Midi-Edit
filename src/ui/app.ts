@@ -605,7 +605,7 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLab
   badgeEl.textContent = `音符範圍 Tick: ${firstNoteTick} ~ ${lastNoteTick} (約 ${actualBars} 小節)`;
   summaryEl.innerHTML = `<span style="display: inline-block; padding: 2px 8px; border-radius: 4px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-weight: 600; margin-right: 8px;">演奏音色: ${voiceName}</span> <span>共 ${notes.length} 顆音符</span> | <span>音域: ${midiNoteToName(minNote)} (${minNote}) ~ ${midiNoteToName(maxNote)} (${maxNote})</span> | <span>平均力度: ${avgVel}</span>`;
 
-  drawNoteRoll(canvas, notes, firstNoteTick, lastNoteTick, minNote, maxNote, padNum);
+  drawNoteRoll(canvas, notes, padNum, parsed.division || 96, parsed.timeSignature?.numerator || 4);
 }
 
 function drawEmptyCanvas(canvas: HTMLCanvasElement) {
@@ -618,69 +618,330 @@ function drawEmptyCanvas(canvas: HTMLCanvasElement) {
   ctx.fillText('無音符資料', canvas.width / 2, canvas.height / 2);
 }
 
+function formatNoteDuration(ticks: number, ticksPerBeat: number, beatsPerBar: number = 4): string {
+  const ticksPerBar = ticksPerBeat * beatsPerBar;
+  const bars = ticks / ticksPerBar;
+  const beats = ticks / ticksPerBeat;
+
+  if (Math.abs(bars - 1) < 0.08) return '1 小節 (全音符 𝅝)';
+  if (Math.abs(bars - 2) < 0.1) return '2 小節 (雙全音符)';
+  if (Math.abs(beats - 2) < 0.08) return '半小節 / 2 拍 (二分音符 𝅗𝅥)';
+  if (Math.abs(beats - 1) < 0.08) return '1/4 小節 / 1 拍 (四分音符 ♩)';
+  if (Math.abs(beats - 0.5) < 0.05) return '1/8 小節 / 半拍 (八分音符 ♪)';
+  if (Math.abs(beats - 0.25) < 0.03) return '1/16 小節 / 1/4 拍 (十六分音符 𝅘𝅥𝅯)';
+  if (Math.abs(beats - 1.5) < 0.08) return '1.5 拍 (附點四分 ♩.)';
+  if (Math.abs(beats - 0.75) < 0.05) return '0.75 拍 (附點八分 ♪.)';
+
+  if (bars >= 1) {
+    return `${bars.toFixed(1)} 小節 (${ticks} Ticks)`;
+  }
+  return `${beats.toFixed(1)} 拍 (${ticks} Ticks)`;
+}
+
+function formatShortDuration(ticks: number, ticksPerBeat: number, beatsPerBar: number = 4): string {
+  const ticksPerBar = ticksPerBeat * beatsPerBar;
+  const bars = ticks / ticksPerBar;
+  const beats = ticks / ticksPerBeat;
+
+  if (Math.abs(bars - 1) < 0.08) return '1小節(全音符)';
+  if (Math.abs(beats - 2) < 0.08) return '半小節(2拍)';
+  if (Math.abs(beats - 1) < 0.08) return '1拍(四分)';
+  if (Math.abs(beats - 0.5) < 0.05) return '半拍(八分)';
+  if (bars >= 1) return `${bars.toFixed(1)}小節`;
+  return `${beats.toFixed(1)}拍`;
+}
+
+interface RenderedNoteBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  note: number;
+  velocity: number;
+  startTick: number;
+  durationTick: number;
+  barIndex: number;
+  beatInBar: number;
+}
+
+let lastRenderedNoteBoxes: RenderedNoteBox[] = [];
+let hoveredNoteBox: RenderedNoteBox | null = null;
+let currentCanvasRedraw: (() => void) | null = null;
+let isCanvasHoverBound = false;
+
 function drawNoteRoll(
   canvas: HTMLCanvasElement,
   notes: Array<{ note: number; velocity: number; startTick: number; durationTick: number }>,
-  startTick: number,
-  endTick: number,
-  minNote: number,
-  maxNote: number,
-  padNum: number
+  padNum: number,
+  ticksPerBeat: number = 96,
+  beatsPerBar: number = 4
 ) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
   const w = canvas.width;
   const h = canvas.height;
-  ctx.clearRect(0, 0, w, h);
 
-  // 背景網格
-  ctx.fillStyle = '#111318';
-  ctx.fillRect(0, 0, w, h);
+  const ticksPerBar = ticksPerBeat * beatsPerBar;
+  const firstNoteTick = Math.min(...notes.map(n => n.startTick));
+  const lastNoteTick = Math.max(...notes.map(n => n.startTick + n.durationTick));
 
-  const totalTicks = Math.max(endTick - startTick, 480);
-  const noteRange = Math.max(maxNote - minNote + 2, 8);
+  // 時間基準：向左對齊至整數小節起點
+  const gridStartTick = Math.floor(firstNoteTick / ticksPerBar) * ticksPerBar;
+  const totalDurationTicks = Math.max(lastNoteTick - gridStartTick, ticksPerBar);
+  const totalBars = Math.max(1, Math.ceil(totalDurationTicks / ticksPerBar));
+  const gridTotalTicks = totalBars * ticksPerBar;
 
-  // 繪製格線
-  ctx.strokeStyle = '#222631';
-  ctx.lineWidth = 1;
-  for (let i = 0; i < 8; i++) {
-    const y = (h / 8) * i;
+  // 垂直音高基準 (保留適度邊距)
+  const minNote = Math.min(...notes.map(n => n.note));
+  const maxNote = Math.max(...notes.map(n => n.note));
+  const displayMinNote = Math.max(0, minNote - 1);
+  const displayMaxNote = Math.min(127, maxNote + 1);
+  const noteRange = Math.max(displayMaxNote - displayMinNote + 1, 8);
+
+  // 畫面區域配置 (Layout Margins)
+  const rulerH = 26;   // 頂部小節時間軸尺規高度
+  const scaleW = 48;   // 左側音名欄寬度
+  const plotW = w - scaleW;
+  const plotH = h - rulerH;
+
+  const redraw = (highlightedBox?: RenderedNoteBox | null) => {
+    ctx.clearRect(0, 0, w, h);
+
+    // 1. Piano Roll 主體背景
+    ctx.fillStyle = '#0f1117';
+    ctx.fillRect(scaleW, rulerH, plotW, plotH);
+
+    // 2. 水平音高線 (黑白琴鍵交替底色)
+    const semitoneH = plotH / noteRange;
+    for (let n = displayMinNote; n <= displayMaxNote; n++) {
+      const rowY = rulerH + (displayMaxNote - n) * semitoneH;
+      const isBlackKey = [1, 3, 6, 8, 10].includes(n % 12);
+      ctx.fillStyle = isBlackKey ? '#13151d' : '#181b24';
+      ctx.fillRect(scaleW, rowY, plotW, semitoneH);
+
+      ctx.strokeStyle = '#222633';
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(scaleW, rowY + semitoneH);
+      ctx.lineTo(w, rowY + semitoneH);
+      ctx.stroke();
+    }
+
+    // 3. 垂直拍子線 (Beat Grid Lines)
+    const totalBeats = totalBars * beatsPerBar;
+    for (let b = 0; b <= totalBeats; b++) {
+      const beatX = scaleW + (b / totalBeats) * plotW;
+      const isBarLine = b % beatsPerBar === 0;
+
+      if (!isBarLine) {
+        ctx.strokeStyle = 'rgba(71, 85, 105, 0.28)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 2]);
+        ctx.beginPath();
+        ctx.moveTo(beatX, rulerH);
+        ctx.lineTo(beatX, h);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
+    // 4. 垂直小節線 (Bar Lines) - 明確貫穿線
+    for (let bar = 0; bar <= totalBars; bar++) {
+      const barX = scaleW + (bar / totalBars) * plotW;
+      ctx.strokeStyle = '#475569';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(barX, rulerH);
+      ctx.lineTo(barX, h);
+      ctx.stroke();
+    }
+
+    // 5. 頂部小節時間軸尺規 (Timeline Measure Ruler)
+    ctx.fillStyle = '#1c1f2a';
+    ctx.fillRect(0, 0, w, rulerH);
+    ctx.strokeStyle = '#333846';
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(w, y);
+    ctx.moveTo(0, rulerH);
+    ctx.lineTo(w, rulerH);
     ctx.stroke();
-  }
 
-  // 依據 Pad 主題選擇顏色
-  const colors = [
-    '#3b82f6', // Pad 1 藍
-    '#10b981', // Pad 2 綠
-    '#f59e0b', // Pad 3 琥珀
-    '#ec4899', // Pad 4 粉紫
-  ];
-  const baseColor = colors[(padNum - 1) % colors.length];
+    for (let bar = 0; bar < totalBars; bar++) {
+      const barX = scaleW + (bar / totalBars) * plotW;
+      const nextBarX = scaleW + ((bar + 1) / totalBars) * plotW;
 
-  // 繪製音符方塊
-  for (const n of notes) {
-    const x = ((n.startTick - startTick) / totalTicks) * (w - 20) + 10;
-    const noteW = Math.max((n.durationTick / totalTicks) * (w - 20), 4);
-    const noteY = h - ((n.note - minNote + 1) / noteRange) * (h - 20) - 10;
-    const noteH = Math.max((h - 20) / noteRange - 2, 4);
+      // 小節標籤 (第 1 小節, 第 2 小節...)
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(`第 ${bar + 1} 小節`, barX + 8, rulerH - 8);
 
-    const alpha = 0.4 + (n.velocity / 127) * 0.6;
-    ctx.fillStyle = baseColor;
-    ctx.globalAlpha = alpha;
+      // 小節內的拍數微刻度 (1.2, 1.3, 1.4)
+      for (let beat = 1; beat < beatsPerBar; beat++) {
+        const beatX = barX + (beat / beatsPerBar) * (nextBarX - barX);
+        ctx.fillStyle = '#64748b';
+        ctx.font = '9px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`.${beat + 1}`, beatX, rulerH - 8);
+      }
+    }
+
+    // 6. 左側音名刻度欄 (Pitch Ruler & Scale)
+    ctx.fillStyle = '#161821';
+    ctx.fillRect(0, 0, scaleW, h);
+    ctx.strokeStyle = '#333846';
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.roundRect ? ctx.roundRect(x, noteY, noteW, noteH, 2) : ctx.rect(x, noteY, noteW, noteH);
-    ctx.fill();
-
-    // 邊框
-    ctx.globalAlpha = 1.0;
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 0.5;
+    ctx.moveTo(scaleW, 0);
+    ctx.lineTo(scaleW, h);
     ctx.stroke();
-  }
+
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('音名', scaleW / 2, rulerH - 8);
+
+    for (let n = displayMinNote; n <= displayMaxNote; n++) {
+      const rowY = rulerH + (displayMaxNote - n) * semitoneH;
+      const noteName = midiNoteToName(n);
+      const isC = n % 12 === 0;
+
+      if (isC || semitoneH >= 12 || n === minNote || n === maxNote) {
+        ctx.fillStyle = isC ? '#38bdf8' : '#94a3b8';
+        ctx.font = isC ? 'bold 10px sans-serif' : '9px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(noteName, scaleW / 2, rowY + semitoneH / 2 + 3);
+      }
+    }
+
+    // 7. 繪製音符方塊
+    const themeColors = [
+      { fill: '#3b82f6', border: '#60a5fa' }, // Pad 1 藍
+      { fill: '#10b981', border: '#34d399' }, // Pad 2 綠
+      { fill: '#f59e0b', border: '#fbbf24' }, // Pad 3 琥珀
+      { fill: '#ec4899', border: '#f472b6' }, // Pad 4 粉紅
+    ];
+    const theme = themeColors[(padNum - 1) % themeColors.length];
+
+    const boxes: RenderedNoteBox[] = [];
+
+    for (const n of notes) {
+      const relTick = n.startTick - gridStartTick;
+      const x = scaleW + (relTick / gridTotalTicks) * plotW;
+      const noteW = Math.max((n.durationTick / gridTotalTicks) * plotW, 5);
+      const rowY = rulerH + (displayMaxNote - n.note) * semitoneH;
+      const noteH = Math.max(semitoneH - 2, 6);
+      const noteY = rowY + 1;
+
+      const barIndex = Math.floor(relTick / ticksPerBar) + 1;
+      const beatInBar = Math.floor((relTick % ticksPerBar) / ticksPerBeat) + 1;
+
+      const box: RenderedNoteBox = {
+        x, y: noteY, w: noteW, h: noteH,
+        note: n.note, velocity: n.velocity,
+        startTick: n.startTick, durationTick: n.durationTick,
+        barIndex, beatInBar,
+      };
+      boxes.push(box);
+
+      const isHovered = highlightedBox && highlightedBox.startTick === n.startTick && highlightedBox.note === n.note;
+
+      // 依據 velocity 力度調整透明度
+      const alpha = isHovered ? 1.0 : (0.55 + (n.velocity / 127) * 0.45);
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = isHovered ? '#38bdf8' : theme.fill;
+
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(x, noteY, noteW, noteH, 3);
+      else ctx.rect(x, noteY, noteW, noteH);
+      ctx.fill();
+
+      // 邊框
+      ctx.globalAlpha = 1.0;
+      ctx.strokeStyle = isHovered ? '#ffffff' : theme.border;
+      ctx.lineWidth = isHovered ? 2 : 1;
+      ctx.stroke();
+
+      // 懸停光暈效果
+      if (isHovered) {
+        ctx.shadowColor = '#38bdf8';
+        ctx.shadowBlur = 10;
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+      }
+
+      // 音符內部標籤 (若寬度允許，直接在音符上方標示長度與音名)
+      if (noteW >= 46 && noteH >= 11) {
+        const shortDur = formatShortDuration(n.durationTick, ticksPerBeat, beatsPerBar);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 9px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${midiNoteToName(n.note)} · ${shortDur}`, x + 4, noteY + noteH / 2 + 3);
+      } else if (noteW >= 22 && noteH >= 11) {
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 9px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(midiNoteToName(n.note), x + 3, noteY + noteH / 2 + 3);
+      }
+    }
+
+    lastRenderedNoteBoxes = boxes;
+  };
+
+  currentCanvasRedraw = () => redraw(hoveredNoteBox);
+  redraw(null);
+
+  // 註冊滑鼠懸停檢視事件
+  setupCanvasHoverEvents(canvas, ticksPerBeat, beatsPerBar);
+}
+
+function setupCanvasHoverEvents(canvas: HTMLCanvasElement, ticksPerBeat: number, beatsPerBar: number) {
+  if (isCanvasHoverBound) return;
+  isCanvasHoverBound = true;
+
+  const hoverInfoEl = document.getElementById('canvas-hover-info');
+
+  canvas.addEventListener('mousemove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const mouseX = (e.clientX - rect.left) * scaleX;
+    const mouseY = (e.clientY - rect.top) * scaleY;
+
+    // 搜尋滑鼠游標正下方的音符方塊
+    const found = lastRenderedNoteBoxes.find(b =>
+      mouseX >= b.x && mouseX <= b.x + b.w &&
+      mouseY >= b.y && mouseY <= b.y + b.h
+    );
+
+    if (found !== hoveredNoteBox) {
+      hoveredNoteBox = found || null;
+      if (currentCanvasRedraw) currentCanvasRedraw();
+
+      if (hoverInfoEl) {
+        if (found) {
+          const durStr = formatNoteDuration(found.durationTick, ticksPerBeat, beatsPerBar);
+          hoverInfoEl.innerHTML = `🎯 音符: <strong>${midiNoteToName(found.note)}</strong> (${found.note}) ｜ 位置: <strong>第 ${found.barIndex} 小節第 ${found.beatInBar} 拍</strong> ｜ 音長: <strong>${durStr}</strong> ｜ 力度: <strong>${found.velocity}</strong>`;
+          hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.2)';
+        } else {
+          hoverInfoEl.textContent = '💡 將滑鼠懸停於音符上方可檢視音長與小節數';
+          hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.1)';
+        }
+      }
+    }
+  });
+
+  canvas.addEventListener('mouseleave', () => {
+    if (hoveredNoteBox) {
+      hoveredNoteBox = null;
+      if (currentCanvasRedraw) currentCanvasRedraw();
+      if (hoverInfoEl) {
+        hoverInfoEl.textContent = '💡 將滑鼠懸停於音符上方可檢視音長與小節數';
+        hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.1)';
+      }
+    }
+  });
 }
 
 function renderParts(parsed: YamahaFileParsed) {
