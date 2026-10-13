@@ -93,9 +93,26 @@
             <!-- 固定高度資訊列，徹底消除滑鼠懸停時的畫面抖動 -->
             <div id="canvas-hover-info" style="min-height: 28px; height: 28px; line-height: 28px; margin-bottom: 8px; font-size: 0.8rem; color: #38bdf8; background: rgba(56, 189, 248, 0.08); padding: 0 12px; border-radius: 4px; border: 1px solid rgba(56, 189, 248, 0.18); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box;">💡 將滑鼠懸停於音符上方可檢視音長與小節數</div>
             <canvas id="pad-note-canvas" width="1120" height="220" style="width: 100%; height: 220px; display: block; border-radius: 6px; cursor: crosshair;"></canvas>
+
+            <!-- 小節時間軸滑桿與視野控制項 (Timeline Navigation & Zoom) -->
+            <div id="canvas-scroll-container" style="display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; padding: 6px 12px; background: #181a22; border-radius: 6px; border: 1px solid #2a2e3b; flex-wrap: wrap;">
+              <div style="display: flex; align-items: center; gap: 8px; font-size: 0.76rem;">
+                <span style="color: #94a3b8;">視野模式:</span>
+                <button type="button" id="btn-zoom-4bars" class="toggle-btn active-rp" style="padding: 2px 10px; font-size: 0.72rem;">🔍 4 小節標準視野</button>
+                <button type="button" id="btn-zoom-all" class="toggle-btn inactive" style="padding: 2px 10px; font-size: 0.72rem;">🌐 全景自適應</button>
+              </div>
+
+              <div id="scroll-bar-controls" style="display: flex; align-items: center; gap: 8px; flex: 1; max-width: 540px; justify-content: flex-end;">
+                <button type="button" id="btn-prev-bars" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem;" title="往前 4 小節">◀ 上一頁</button>
+                <input type="range" id="timeline-slider" min="1" max="6" value="1" step="1" style="flex: 1; height: 6px; accent-color: #3b82f6; cursor: pointer;" title="滑動切換小節範圍" />
+                <button type="button" id="btn-next-bars" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem;" title="往後 4 小節">下一頁 ▶</button>
+                <span id="timeline-range-label" style="font-size: 0.76rem; color: #38bdf8; font-weight: 600; min-width: 140px; text-align: right;">第 1 ~ 4 小節 / 共 9 小節</span>
+              </div>
+            </div>
+
             <div style="display: flex; justify-content: space-between; font-size: 0.72rem; color: #64748b; margin-top: 6px; flex-wrap: wrap; gap: 6px;">
               <span>全音符 = 1 整小節 | 二分音符 = 半小節 (2拍) | 四分音符 = 1/4 小節 (1拍) | 八分音符 = 1/8 小節 (半拍)</span>
-              <span>半拍標記: + ｜ 拍數: .2, .3, .4</span>
+              <span>半拍標記: + ｜ 拍數: .2, .3, .4 ｜ 支援滑鼠滾輪水平捲動</span>
             </div>
           </div>
         </div>

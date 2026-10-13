@@ -709,8 +709,15 @@ let lastRenderedNoteBoxes: RenderedNoteBox[] = [];
 let hoveredNoteBox: RenderedNoteBox | null = null;
 let currentCanvasRedraw: (() => void) | null = null;
 let isCanvasHoverBound = false;
+let isScrollEventsBound = false;
 let currentTicksPerBeat = 96;
 let currentBeatsPerBar = 4;
+let currentCanvasPadNum = 1;
+let currentTotalBars = 4;
+
+// 視野模式: '4bars' (固定 4 小節標準視野，可滑動) 或 'all' (全景自適應)
+let rollViewMode: '4bars' | 'all' = '4bars';
+let rollStartBar: number = 1;
 
 function drawNoteRoll(
   canvas: HTMLCanvasElement,
@@ -727,6 +734,11 @@ function drawNoteRoll(
   currentTicksPerBeat = ticksPerBeat;
   currentBeatsPerBar = beatsPerBar;
 
+  if (currentCanvasPadNum !== padNum) {
+    rollStartBar = 1;
+    currentCanvasPadNum = padNum;
+  }
+
   const ticksPerBar = ticksPerBeat * beatsPerBar;
   const firstNoteTick = Math.min(...notes.map(n => n.startTick));
   const lastNoteTick = Math.max(...notes.map(n => n.startTick + n.durationTick));
@@ -735,7 +747,7 @@ function drawNoteRoll(
   const gridStartTick = Math.floor(firstNoteTick / ticksPerBar) * ticksPerBar;
   const totalDurationTicks = Math.max(lastNoteTick - gridStartTick, ticksPerBar);
   const totalBars = Math.max(1, Math.ceil(totalDurationTicks / ticksPerBar));
-  const gridTotalTicks = totalBars * ticksPerBar;
+  currentTotalBars = totalBars;
 
   // 垂直音高基準 (保留適度邊距)
   const minNote = Math.min(...notes.map(n => n.note));
@@ -749,6 +761,25 @@ function drawNoteRoll(
   const scaleW = 48;   // 左側音名欄寬度
   const plotW = w - scaleW;
   const plotH = h - rulerH;
+
+  // 計算可見小節範圍 (View Window)
+  let viewStartBar = 1;
+  let viewBars = totalBars;
+
+  if (rollViewMode === '4bars' && totalBars > 4) {
+    const visibleBars = 4;
+    const maxStartBar = totalBars - visibleBars + 1;
+    rollStartBar = Math.max(1, Math.min(rollStartBar, maxStartBar));
+    viewStartBar = rollStartBar;
+    viewBars = visibleBars;
+  } else {
+    viewStartBar = 1;
+    viewBars = totalBars;
+  }
+
+  const windowStartTick = gridStartTick + (viewStartBar - 1) * ticksPerBar;
+  const windowTotalTicks = viewBars * ticksPerBar;
+  const windowEndTick = windowStartTick + windowTotalTicks;
 
   const redraw = (highlightedBox?: RenderedNoteBox | null) => {
     ctx.clearRect(0, 0, w, h);
@@ -774,7 +805,7 @@ function drawNoteRoll(
     }
 
     // 3. 垂直拍子線與反拍細線 (Beat & Offbeat Grid Lines)
-    const totalBeats = totalBars * beatsPerBar;
+    const totalBeats = viewBars * beatsPerBar;
     for (let b = 0; b <= totalBeats; b++) {
       const beatX = scaleW + (b / totalBeats) * plotW;
       const isBarLine = b % beatsPerBar === 0;
@@ -806,8 +837,8 @@ function drawNoteRoll(
     }
 
     // 4. 垂直小節線 (Bar Lines) - 明確貫穿實線
-    for (let bar = 0; bar <= totalBars; bar++) {
-      const barX = scaleW + (bar / totalBars) * plotW;
+    for (let bar = 0; bar <= viewBars; bar++) {
+      const barX = scaleW + (bar / viewBars) * plotW;
       ctx.strokeStyle = '#475569';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
@@ -826,15 +857,16 @@ function drawNoteRoll(
     ctx.lineTo(w, rulerH);
     ctx.stroke();
 
-    for (let bar = 0; bar < totalBars; bar++) {
-      const barX = scaleW + (bar / totalBars) * plotW;
-      const nextBarX = scaleW + ((bar + 1) / totalBars) * plotW;
+    for (let bar = 0; bar < viewBars; bar++) {
+      const barX = scaleW + (bar / viewBars) * plotW;
+      const nextBarX = scaleW + ((bar + 1) / viewBars) * plotW;
+      const currentBarNum = viewStartBar + bar;
 
-      // 小節標籤 (第 1 小節, 第 2 小節...)
+      // 小節標籤 (第 X 小節)
       ctx.fillStyle = '#f8fafc';
       ctx.font = 'bold 11px sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText(`第 ${bar + 1} 小節`, barX + 8, rulerH - 8);
+      ctx.fillText(`第 ${currentBarNum} 小節`, barX + 8, rulerH - 8);
 
       // 小節內的拍數刻度 (.2, .3, .4) 與半拍次刻度 (+)
       for (let beat = 0; beat < beatsPerBar; beat++) {
@@ -884,7 +916,12 @@ function drawNoteRoll(
       }
     }
 
-    // 7. 繪製音符方塊
+    // 7. 繪製音符方塊 (使用 Clip 限制在畫布主體區域內)
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(scaleW, rulerH, plotW, plotH);
+    ctx.clip();
+
     const themeColors = [
       { fill: '#3b82f6', border: '#60a5fa' }, // Pad 1 藍
       { fill: '#10b981', border: '#34d399' }, // Pad 2 綠
@@ -896,14 +933,22 @@ function drawNoteRoll(
     const boxes: RenderedNoteBox[] = [];
 
     for (const n of notes) {
-      const relTick = n.startTick - gridStartTick;
-      const x = scaleW + (relTick / gridTotalTicks) * plotW;
-      const noteW = Math.max((n.durationTick / gridTotalTicks) * plotW, 5);
+      const noteEndTick = n.startTick + n.durationTick;
+      // 排除視窗以外的音符
+      if (noteEndTick <= windowStartTick || n.startTick >= windowEndTick) {
+        continue;
+      }
+
+      const relTick = n.startTick - windowStartTick;
+      const x = scaleW + (relTick / windowTotalTicks) * plotW;
+      const noteW = Math.max((n.durationTick / windowTotalTicks) * plotW, 5);
       const rowY = rulerH + (displayMaxNote - n.note) * semitoneH;
       const noteH = Math.max(semitoneH - 2, 6);
       const noteY = rowY + 1;
 
-      const pos = formatNotePosition(relTick, ticksPerBeat, beatsPerBar);
+      // 絕對位置以全段 gridStartTick 為基準計算
+      const absRelTick = n.startTick - gridStartTick;
+      const pos = formatNotePosition(absRelTick, ticksPerBeat, beatsPerBar);
 
       const box: RenderedNoteBox = {
         x, y: noteY, w: noteW, h: noteH,
@@ -947,15 +992,16 @@ function drawNoteRoll(
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 9px sans-serif';
         ctx.textAlign = 'left';
-        ctx.fillText(`${midiNoteToName(n.note)} · ${shortDur}`, x + 4, noteY + noteH / 2 + 3);
+        ctx.fillText(`${midiNoteToName(n.note)} · ${shortDur}`, Math.max(x + 4, scaleW + 4), noteY + noteH / 2 + 3);
       } else if (noteW >= 22 && noteH >= 11) {
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 9px sans-serif';
         ctx.textAlign = 'left';
-        ctx.fillText(midiNoteToName(n.note), x + 3, noteY + noteH / 2 + 3);
+        ctx.fillText(midiNoteToName(n.note), Math.max(x + 3, scaleW + 3), noteY + noteH / 2 + 3);
       }
     }
 
+    ctx.restore();
     lastRenderedNoteBoxes = boxes;
   };
 
@@ -964,6 +1010,123 @@ function drawNoteRoll(
 
   // 註冊滑鼠懸停檢視事件
   setupCanvasHoverEvents(canvas);
+
+  // 更新小節滑動條與縮放控制項
+  updateTimelineNavigationUI(totalBars);
+  setupScrollEvents(canvas);
+}
+
+function updateTimelineNavigationUI(totalBars: number) {
+  const container = document.getElementById('canvas-scroll-container');
+  const btn4Bars = document.getElementById('btn-zoom-4bars') as HTMLButtonElement | null;
+  const btnAll = document.getElementById('btn-zoom-all') as HTMLButtonElement | null;
+  const slider = document.getElementById('timeline-slider') as HTMLInputElement | null;
+  const rangeLabel = document.getElementById('timeline-range-label');
+  const scrollControls = document.getElementById('scroll-bar-controls');
+
+  if (!container) return;
+
+  if (totalBars <= 4) {
+    if (btn4Bars) btn4Bars.style.display = 'none';
+    if (btnAll) btnAll.style.display = 'none';
+    if (scrollControls) scrollControls.style.display = 'none';
+    return;
+  }
+
+  // 小節數大於 4，顯示控制項
+  if (btn4Bars) btn4Bars.style.display = 'inline-block';
+  if (btnAll) btnAll.style.display = 'inline-block';
+  if (scrollControls) scrollControls.style.display = 'flex';
+
+  if (rollViewMode === '4bars') {
+    if (btn4Bars) { btn4Bars.className = 'toggle-btn active-rp'; }
+    if (btnAll) { btnAll.className = 'toggle-btn inactive'; }
+    if (slider) {
+      slider.style.display = 'block';
+      const maxStartBar = totalBars - 4 + 1;
+      slider.min = '1';
+      slider.max = `${maxStartBar}`;
+      slider.value = `${rollStartBar}`;
+    }
+    if (rangeLabel) {
+      const endBar = Math.min(rollStartBar + 3, totalBars);
+      rangeLabel.textContent = `第 ${rollStartBar} ~ ${endBar} 小節 / 共 ${totalBars} 小節`;
+    }
+  } else {
+    if (btn4Bars) { btn4Bars.className = 'toggle-btn inactive'; }
+    if (btnAll) { btnAll.className = 'toggle-btn active-rp'; }
+    if (slider) slider.style.display = 'none';
+    if (rangeLabel) {
+      rangeLabel.textContent = `第 1 ~ ${totalBars} 小節 (全景)`;
+    }
+  }
+}
+
+function setupScrollEvents(canvas: HTMLCanvasElement) {
+  if (isScrollEventsBound) return;
+  isScrollEventsBound = true;
+
+  const btn4Bars = document.getElementById('btn-zoom-4bars');
+  const btnAll = document.getElementById('btn-zoom-all');
+  const slider = document.getElementById('timeline-slider') as HTMLInputElement | null;
+  const btnPrev = document.getElementById('btn-prev-bars');
+  const btnNext = document.getElementById('btn-next-bars');
+
+  if (btn4Bars) {
+    btn4Bars.addEventListener('click', () => {
+      rollViewMode = '4bars';
+      if (currentCanvasRedraw) currentCanvasRedraw();
+      updateTimelineNavigationUI(currentTotalBars);
+    });
+  }
+
+  if (btnAll) {
+    btnAll.addEventListener('click', () => {
+      rollViewMode = 'all';
+      if (currentCanvasRedraw) currentCanvasRedraw();
+      updateTimelineNavigationUI(currentTotalBars);
+    });
+  }
+
+  if (slider) {
+    slider.addEventListener('input', () => {
+      rollStartBar = parseInt(slider.value, 10);
+      if (currentCanvasRedraw) currentCanvasRedraw();
+      updateTimelineNavigationUI(currentTotalBars);
+    });
+  }
+
+  if (btnPrev) {
+    btnPrev.addEventListener('click', () => {
+      rollStartBar = Math.max(1, rollStartBar - 4);
+      if (currentCanvasRedraw) currentCanvasRedraw();
+      updateTimelineNavigationUI(currentTotalBars);
+    });
+  }
+
+  if (btnNext) {
+    btnNext.addEventListener('click', () => {
+      const maxStartBar = Math.max(1, currentTotalBars - 4 + 1);
+      rollStartBar = Math.min(maxStartBar, rollStartBar + 4);
+      if (currentCanvasRedraw) currentCanvasRedraw();
+      updateTimelineNavigationUI(currentTotalBars);
+    });
+  }
+
+  // 支援滑鼠滾輪水平拖曳時間軸
+  canvas.addEventListener('wheel', (e) => {
+    if (rollViewMode === '4bars' && currentTotalBars > 4) {
+      e.preventDefault();
+      const maxStartBar = Math.max(1, currentTotalBars - 4 + 1);
+      if (e.deltaY > 0 || e.deltaX > 0) {
+        rollStartBar = Math.min(maxStartBar, rollStartBar + 1);
+      } else {
+        rollStartBar = Math.max(1, rollStartBar - 1);
+      }
+      if (currentCanvasRedraw) currentCanvasRedraw();
+      updateTimelineNavigationUI(currentTotalBars);
+    }
+  }, { passive: false });
 }
 
 function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
@@ -993,10 +1156,10 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
         if (found) {
           const durStr = formatNoteDuration(found.durationTick, currentTicksPerBeat, currentBeatsPerBar);
           hoverInfoEl.innerHTML = `🎯 音符: <strong>${midiNoteToName(found.note)}</strong> (${found.note}) ｜ 位置: ${found.posDisplayFull} ｜ 音長: <strong>${durStr}</strong> ｜ 力度: <strong>${found.velocity}</strong>`;
-          hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.2)';
+          hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.16)';
         } else {
           hoverInfoEl.textContent = '💡 將滑鼠懸停於音符上方可檢視音長與小節數';
-          hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.1)';
+          hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.08)';
         }
       }
     }
@@ -1008,7 +1171,7 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
       if (currentCanvasRedraw) currentCanvasRedraw();
       if (hoverInfoEl) {
         hoverInfoEl.textContent = '💡 將滑鼠懸停於音符上方可檢視音長與小節數';
-        hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.1)';
+        hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.08)';
       }
     }
   });
