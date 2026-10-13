@@ -557,7 +557,7 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLab
             note: ev.noteNumber,
             velocity: start.velocity,
             startTick: start.tick,
-            durationTick: Math.max(curTick - start.tick, 60),
+            durationTick: Math.max(curTick - start.tick, 1),
           });
           activeNotes.delete(ev.noteNumber);
         }
@@ -651,6 +651,46 @@ function formatShortDuration(ticks: number, ticksPerBeat: number, beatsPerBar: n
   return `${beats.toFixed(1)}拍`;
 }
 
+function formatNotePosition(relTick: number, ticksPerBeat: number, beatsPerBar: number = 4): {
+  chinese: string;
+  standard: string;
+  displayFull: string;
+} {
+  const ticksPerBar = ticksPerBeat * beatsPerBar;
+  const bar = Math.floor(relTick / ticksPerBar) + 1;
+  const tickInBar = relTick % ticksPerBar;
+  const beat = Math.floor(tickInBar / ticksPerBeat) + 1;
+  const tickInBeat = tickInBar % ticksPerBeat;
+  const fractionOfBeat = tickInBeat / ticksPerBeat;
+
+  // 16分音符細分 (1 ~ 4) 與剩餘 Tick 數
+  const ticksPer16th = ticksPerBeat / 4;
+  const sub16th = Math.floor(tickInBeat / ticksPer16th) + 1;
+  const tickRemainder = Math.round(tickInBeat % ticksPer16th);
+
+  // 業界 DAW 標準標記 (Bar.Beat.16th.Ticks，例如 2.3.3.00)
+  const standard = `${bar}.${beat}.${sub16th}.${tickRemainder.toString().padStart(2, '0')}`;
+
+  // 直觀音樂中文與口語描述
+  let beatDesc = '';
+  if (tickInBeat === 0 || fractionOfBeat < 0.04) {
+    beatDesc = `第 ${beat} 拍 (正拍)`;
+  } else if (Math.abs(fractionOfBeat - 0.5) < 0.06) {
+    beatDesc = `第 ${beat} 拍後半 (反拍 / ${beat} &)`;
+  } else if (Math.abs(fractionOfBeat - 0.25) < 0.05) {
+    beatDesc = `第 ${beat} 拍 1/4 (第 2 個 16分音符)`;
+  } else if (Math.abs(fractionOfBeat - 0.75) < 0.05) {
+    beatDesc = `第 ${beat} 拍 3/4 (第 4 個 16分音符)`;
+  } else {
+    beatDesc = `第 ${beat} 拍 + ${tickInBeat} Ticks (約 ${(beat + fractionOfBeat).toFixed(2)} 拍)`;
+  }
+
+  const chinese = `第 ${bar} 小節 ${beatDesc}`;
+  const displayFull = `<strong>${chinese}</strong> <small style="color: #94a3b8; font-weight: normal; margin-left: 4px;">[DAW標記: ${standard}]</small>`;
+
+  return { chinese, standard, displayFull };
+}
+
 interface RenderedNoteBox {
   x: number;
   y: number;
@@ -660,14 +700,17 @@ interface RenderedNoteBox {
   velocity: number;
   startTick: number;
   durationTick: number;
-  barIndex: number;
-  beatInBar: number;
+  posChinese: string;
+  posStandard: string;
+  posDisplayFull: string;
 }
 
 let lastRenderedNoteBoxes: RenderedNoteBox[] = [];
 let hoveredNoteBox: RenderedNoteBox | null = null;
 let currentCanvasRedraw: (() => void) | null = null;
 let isCanvasHoverBound = false;
+let currentTicksPerBeat = 96;
+let currentBeatsPerBar = 4;
 
 function drawNoteRoll(
   canvas: HTMLCanvasElement,
@@ -681,6 +724,8 @@ function drawNoteRoll(
 
   const w = canvas.width;
   const h = canvas.height;
+  currentTicksPerBeat = ticksPerBeat;
+  currentBeatsPerBar = beatsPerBar;
 
   const ticksPerBar = ticksPerBeat * beatsPerBar;
   const firstNoteTick = Math.min(...notes.map(n => n.startTick));
@@ -728,14 +773,15 @@ function drawNoteRoll(
       ctx.stroke();
     }
 
-    // 3. 垂直拍子線 (Beat Grid Lines)
+    // 3. 垂直拍子線與反拍細線 (Beat & Offbeat Grid Lines)
     const totalBeats = totalBars * beatsPerBar;
     for (let b = 0; b <= totalBeats; b++) {
       const beatX = scaleW + (b / totalBeats) * plotW;
       const isBarLine = b % beatsPerBar === 0;
 
       if (!isBarLine) {
-        ctx.strokeStyle = 'rgba(71, 85, 105, 0.28)';
+        // 拍子主線 (Beat Line)
+        ctx.strokeStyle = 'rgba(71, 85, 105, 0.35)';
         ctx.lineWidth = 1;
         ctx.setLineDash([2, 2]);
         ctx.beginPath();
@@ -744,9 +790,22 @@ function drawNoteRoll(
         ctx.stroke();
         ctx.setLineDash([]);
       }
+
+      // 拍內半拍反拍輔助線 (8分音符反拍線)
+      if (b < totalBeats) {
+        const halfBeatX = beatX + (0.5 / totalBeats) * plotW;
+        ctx.strokeStyle = 'rgba(71, 85, 105, 0.16)';
+        ctx.lineWidth = 0.8;
+        ctx.setLineDash([1, 3]);
+        ctx.beginPath();
+        ctx.moveTo(halfBeatX, rulerH);
+        ctx.lineTo(halfBeatX, h);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
     }
 
-    // 4. 垂直小節線 (Bar Lines) - 明確貫穿線
+    // 4. 垂直小節線 (Bar Lines) - 明確貫穿實線
     for (let bar = 0; bar <= totalBars; bar++) {
       const barX = scaleW + (bar / totalBars) * plotW;
       ctx.strokeStyle = '#475569';
@@ -777,13 +836,23 @@ function drawNoteRoll(
       ctx.textAlign = 'left';
       ctx.fillText(`第 ${bar + 1} 小節`, barX + 8, rulerH - 8);
 
-      // 小節內的拍數微刻度 (1.2, 1.3, 1.4)
-      for (let beat = 1; beat < beatsPerBar; beat++) {
-        const beatX = barX + (beat / beatsPerBar) * (nextBarX - barX);
-        ctx.fillStyle = '#64748b';
+      // 小節內的拍數刻度 (.2, .3, .4) 與半拍次刻度 (+)
+      for (let beat = 0; beat < beatsPerBar; beat++) {
+        const beatStartX = barX + (beat / beatsPerBar) * (nextBarX - barX);
+        const beatMidX = barX + ((beat + 0.5) / beatsPerBar) * (nextBarX - barX);
+
+        if (beat > 0) {
+          ctx.fillStyle = '#94a3b8';
+          ctx.font = 'bold 9px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(`.${beat + 1}`, beatStartX, rulerH - 8);
+        }
+
+        // 半拍反拍刻度 (+)
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.6)';
         ctx.font = '9px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText(`.${beat + 1}`, beatX, rulerH - 8);
+        ctx.fillText('+', beatMidX, rulerH - 8);
       }
     }
 
@@ -834,14 +903,15 @@ function drawNoteRoll(
       const noteH = Math.max(semitoneH - 2, 6);
       const noteY = rowY + 1;
 
-      const barIndex = Math.floor(relTick / ticksPerBar) + 1;
-      const beatInBar = Math.floor((relTick % ticksPerBar) / ticksPerBeat) + 1;
+      const pos = formatNotePosition(relTick, ticksPerBeat, beatsPerBar);
 
       const box: RenderedNoteBox = {
         x, y: noteY, w: noteW, h: noteH,
         note: n.note, velocity: n.velocity,
         startTick: n.startTick, durationTick: n.durationTick,
-        barIndex, beatInBar,
+        posChinese: pos.chinese,
+        posStandard: pos.standard,
+        posDisplayFull: pos.displayFull,
       };
       boxes.push(box);
 
@@ -893,10 +963,10 @@ function drawNoteRoll(
   redraw(null);
 
   // 註冊滑鼠懸停檢視事件
-  setupCanvasHoverEvents(canvas, ticksPerBeat, beatsPerBar);
+  setupCanvasHoverEvents(canvas);
 }
 
-function setupCanvasHoverEvents(canvas: HTMLCanvasElement, ticksPerBeat: number, beatsPerBar: number) {
+function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
   if (isCanvasHoverBound) return;
   isCanvasHoverBound = true;
 
@@ -921,8 +991,8 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement, ticksPerBeat: number,
 
       if (hoverInfoEl) {
         if (found) {
-          const durStr = formatNoteDuration(found.durationTick, ticksPerBeat, beatsPerBar);
-          hoverInfoEl.innerHTML = `🎯 音符: <strong>${midiNoteToName(found.note)}</strong> (${found.note}) ｜ 位置: <strong>第 ${found.barIndex} 小節第 ${found.beatInBar} 拍</strong> ｜ 音長: <strong>${durStr}</strong> ｜ 力度: <strong>${found.velocity}</strong>`;
+          const durStr = formatNoteDuration(found.durationTick, currentTicksPerBeat, currentBeatsPerBar);
+          hoverInfoEl.innerHTML = `🎯 音符: <strong>${midiNoteToName(found.note)}</strong> (${found.note}) ｜ 位置: ${found.posDisplayFull} ｜ 音長: <strong>${durStr}</strong> ｜ 力度: <strong>${found.velocity}</strong>`;
           hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.2)';
         } else {
           hoverInfoEl.textContent = '💡 將滑鼠懸停於音符上方可檢視音長與小節數';
