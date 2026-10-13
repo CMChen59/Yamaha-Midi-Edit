@@ -1,11 +1,13 @@
 import { YamahaParser } from '../core/parser/yamaha-parser';
 import { YamahaWriter } from '../core/writer/yamaha-writer';
+import { YamahaPadModifier } from '../core/writer/pad-modifier';
 import type { YamahaFileParsed } from '../core/models/types';
 
 console.log('[Yamaha App] 系統腳本已載入');
 
 let currentParsed: YamahaFileParsed | null = null;
 let currentFileName: string = '';
+let isModified: boolean = false;
 
 // DOM 元素引用
 const dropZone = document.getElementById('drop-zone');
@@ -33,10 +35,34 @@ function showStatus(msg: string, isError: boolean = false) {
   console.log(`[Status] ${msg}`);
   const statusEl = document.getElementById('status-message');
   if (statusEl) {
-    statusEl.textContent = msg;
+    statusEl.innerHTML = msg;
     statusEl.style.display = 'block';
     statusEl.style.backgroundColor = isError ? '#ef4444' : '#3b82f6';
   }
+}
+
+function markModified(msg?: string) {
+  isModified = true;
+  const statusEl = document.getElementById('status-message');
+  if (statusEl) {
+    statusEl.innerHTML = `<span style="font-weight: bold;">● 檔案已修改 (未儲存)</span> ${msg ? `— <small>${msg}</small>` : ''}`;
+    statusEl.style.display = 'block';
+    statusEl.style.backgroundColor = '#d97706'; // 琥珀警示色
+  }
+  if (btnExport) {
+    btnExport.textContent = '匯出修改後的檔案';
+  }
+}
+
+function updatePartsTableRowName(padNum: number, name: string) {
+  const el = document.querySelector(`.part-name-text-${padNum}`);
+  if (el) el.textContent = `Pad ${padNum} (${name})`;
+}
+
+function formatPan(pan: number): string {
+  if (pan === 64) return 'C';
+  if (pan < 64) return `L${64 - pan}`;
+  return `R${pan - 64}`;
 }
 
 // 初始化事件監聽
@@ -105,12 +131,15 @@ function initEvents() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `reconstructed_${currentFileName}`;
+        const prefix = isModified ? 'edited_' : 'reconstructed_';
+        a.download = `${prefix}${currentFileName}`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        showStatus(`已成功導出: reconstructed_${currentFileName}`);
+        isModified = false;
+        btnExport.textContent = '無損重新導出';
+        showStatus(`✓ 已成功導出最新檔案: ${prefix}${currentFileName}`);
       } catch (err: any) {
         alert(`導出失敗: ${err.message}`);
       }
@@ -203,56 +232,98 @@ function renderSections(parsed: YamahaFileParsed) {
       const customName = parsed.padConfig?.names[padIdx] || `Pad ${padNum}`;
       const isRepeat = parsed.padConfig?.repeatFlags[padIdx] ?? false;
       const isChordMatch = parsed.padConfig?.chordMatchFlags[padIdx] ?? false;
-      const icon = parsed.padConfig?.icons[padIdx];
+      const icon = parsed.padConfig?.icons[padIdx] || 'S809';
 
       const item = document.createElement('div');
       item.className = `section-item pad-button-card pad-theme-${padNum}`;
 
-      if (sec) {
-        // 該 Pad 有錄製內容
-        item.innerHTML = `
-          <div class="pad-header">
-            <span class="pad-number-badge">${customName}</span>
-            <span class="pad-raw-tag">${sec.name}</span>
-          </div>
-          <div class="pad-body">
-            <div class="pad-bars-text">${sec.measureCount ? `${sec.measureCount} 小節長度` : '連續片段'}</div>
-            <div class="section-details" style="display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap;">
-              <span class="badge" style="background: ${isChordMatch ? 'rgba(16, 185, 129, 0.2)' : 'rgba(100, 116, 139, 0.2)'}; color: ${isChordMatch ? '#34d399' : '#94a3b8'};">
-                ${isChordMatch ? '和弦跟隨 (CM:開)' : '固定音高 (CM:關)'}
-              </span>
-              <span class="badge" style="background: ${isRepeat ? 'rgba(59, 130, 246, 0.2)' : 'rgba(100, 116, 139, 0.2)'}; color: ${isRepeat ? '#60a5fa' : '#94a3b8'};">
-                ${isRepeat ? '循環 (RP:開)' : '單次 (RP:關)'}
-              </span>
-              ${icon ? `<span class="badge" style="background: rgba(148, 163, 184, 0.15); color: #cbd5e1;">圖標: ${icon}</span>` : ''}
-            </div>
-          </div>
-        `;
+      const iconOptions = [
+        { code: 'S809', label: '🎸 吉他' },
+        { code: 'S801', label: '🎹 鋼琴' },
+        { code: 'S805', label: '🎻 弦樂' },
+        { code: 'S815', label: '🥁 鼓組' },
+        { code: 'S811', label: '🎸 貝斯' },
+        { code: 'S820', label: '🎛️ 合成' },
+        { code: 'S825', label: '🎷 銅管' },
+        { code: 'S830', label: '🔔 音效' },
+      ];
 
-        item.addEventListener('click', () => {
-          document.querySelectorAll('.pad-button-card').forEach(el => el.classList.remove('active'));
-          item.classList.add('active');
-          showPadNotesDetail(parsed, sec, customName, padNum);
-        });
-      } else {
-        // 該 Pad 未錄製內容 (空白)
-        item.innerHTML = `
-          <div class="pad-header">
-            <span class="pad-number-badge" style="color: var(--text-muted);">${customName}</span>
-            <span class="pad-raw-tag">空白</span>
-          </div>
-          <div class="pad-body">
-            <div class="pad-bars-text" style="color: var(--text-muted);">未指派音樂段落</div>
-            <div class="section-details">無 Marker 觸發標記</div>
-          </div>
-        `;
+      const iconOptionsHtml = iconOptions
+        .map(opt => `<option value="${opt.code}" ${opt.code === icon ? 'selected' : ''}>${opt.label}</option>`)
+        .join('');
 
-        item.addEventListener('click', () => {
-          document.querySelectorAll('.pad-button-card').forEach(el => el.classList.remove('active'));
-          item.classList.add('active');
-          showEmptyPadDetail(customName, padNum);
-        });
-      }
+      item.innerHTML = `
+        <div class="pad-header">
+          <input type="text" class="pad-name-input" value="${customName}" title="點擊修改名稱" />
+          <span class="pad-raw-tag">${sec ? sec.name : '空白'}</span>
+        </div>
+        <div class="pad-body">
+          <div class="pad-bars-text">${sec ? (sec.measureCount ? `${sec.measureCount} 小節長度` : '連續片段') : '未指派段落'}</div>
+          <div class="section-details" style="display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; align-items: center;">
+            <button type="button" class="toggle-btn btn-cm ${isChordMatch ? 'active-cm' : 'inactive'}" title="點擊切換和弦跟隨">
+              ${isChordMatch ? '🎼 和弦跟隨: 開' : '🔒 固定音高: 關'}
+            </button>
+            <button type="button" class="toggle-btn btn-rp ${isRepeat ? 'active-rp' : 'inactive'}" title="點擊切換循環播放">
+              ${isRepeat ? '🔁 循環: 開' : '▶️ 單次: 關'}
+            </button>
+            <select class="icon-select" title="更換圖示">
+              ${iconOptionsHtml}
+            </select>
+          </div>
+        </div>
+      `;
+
+      // 1. 名稱編輯事件
+      const nameInput = item.querySelector('.pad-name-input') as HTMLInputElement;
+      nameInput.addEventListener('click', (e) => e.stopPropagation());
+      nameInput.addEventListener('change', () => {
+        YamahaPadModifier.setPadName(parsed, padNum, nameInput.value);
+        markModified(`已更新 Pad ${padNum} 名稱為: ${nameInput.value}`);
+        updatePartsTableRowName(padNum, nameInput.value);
+      });
+
+      // 2. 和弦跟隨 (CM) 切換事件
+      const btnCm = item.querySelector('.btn-cm') as HTMLButtonElement;
+      btnCm.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const currentVal = parsed.padConfig?.chordMatchFlags[padIdx] ?? false;
+        const newVal = !currentVal;
+        YamahaPadModifier.setPadChordMatch(parsed, padNum, newVal);
+        btnCm.className = `toggle-btn btn-cm ${newVal ? 'active-cm' : 'inactive'}`;
+        btnCm.innerHTML = newVal ? '🎼 和弦跟隨: 開' : '🔒 固定音高: 關';
+        markModified(`Pad ${padNum} 和弦跟隨已${newVal ? '開啟 (隨和弦轉調)' : '關閉 (固定音高)'}`);
+      });
+
+      // 3. 循環播放 (RP) 切換事件
+      const btnRp = item.querySelector('.btn-rp') as HTMLButtonElement;
+      btnRp.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const currentVal = parsed.padConfig?.repeatFlags[padIdx] ?? false;
+        const newVal = !currentVal;
+        YamahaPadModifier.setPadRepeat(parsed, padNum, newVal);
+        btnRp.className = `toggle-btn btn-rp ${newVal ? 'active-rp' : 'inactive'}`;
+        btnRp.innerHTML = newVal ? '🔁 循環: 開' : '▶️ 單次: 關';
+        markModified(`Pad ${padNum} 循環播放已${newVal ? '開啟' : '關閉'}`);
+      });
+
+      // 4. 圖示選擇事件
+      const iconSelect = item.querySelector('.icon-select') as HTMLSelectElement;
+      iconSelect.addEventListener('click', (e) => e.stopPropagation());
+      iconSelect.addEventListener('change', () => {
+        YamahaPadModifier.setPadIcon(parsed, padNum, iconSelect.value);
+        markModified(`Pad ${padNum} 圖示代碼已更新為: ${iconSelect.value}`);
+      });
+
+      // 5. 卡片點擊選取事件 (展開詳細音符卷軸)
+      item.addEventListener('click', () => {
+        document.querySelectorAll('.pad-button-card').forEach(el => el.classList.remove('active'));
+        item.classList.add('active');
+        if (sec) {
+          showPadNotesDetail(parsed, sec, nameInput.value, padNum);
+        } else {
+          showEmptyPadDetail(nameInput.value, padNum);
+        }
+      });
 
       // 預設選取 Pad 1
       if (padNum === 1) {
@@ -508,19 +579,89 @@ function renderParts(parsed: YamahaFileParsed) {
 
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td><span class="part-badge" style="color: #60a5fa;">Pad ${padNum} (${customName})</span></td>
+        <td><span class="part-badge part-name-text-${padNum}" style="color: #60a5fa;">Pad ${padNum} (${customName})</span></td>
         <td>Track ${padNum} (Ch ${channel + 1})</td>
-        <td><code>${bankMsb ?? '-'}-${bankLsb ?? '-'}</code></td>
-        <td><code>${pc ?? '-'}</code></td>
         <td>
-          <div class="volume-bar-bg">
-            <div class="volume-bar-fill" style="width: ${(vol / 127) * 100}%"></div>
+          <div style="display: flex; gap: 4px; align-items: center;">
+            <input type="number" min="0" max="127" class="mixing-num-input bank-msb-${padNum}" value="${bankMsb ?? 0}" title="Bank MSB (CC0)" />
+            <span>-</span>
+            <input type="number" min="0" max="127" class="mixing-num-input bank-lsb-${padNum}" value="${bankLsb ?? 0}" title="Bank LSB (CC32)" />
           </div>
-          <span>${vol}</span>
         </td>
-        <td>${pan === 64 ? 'C (置中)' : pan < 64 ? `L${64 - pan}` : `R${pan - 64}`}</td>
-        <td>${reverb ?? '-'}</td>
+        <td>
+          <input type="number" min="0" max="127" class="mixing-num-input pc-${padNum}" value="${pc ?? 0}" title="Program Change (音色代碼 0~127)" />
+        </td>
+        <td>
+          <div class="mixing-slider-container">
+            <input type="range" min="0" max="127" value="${vol}" class="mixing-slider vol-range-${padNum}" title="音量 (0~127)" />
+            <span class="vol-label-${padNum}" style="font-size: 0.8rem; width: 28px; text-align: right;">${vol}</span>
+          </div>
+        </td>
+        <td>
+          <div class="mixing-slider-container">
+            <input type="range" min="0" max="127" value="${pan}" class="mixing-slider pan-range-${padNum}" title="左右立體聲聲相 (L64~C~R63)" />
+            <span class="pan-label-${padNum} pan-indicator">${formatPan(pan)}</span>
+          </div>
+        </td>
+        <td>
+          <div class="mixing-slider-container">
+            <input type="range" min="0" max="127" value="${reverb ?? 40}" class="mixing-slider rev-range-${padNum}" title="混響深度 (0~127)" />
+            <span class="rev-label-${padNum}" style="font-size: 0.8rem; width: 28px; text-align: right;">${reverb ?? 40}</span>
+          </div>
+        </td>
       `;
+
+      // 監聽音量推桿事件
+      const volRange = tr.querySelector(`.vol-range-${padNum}`) as HTMLInputElement;
+      const volLabel = tr.querySelector(`.vol-label-${padNum}`) as HTMLElement;
+      volRange.addEventListener('input', () => {
+        const val = parseInt(volRange.value, 10);
+        volLabel.textContent = `${val}`;
+        YamahaPadModifier.setPadMixing(parsed, padNum, { volume: val });
+        markModified(`Pad ${padNum} 音量調整為: ${val}`);
+      });
+
+      // 監聽聲相推桿事件
+      const panRange = tr.querySelector(`.pan-range-${padNum}`) as HTMLInputElement;
+      const panLabel = tr.querySelector(`.pan-label-${padNum}`) as HTMLElement;
+      panRange.addEventListener('input', () => {
+        const val = parseInt(panRange.value, 10);
+        panLabel.textContent = formatPan(val);
+        YamahaPadModifier.setPadMixing(parsed, padNum, { pan: val });
+        markModified(`Pad ${padNum} 聲相調整為: ${formatPan(val)}`);
+      });
+
+      // 監聽混響推桿事件
+      const revRange = tr.querySelector(`.rev-range-${padNum}`) as HTMLInputElement;
+      const revLabel = tr.querySelector(`.rev-label-${padNum}`) as HTMLElement;
+      revRange.addEventListener('input', () => {
+        const val = parseInt(revRange.value, 10);
+        revLabel.textContent = `${val}`;
+        YamahaPadModifier.setPadMixing(parsed, padNum, { reverb: val });
+        markModified(`Pad ${padNum} 混響調整為: ${val}`);
+      });
+
+      // 監聽音色變更事件
+      const inputMsb = tr.querySelector(`.bank-msb-${padNum}`) as HTMLInputElement;
+      const inputLsb = tr.querySelector(`.bank-lsb-${padNum}`) as HTMLInputElement;
+      const inputPc = tr.querySelector(`.pc-${padNum}`) as HTMLInputElement;
+
+      const onVoiceChange = () => {
+        const msb = parseInt(inputMsb.value, 10) || 0;
+        const lsb = parseInt(inputLsb.value, 10) || 0;
+        const program = parseInt(inputPc.value, 10) || 0;
+        YamahaPadModifier.setPadMixing(parsed, padNum, {
+          bankMsb: msb,
+          bankLsb: lsb,
+          programChange: program,
+        });
+        markModified(`Pad ${padNum} 音色調整為: Bank ${msb}-${lsb}, PC ${program}`);
+      };
+
+      inputMsb.addEventListener('change', onVoiceChange);
+      inputLsb.addEventListener('change', onVoiceChange);
+      inputPc.addEventListener('change', onVoiceChange);
+
       partsTbody.appendChild(tr);
     }
   } else {

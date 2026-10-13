@@ -88,3 +88,4 @@
 | 2026-10-12 | Phase 1.4+ | Pad 點擊透視與迷你音符卷軸 (Note Roll Preview) | **已驗收通過** | 點擊 Pad 卡片動態展開音符總數、音域與 Canvas 節奏長條圖 |
 | 2026-10-13 | Phase 1.5 | 實琴載入與回歸測試驗收 (SX-920 Verification) | **待實機測試** | 測試檔已產生於 usb_test_export/，待實體琴驗證 |
 | 2026-10-13 | Phase 2.0 | Multi Pad 編輯模組計畫建檔 (Pad Studio) | **計畫已建立** | 產出 PHASE_2_PLAN.md，包含 2.1~2.5 細部計畫 |
+| 2026-10-13 | Phase 2.1 | Pad Studio 互動編輯介面與二進位同步 | **已驗收通過** | 名稱、CM、RP、圖示、音量推桿、Pan、混響、音色即時修改與二進位同步匯出 |
