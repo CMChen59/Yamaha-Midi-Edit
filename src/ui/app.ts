@@ -310,7 +310,9 @@ function renderSections(parsed: YamahaFileParsed) {
 
       let barsText = '無音符';
       if (padNoteCount > 0) {
-        const bars = Math.max(1, Math.ceil((maxT - minT) / (parsed.division * 4)));
+        const ticksPerBar = parsed.division * 4;
+        const gridStart = Math.floor(minT / ticksPerBar) * ticksPerBar;
+        const bars = Math.max(1, Math.ceil((maxT - gridStart) / ticksPerBar));
         barsText = `${padNoteCount} 顆音符 (${bars} 小節)`;
       } else if (sec) {
         barsText = sec.measureCount ? `${sec.measureCount} 小節` : '連續片段';
@@ -528,6 +530,10 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLab
   if (!container || !titleEl || !summaryEl || !badgeEl || !canvas) return;
   container.style.display = 'block';
 
+  // 重設小節捲動起點與懸停狀態
+  rollStartBar = 1;
+  resetHoverInfo();
+
   // 搜尋對應 Track 提取音符
   // 在 Yamaha PAD 中，Track 1~4 分別代表 Pad 1~4 的專屬音軌
   const trackIdx = padNum; // Track 1~4
@@ -581,8 +587,9 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLab
 
   const firstNoteTick = Math.min(...notes.map(n => n.startTick));
   const lastNoteTick = Math.max(...notes.map(n => n.startTick + n.durationTick));
-  const ticksPerBar = parsed.division * 4;
-  const actualBars = Math.max(1, Math.ceil((lastNoteTick - firstNoteTick) / ticksPerBar));
+  const ticksPerBar = (parsed.division || 96) * 4;
+  const gridStartTick = Math.floor(firstNoteTick / ticksPerBar) * ticksPerBar;
+  const actualBars = Math.max(1, Math.ceil((lastNoteTick - gridStartTick) / ticksPerBar));
 
   // 提取目前 Track 的 Bank MSB, Bank LSB, PC 與預設樂器名稱
   let currentPc = 0;
@@ -602,7 +609,7 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLab
     || PRESET_INSTRUMENTS.find(i => i.pc === currentPc);
   const voiceName = matchedInst ? matchedInst.label : `自訂音色 (PC ${currentPc}, Bank ${currentMsb}-${currentLsb})`;
 
-  badgeEl.textContent = `音符範圍 Tick: ${firstNoteTick} ~ ${lastNoteTick} (約 ${actualBars} 小節)`;
+  badgeEl.textContent = `音符範圍 Tick: ${firstNoteTick} ~ ${lastNoteTick} (共 ${actualBars} 小節)`;
   summaryEl.innerHTML = `<span style="display: inline-block; padding: 2px 8px; border-radius: 4px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-weight: 600; margin-right: 8px;">演奏音色: ${voiceName}</span> <span>共 ${notes.length} 顆音符</span> | <span>音域: ${midiNoteToName(minNote)} (${minNote}) ~ ${midiNoteToName(maxNote)} (${maxNote})</span> | <span>平均力度: ${avgVel}</span>`;
 
   drawNoteRoll(canvas, notes, padNum, parsed.division || 96, parsed.timeSignature?.numerator || 4);
@@ -719,6 +726,15 @@ let currentTotalBars = 4;
 let rollViewMode: '4bars' | 'all' = '4bars';
 let rollStartBar: number = 1;
 
+function resetHoverInfo() {
+  hoveredNoteBox = null;
+  const hoverInfoEl = document.getElementById('canvas-hover-info');
+  if (hoverInfoEl) {
+    hoverInfoEl.textContent = '💡 將滑鼠懸停於音符上方可檢視音長與小節數';
+    hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.08)';
+  }
+}
+
 function drawNoteRoll(
   canvas: HTMLCanvasElement,
   notes: Array<{ note: number; velocity: number; startTick: number; durationTick: number }>,
@@ -762,26 +778,26 @@ function drawNoteRoll(
   const plotW = w - scaleW;
   const plotH = h - rulerH;
 
-  // 計算可見小節範圍 (View Window)
-  let viewStartBar = 1;
-  let viewBars = totalBars;
-
-  if (rollViewMode === '4bars' && totalBars > 4) {
-    const visibleBars = 4;
-    const maxStartBar = totalBars - visibleBars + 1;
-    rollStartBar = Math.max(1, Math.min(rollStartBar, maxStartBar));
-    viewStartBar = rollStartBar;
-    viewBars = visibleBars;
-  } else {
-    viewStartBar = 1;
-    viewBars = totalBars;
-  }
-
-  const windowStartTick = gridStartTick + (viewStartBar - 1) * ticksPerBar;
-  const windowTotalTicks = viewBars * ticksPerBar;
-  const windowEndTick = windowStartTick + windowTotalTicks;
-
   const redraw = (highlightedBox?: RenderedNoteBox | null) => {
+    // 每次繪製時依據當前 rollViewMode 與 rollStartBar 動態計算可見小節範圍 (View Window)
+    let viewStartBar = 1;
+    let viewBars = totalBars;
+
+    if (rollViewMode === '4bars' && totalBars > 4) {
+      const visibleBars = 4;
+      const maxStartBar = Math.max(1, totalBars - visibleBars + 1);
+      rollStartBar = Math.max(1, Math.min(rollStartBar, maxStartBar));
+      viewStartBar = rollStartBar;
+      viewBars = visibleBars;
+    } else {
+      viewStartBar = 1;
+      viewBars = totalBars;
+    }
+
+    const windowStartTick = gridStartTick + (viewStartBar - 1) * ticksPerBar;
+    const windowTotalTicks = viewBars * ticksPerBar;
+    const windowEndTick = windowStartTick + windowTotalTicks;
+
     ctx.clearRect(0, 0, w, h);
 
     // 1. Piano Roll 主體背景
@@ -1043,10 +1059,12 @@ function updateTimelineNavigationUI(totalBars: number) {
     if (btnAll) { btnAll.className = 'toggle-btn inactive'; }
     if (slider) {
       slider.style.display = 'block';
-      const maxStartBar = totalBars - 4 + 1;
+      const maxStartBar = Math.max(1, totalBars - 4 + 1);
       slider.min = '1';
       slider.max = `${maxStartBar}`;
-      slider.value = `${rollStartBar}`;
+      if (slider.value !== `${rollStartBar}`) {
+        slider.value = `${rollStartBar}`;
+      }
     }
     if (rangeLabel) {
       const endBar = Math.min(rollStartBar + 3, totalBars);
@@ -1075,6 +1093,7 @@ function setupScrollEvents(canvas: HTMLCanvasElement) {
   if (btn4Bars) {
     btn4Bars.addEventListener('click', () => {
       rollViewMode = '4bars';
+      resetHoverInfo();
       if (currentCanvasRedraw) currentCanvasRedraw();
       updateTimelineNavigationUI(currentTotalBars);
     });
@@ -1083,22 +1102,27 @@ function setupScrollEvents(canvas: HTMLCanvasElement) {
   if (btnAll) {
     btnAll.addEventListener('click', () => {
       rollViewMode = 'all';
+      resetHoverInfo();
       if (currentCanvasRedraw) currentCanvasRedraw();
       updateTimelineNavigationUI(currentTotalBars);
     });
   }
 
   if (slider) {
-    slider.addEventListener('input', () => {
+    const handleSliderChange = () => {
       rollStartBar = parseInt(slider.value, 10);
+      resetHoverInfo();
       if (currentCanvasRedraw) currentCanvasRedraw();
       updateTimelineNavigationUI(currentTotalBars);
-    });
+    };
+    slider.addEventListener('input', handleSliderChange);
+    slider.addEventListener('change', handleSliderChange);
   }
 
   if (btnPrev) {
     btnPrev.addEventListener('click', () => {
       rollStartBar = Math.max(1, rollStartBar - 4);
+      resetHoverInfo();
       if (currentCanvasRedraw) currentCanvasRedraw();
       updateTimelineNavigationUI(currentTotalBars);
     });
@@ -1108,6 +1132,7 @@ function setupScrollEvents(canvas: HTMLCanvasElement) {
     btnNext.addEventListener('click', () => {
       const maxStartBar = Math.max(1, currentTotalBars - 4 + 1);
       rollStartBar = Math.min(maxStartBar, rollStartBar + 4);
+      resetHoverInfo();
       if (currentCanvasRedraw) currentCanvasRedraw();
       updateTimelineNavigationUI(currentTotalBars);
     });
@@ -1123,6 +1148,7 @@ function setupScrollEvents(canvas: HTMLCanvasElement) {
       } else {
         rollStartBar = Math.max(1, rollStartBar - 1);
       }
+      resetHoverInfo();
       if (currentCanvasRedraw) currentCanvasRedraw();
       updateTimelineNavigationUI(currentTotalBars);
     }
