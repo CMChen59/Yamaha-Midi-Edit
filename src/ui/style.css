@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   --bg-main: #121316;
   --bg-card: #1c1e24;
   --bg-card-hover: #262932;
@@ -464,18 +465,26 @@ body {
 }
 
 .icon-select {
-  background-color: #16181f;
+  color-scheme: dark;
+  background-color: #1a1d26;
   border: 1px solid #333846;
   color: #cbd5e1;
   font-size: 0.72rem;
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
   cursor: pointer;
   outline: none;
+  max-width: 100%;
 }
 
 .icon-select:hover, .icon-select:focus {
   border-color: #3b82f6;
+}
+
+.icon-select option {
+  background-color: #1a1d26;
+  color: #e2e8f0;
+  padding: 4px 8px;
 }
 
 /* 混音推桿與輸入控制項 */
