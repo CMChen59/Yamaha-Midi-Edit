@@ -229,10 +229,35 @@ function renderSections(parsed: YamahaFileParsed) {
     for (let padNum = 1; padNum <= 4; padNum++) {
       const padIdx = padNum - 1;
       const sec = parsed.sections[padIdx]; // 對應的 Section (若有)
+      const track = parsed.tracks[padNum]; // 對應的 Track 1~4
       const customName = parsed.padConfig?.names[padIdx] || `Pad ${padNum}`;
       const isRepeat = parsed.padConfig?.repeatFlags[padIdx] ?? false;
       const isChordMatch = parsed.padConfig?.chordMatchFlags[padIdx] ?? false;
       const icon = parsed.padConfig?.icons[padIdx] || 'S809';
+
+      // 計算該 Track 的真實音符數與小節數
+      let padNoteCount = 0;
+      let minT = Infinity;
+      let maxT = 0;
+      if (track) {
+        let curT = 0;
+        for (const e of track.events) {
+          curT += e.delta;
+          if (e.type === 'noteOn' && (e.velocity ?? 0) > 0) {
+            padNoteCount++;
+            if (curT < minT) minT = curT;
+            if (curT > maxT) maxT = curT;
+          }
+        }
+      }
+
+      let barsText = '無音符';
+      if (padNoteCount > 0) {
+        const bars = Math.max(1, Math.ceil((maxT - minT) / (parsed.division * 4)));
+        barsText = `${padNoteCount} 顆音符 (${bars} 小節)`;
+      } else if (sec) {
+        barsText = sec.measureCount ? `${sec.measureCount} 小節` : '連續片段';
+      }
 
       const item = document.createElement('div');
       item.className = `section-item pad-button-card pad-theme-${padNum}`;
@@ -255,10 +280,10 @@ function renderSections(parsed: YamahaFileParsed) {
       item.innerHTML = `
         <div class="pad-header">
           <input type="text" class="pad-name-input" value="${customName}" title="點擊修改名稱" />
-          <span class="pad-raw-tag">${sec ? sec.name : '空白'}</span>
+          <span class="pad-raw-tag">${sec ? sec.name : 'Track ' + padNum}</span>
         </div>
         <div class="pad-body">
-          <div class="pad-bars-text">${sec ? (sec.measureCount ? `${sec.measureCount} 小節長度` : '連續片段') : '未指派段落'}</div>
+          <div class="pad-bars-text">${barsText}</div>
           <div class="section-details" style="display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; align-items: center;">
             <button type="button" class="toggle-btn btn-cm ${isChordMatch ? 'active-cm' : 'inactive'}" title="點擊切換和弦跟隨">
               ${isChordMatch ? '🎼 和弦跟隨: 開' : '🔒 固定音高: 關'}
@@ -406,9 +431,9 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLab
   const endTick = sec.endTick ?? (startTick + parsed.division * 4 * (sec.measureCount || 4));
 
   // 搜尋對應 Track 提取音符
-  // Yamaha Pad 1~4 通常在 Track 1~4 (或 Channel 0~3)
+  // 在 Yamaha PAD 中，Track 1~4 分別代表 Pad 1~4 的專屬音軌
   const trackIdx = padNum; // Track 1~4
-  const targetTrack = parsed.tracks[trackIdx] || parsed.tracks[1];
+  const targetTrack = parsed.tracks[trackIdx];
 
   interface NoteSpan {
     note: number;
@@ -424,8 +449,6 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLab
 
     for (const ev of targetTrack.events) {
       curTick += ev.delta;
-      if (curTick < startTick) continue;
-      if (curTick > endTick + 480) break;
 
       if (ev.type === 'noteOn' && ev.noteNumber !== undefined && ev.velocity && ev.velocity > 0) {
         activeNotes.set(ev.noteNumber, { tick: curTick, velocity: ev.velocity });
@@ -444,11 +467,12 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLab
     }
   }
 
-  titleEl.textContent = `${padLabel} (底層標記: ${sec.name}) 詳細內容`;
-  badgeEl.textContent = `範圍 Tick: ${startTick} ~ ${endTick} (${sec.measureCount || 1} 小節)`;
+  const secName = sec ? ` (底層標記: ${sec.name})` : '';
+  titleEl.textContent = `${padLabel}${secName} 詳細內容`;
 
   if (notes.length === 0) {
     summaryEl.textContent = '此 Pad 無音符事件或使用特殊控制通道';
+    badgeEl.textContent = '無音符';
     drawEmptyCanvas(canvas);
     return;
   }
@@ -457,9 +481,15 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLab
   const maxNote = Math.max(...notes.map(n => n.note));
   const avgVel = Math.round(notes.reduce((sum, n) => sum + n.velocity, 0) / notes.length);
 
+  const firstNoteTick = Math.min(...notes.map(n => n.startTick));
+  const lastNoteTick = Math.max(...notes.map(n => n.startTick + n.durationTick));
+  const ticksPerBar = parsed.division * 4;
+  const actualBars = Math.max(1, Math.ceil((lastNoteTick - firstNoteTick) / ticksPerBar));
+
+  badgeEl.textContent = `音符範圍 Tick: ${firstNoteTick} ~ ${lastNoteTick} (約 ${actualBars} 小節)`;
   summaryEl.textContent = `共 ${notes.length} 顆音符 | 音域: ${midiNoteToName(minNote)} (${minNote}) ~ ${midiNoteToName(maxNote)} (${maxNote}) | 平均力度: ${avgVel}`;
 
-  drawNoteRoll(canvas, notes, startTick, endTick, minNote, maxNote, padNum);
+  drawNoteRoll(canvas, notes, firstNoteTick, lastNoteTick, minNote, maxNote, padNum);
 }
 
 function drawEmptyCanvas(canvas: HTMLCanvasElement) {

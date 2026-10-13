@@ -16,8 +16,19 @@ describe('PAD 內部細節探測', () => {
 
     console.log('--- 軌道與音符統計 ---');
     parsed.tracks.forEach((t, i) => {
-      const noteCount = t.events.filter((e) => e.type === 'noteOn').length;
-      console.log(`Track ${i}: 名稱=${t.name ?? '(無)'}, 總事件數=${t.events.length}, NoteOn數量=${noteCount}`);
+      let curTick = 0;
+      const noteTicks: number[] = [];
+      const channels = new Set<number>();
+      for (const e of t.events) {
+        curTick += e.delta;
+        if (e.channel !== undefined) channels.add(e.channel);
+        if (e.type === 'noteOn' && (e.velocity ?? 0) > 0) {
+          noteTicks.push(curTick);
+        }
+      }
+      const minTick = noteTicks.length > 0 ? Math.min(...noteTicks) : 0;
+      const maxTick = noteTicks.length > 0 ? Math.max(...noteTicks) : 0;
+      console.log(`Track ${i}: 名稱=${t.name ?? '(無)'}, Channel=[${Array.from(channels).join(',')}], NoteOn數量=${noteTicks.length}, Tick範圍=[${minTick} ~ ${maxTick}]`);
     });
   });
 });
