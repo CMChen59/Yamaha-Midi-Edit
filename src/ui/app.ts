@@ -676,11 +676,11 @@ function formatNotePosition(relTick: number, ticksPerBeat: number, beatsPerBar: 
   if (tickInBeat === 0 || fractionOfBeat < 0.04) {
     beatDesc = `第 ${beat} 拍 (正拍)`;
   } else if (Math.abs(fractionOfBeat - 0.5) < 0.06) {
-    beatDesc = `第 ${beat} 拍後半 (反拍 / ${beat} &)`;
+    beatDesc = `第 ${beat} 拍後半 (反拍 / 第 ${beat}.5 拍)`;
   } else if (Math.abs(fractionOfBeat - 0.25) < 0.05) {
-    beatDesc = `第 ${beat} 拍 1/4 (第 2 個 16分音符)`;
+    beatDesc = `第 ${beat} 拍第 2 個十六分音符 (1/4 拍處)`;
   } else if (Math.abs(fractionOfBeat - 0.75) < 0.05) {
-    beatDesc = `第 ${beat} 拍 3/4 (第 4 個 16分音符)`;
+    beatDesc = `第 ${beat} 拍第 4 個十六分音符 (3/4 拍處)`;
   } else {
     beatDesc = `第 ${beat} 拍 + ${tickInBeat} Ticks (約 ${(beat + fractionOfBeat).toFixed(2)} 拍)`;
   }

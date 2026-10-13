@@ -86,14 +86,16 @@
 
           <!-- 音符視覺化 Canvas (Interactive Piano Roll) -->
           <div class="canvas-wrapper" style="margin-top: 14px; background: #15171c; border-radius: 8px; border: 1px solid var(--border-color); padding: 12px; position: relative;">
-            <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
-              <span>🎼 鋼琴卷軸 (橫軸: 小節/拍數尺規 | 縱軸: 音高音名 | 垂直線: 小節線)</span>
-              <span id="canvas-hover-info" style="color: #38bdf8; font-weight: 600; background: rgba(56, 189, 248, 0.1); padding: 2px 10px; border-radius: 4px; border: 1px solid rgba(56, 189, 248, 0.2);">💡 將滑鼠懸停於音符上方可檢視音長與小節數</span>
+            <div class="canvas-header-bar" style="margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; color: var(--text-muted);">
+              <span>🎼 鋼琴卷軸 (橫軸: 小節/拍數尺規 ｜ 縱軸: 音名 ｜ 垂直線: 小節線)</span>
+              <span style="font-size: 0.72rem; color: #64748b;">高力度(亮色) ➔ 低力度(暗色)</span>
             </div>
+            <!-- 固定高度資訊列，徹底消除滑鼠懸停時的畫面抖動 -->
+            <div id="canvas-hover-info" style="min-height: 28px; height: 28px; line-height: 28px; margin-bottom: 8px; font-size: 0.8rem; color: #38bdf8; background: rgba(56, 189, 248, 0.08); padding: 0 12px; border-radius: 4px; border: 1px solid rgba(56, 189, 248, 0.18); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box;">💡 將滑鼠懸停於音符上方可檢視音長與小節數</div>
             <canvas id="pad-note-canvas" width="1120" height="220" style="width: 100%; height: 220px; display: block; border-radius: 6px; cursor: crosshair;"></canvas>
             <div style="display: flex; justify-content: space-between; font-size: 0.72rem; color: #64748b; margin-top: 6px; flex-wrap: wrap; gap: 6px;">
               <span>全音符 = 1 整小節 | 二分音符 = 半小節 (2拍) | 四分音符 = 1/4 小節 (1拍) | 八分音符 = 1/8 小節 (半拍)</span>
-              <span>高力度(亮色) ➔ 低力度(暗色)</span>
+              <span>半拍標記: + ｜ 拍數: .2, .3, .4</span>
             </div>
           </div>
         </div>
