@@ -22,19 +22,22 @@ flowchart TD
     Step24 --> Step25["步驟 2.5：端對端自動化測試與回歸防護<br/>(E2E Testing & Regression Check)"]
 ```
 
-### 步驟 2.1：Pad Studio 互動編輯介面升級 (Pad Studio UI & Editing Controls)
+### 步驟 2.1：Pad Studio 互動編輯介面升級 (Pad Studio UI & Editing Controls) 【✅ 100% 完成】
 * **工作項目**：
   1. 將目前的唯讀 Viewer 升級為「可編輯狀態 (Editor Mode)」。
   2. **4 顆實體卡片擴充編輯項**：
-     - **Pad 名稱輸入**：直接修改顯示名稱（對應底層 `N1~N4`）。
-     - **循環播放開關 (Repeat / RP)**：圖形化 Toggle 開關，決定播放一次即停止或無限循環。
-     - **和弦跟隨開關 (Chord Match / CM)**：圖形化 Toggle 開關，決定固定音高（打擊樂/FX）或隨左手和弦轉調。
-     - **琴端圖標選擇 (Icon Picker / I1~I4)**：提供圖形或常用圖標代碼選單（如吉他、鋼琴、鼓組等）。
-  3. **各 Pad 混音推桿與音色調整**：
-     - 在各聲部提供即時音量滑桿（Volume 0~127）、左右立體平衡（Pan L64~C~R63）。
-     - 提供音色選單（可手動輸入或選取 Bank MSB/LSB/PC）。
+     - **Pad 名稱輸入**：直接修改顯示名稱（即時寫入底層 `N1~N4` 控制標記）。
+     - **循環播放開關 (Repeat / RP)**：圖形化 Toggle 開關，切換單次播放或無限循環。
+     - **和弦跟隨開關 (Chord Match / CM)**：圖形化 Toggle 開關，切換固定音高（打擊/音效）或隨左手和弦轉調。
+     - **樂器音色與琴端圖標選擇 (Icon & Voice Selector / I1~I4)**：提供鋼琴、弦樂、吉他、貝斯、薩克斯風、銅管、合成器、鼓組等 Yamaha 常用音色清單，全面雙向連動琴端圖標代碼（如 `S801`, `S809`, `S815` 等）與 MIDI 音軌的 Bank MSB、Bank LSB、Program Change。
+  3. **各 Pad 混音推桿與音色調整 (Parts Mixing Table)**：
+     - 各聲部即時音量滑桿（Volume 0~127）、左右立體平衡（Pan L64~C~R63）、混響深度（Reverb 0~127）。
+     - 混音表格中的 Bank MSB、Bank LSB、PC 輸入框與上方 Pad 卡片樂器下拉選單完全雙向連動。
+  4. **獨立音軌音符卷軸 (Note Roll)**：
+     - 解決 Multi Pad 軌道獨立音符提取問題，精確計算小節數與音域範圍，並在詳細摘要中高亮標示當前指派的「演奏音色」。
 * **驗收標準**：
-  - 調整介面數值後，記憶體中的 Pad 資料模型即時同步更新。
+  - 調整介面數值後，記憶體中的 Pad 資料模型與音軌事件即時同步更新，可隨時匯出修改後的二進位檔案。
+  - 單元測試與專案編譯 100% 通過。
 
 ### 步驟 2.2：瀏覽器內即時試聽引擎 (Audio Audition Engine)
 * **工作項目**：

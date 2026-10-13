@@ -223,7 +223,6 @@ export class YamahaPadModifier {
    */
   public static rebuildTrackRawChunk(track: MidiTrack): void {
     const writer = new BinaryWriter();
-    let runningStatus: number | undefined = undefined;
 
     for (const ev of track.events) {
       // 寫入 Delta-time
@@ -235,13 +234,11 @@ export class YamahaPadModifier {
         const data = ev.metaData ?? new Uint8Array(0);
         writer.writeVarInt(data.length);
         writer.writeBytes(data);
-        runningStatus = undefined;
       } else if (ev.type === 'sysex') {
         writer.writeUint8(0xf0);
         const data = ev.rawBytes ?? new Uint8Array(0);
         writer.writeVarInt(data.length);
         writer.writeBytes(data);
-        runningStatus = undefined;
       } else {
         const channel = (ev.channel ?? 0) & 0x0f;
         let statusByte = 0;
@@ -260,7 +257,6 @@ export class YamahaPadModifier {
 
         if (statusByte !== 0) {
           writer.writeUint8(statusByte);
-          runningStatus = statusByte;
 
           if (ev.type === 'noteOn' || ev.type === 'noteOff') {
             writer.writeUint8((ev.noteNumber ?? 60) & 0x7f);

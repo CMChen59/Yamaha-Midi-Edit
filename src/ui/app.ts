@@ -1,7 +1,7 @@
 import { YamahaParser } from '../core/parser/yamaha-parser';
 import { YamahaWriter } from '../core/writer/yamaha-writer';
 import { YamahaPadModifier } from '../core/writer/pad-modifier';
-import type { YamahaFileParsed } from '../core/models/types';
+import type { YamahaFileParsed, YamahaSection } from '../core/models/types';
 
 console.log('[Yamaha App] 系統腳本已載入');
 
@@ -54,9 +54,67 @@ function markModified(msg?: string) {
   }
 }
 
+export interface InstrumentPreset {
+  id: string;
+  label: string;
+  icon: string;
+  msb: number;
+  lsb: number;
+  pc: number;
+}
+
+export const PRESET_INSTRUMENTS: InstrumentPreset[] = [
+  { id: 'piano', label: '🎹 鋼琴 (Concert Grand)', icon: 'S801', msb: 0, lsb: 112, pc: 0 },
+  { id: 'epiano', label: '🎹 電鋼琴 (DX E.Piano)', icon: 'S802', msb: 0, lsb: 112, pc: 4 },
+  { id: 'strings', label: '🎻 弦樂 (Live! Strings)', icon: 'S805', msb: 8, lsb: 33, pc: 49 },
+  { id: 'steel_guitar', label: '🎸 鋼弦吉他 (Steel Guitar)', icon: 'S809', msb: 0, lsb: 112, pc: 25 },
+  { id: 'nylon_guitar', label: '🎸 尼龍吉他 (Nylon Guitar)', icon: 'S809', msb: 0, lsb: 112, pc: 24 },
+  { id: 'clean_guitar', label: '🎸 電吉他 (Clean Guitar)', icon: 'S810', msb: 0, lsb: 112, pc: 27 },
+  { id: 'bass', label: '🎸 指彈貝斯 (Finger Bass)', icon: 'S811', msb: 0, lsb: 112, pc: 33 },
+  { id: 'synth_bass', label: '🎛️ 合成貝斯 (Synth Bass)', icon: 'S812', msb: 0, lsb: 112, pc: 38 },
+  { id: 'wind_sax', label: '🎷 薩克斯風 (Breathy Sax)', icon: 'S825', msb: 0, lsb: 112, pc: 66 },
+  { id: 'brass', label: '🎺 銅管組 (Brass Section)', icon: 'S826', msb: 0, lsb: 112, pc: 61 },
+  { id: 'synth_lead', label: '🎛️ 合成主奏 (Square Lead)', icon: 'S820', msb: 0, lsb: 112, pc: 80 },
+  { id: 'synth_pad', label: '🌌 溫暖鋪底 (Warm Pad)', icon: 'S821', msb: 0, lsb: 112, pc: 89 },
+  { id: 'drums', label: '🥁 標準鼓組 (Standard Kit)', icon: 'S815', msb: 127, lsb: 0, pc: 0 },
+  { id: 'perc_fx', label: '🔔 打擊音效 (Perc / FX)', icon: 'S830', msb: 0, lsb: 112, pc: 115 },
+];
+
+let currentActivePadNum: number = 1;
+
 function updatePartsTableRowName(padNum: number, name: string) {
   const el = document.querySelector(`.part-name-text-${padNum}`);
   if (el) el.textContent = `Pad ${padNum} (${name})`;
+}
+
+function updatePartsTableRowVoice(padNum: number, msb: number, lsb: number, pc: number) {
+  const msbInput = document.querySelector(`.bank-msb-${padNum}`) as HTMLInputElement | null;
+  const lsbInput = document.querySelector(`.bank-lsb-${padNum}`) as HTMLInputElement | null;
+  const pcInput = document.querySelector(`.pc-${padNum}`) as HTMLInputElement | null;
+  if (msbInput) msbInput.value = `${msb}`;
+  if (lsbInput) lsbInput.value = `${lsb}`;
+  if (pcInput) pcInput.value = `${pc}`;
+}
+
+function updatePadCardInstrumentSelect(padNum: number, msb: number, lsb: number, pc: number) {
+  const select = document.querySelector(`.pad-card-${padNum} .inst-select`) as HTMLSelectElement | null;
+  if (!select) return;
+
+  const matched = PRESET_INSTRUMENTS.find(i => i.pc === pc && (msb === 0 || i.msb === msb))
+    || PRESET_INSTRUMENTS.find(i => i.pc === pc);
+
+  if (matched) {
+    select.value = matched.id;
+  } else {
+    let customOpt = select.querySelector('option[value="custom"]') as HTMLOptionElement | null;
+    if (!customOpt) {
+      customOpt = document.createElement('option');
+      customOpt.value = 'custom';
+      select.appendChild(customOpt);
+    }
+    customOpt.textContent = `⚙️ 自訂音色 (PC ${pc}, Bank ${msb}-${lsb})`;
+    select.value = 'custom';
+  }
 }
 
 function formatPan(pan: number): string {
@@ -127,7 +185,7 @@ function initEvents() {
       if (!currentParsed) return;
       try {
         const bytes = YamahaWriter.write(currentParsed);
-        const blob = new Blob([bytes], { type: 'application/octet-stream' });
+        const blob = new Blob([bytes as unknown as BlobPart], { type: 'application/octet-stream' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -233,7 +291,6 @@ function renderSections(parsed: YamahaFileParsed) {
       const customName = parsed.padConfig?.names[padIdx] || `Pad ${padNum}`;
       const isRepeat = parsed.padConfig?.repeatFlags[padIdx] ?? false;
       const isChordMatch = parsed.padConfig?.chordMatchFlags[padIdx] ?? false;
-      const icon = parsed.padConfig?.icons[padIdx] || 'S809';
 
       // 計算該 Track 的真實音符數與小節數
       let padNoteCount = 0;
@@ -260,22 +317,43 @@ function renderSections(parsed: YamahaFileParsed) {
       }
 
       const item = document.createElement('div');
-      item.className = `section-item pad-button-card pad-theme-${padNum}`;
+      item.className = `section-item pad-button-card pad-theme-${padNum} pad-card-${padNum}`;
 
-      const iconOptions = [
-        { code: 'S809', label: '🎸 吉他' },
-        { code: 'S801', label: '🎹 鋼琴' },
-        { code: 'S805', label: '🎻 弦樂' },
-        { code: 'S815', label: '🥁 鼓組' },
-        { code: 'S811', label: '🎸 貝斯' },
-        { code: 'S820', label: '🎛️ 合成' },
-        { code: 'S825', label: '🎷 銅管' },
-        { code: 'S830', label: '🔔 音效' },
-      ];
+      // 從該 Pad 的 Track 提取目前實際使用的 Bank MSB, Bank LSB, Program Change
+      let currentPc = 0;
+      let currentMsb = 0;
+      let currentLsb = 0;
+      if (track) {
+        for (const ev of track.events) {
+          if (ev.type === 'programChange' && ev.program !== undefined) currentPc = ev.program;
+          if (ev.type === 'controlChange') {
+            if (ev.controller === 0 && ev.value !== undefined) currentMsb = ev.value;
+            if (ev.controller === 32 && ev.value !== undefined) currentLsb = ev.value;
+          }
+        }
+      }
 
-      const iconOptionsHtml = iconOptions
-        .map(opt => `<option value="${opt.code}" ${opt.code === icon ? 'selected' : ''}>${opt.label}</option>`)
+      // 檢查 Track 0 原始檔案所帶的 Yamaha Icon 代碼 (如 'S809')
+      const currentIcon = parsed.padConfig?.icons[padIdx];
+
+      // 智慧比對目前最符合的預設樂器
+      let matchedInst = PRESET_INSTRUMENTS.find(inst => inst.pc === currentPc && (currentMsb === 0 || inst.msb === currentMsb));
+      if (!matchedInst) {
+        matchedInst = PRESET_INSTRUMENTS.find(inst => inst.pc === currentPc);
+      }
+      if (!matchedInst && currentIcon) {
+        matchedInst = PRESET_INSTRUMENTS.find(inst => inst.icon === currentIcon);
+      }
+
+      const isCustomVoice = !matchedInst;
+      const selectedId = matchedInst ? matchedInst.id : 'custom';
+
+      let iconOptionsHtml = PRESET_INSTRUMENTS
+        .map(inst => `<option value="${inst.id}" ${inst.id === selectedId ? 'selected' : ''}>${inst.label}</option>`)
         .join('');
+      if (isCustomVoice) {
+        iconOptionsHtml += `<option value="custom" selected>⚙️ 自訂音色 (PC ${currentPc}, Bank ${currentMsb}-${currentLsb})</option>`;
+      }
 
       item.innerHTML = `
         <div class="pad-header">
@@ -291,7 +369,7 @@ function renderSections(parsed: YamahaFileParsed) {
             <button type="button" class="toggle-btn btn-rp ${isRepeat ? 'active-rp' : 'inactive'}" title="點擊切換循環播放">
               ${isRepeat ? '🔁 循環: 開' : '▶️ 單次: 關'}
             </button>
-            <select class="icon-select" title="更換圖示">
+            <select class="icon-select inst-select" title="更換演奏樂器與音色 (更換後下表與音軌將同步連動)">
               ${iconOptionsHtml}
             </select>
           </div>
@@ -331,16 +409,38 @@ function renderSections(parsed: YamahaFileParsed) {
         markModified(`Pad ${padNum} 循環播放已${newVal ? '開啟' : '關閉'}`);
       });
 
-      // 4. 圖示選擇事件
-      const iconSelect = item.querySelector('.icon-select') as HTMLSelectElement;
-      iconSelect.addEventListener('click', (e) => e.stopPropagation());
-      iconSelect.addEventListener('change', () => {
-        YamahaPadModifier.setPadIcon(parsed, padNum, iconSelect.value);
-        markModified(`Pad ${padNum} 圖示代碼已更新為: ${iconSelect.value}`);
+      // 4. 演奏樂器與音色選擇事件 (完整連動 Yamaha Icon 與 Track 混音 Bank/PC)
+      const instSelect = item.querySelector('.inst-select') as HTMLSelectElement;
+      instSelect.addEventListener('click', (e) => e.stopPropagation());
+      instSelect.addEventListener('change', () => {
+        const val = instSelect.value;
+        const selected = PRESET_INSTRUMENTS.find(i => i.id === val);
+        if (!selected) return;
+
+        // A. 更新 Track 0 的 Yamaha 螢幕圖示代碼 (I1~I4)
+        YamahaPadModifier.setPadIcon(parsed, padNum, selected.icon);
+
+        // B. 更新該 Pad Track 內部的 Bank MSB, Bank LSB, Program Change
+        YamahaPadModifier.setPadMixing(parsed, padNum, {
+          bankMsb: selected.msb,
+          bankLsb: selected.lsb,
+          programChange: selected.pc,
+        });
+
+        // C. 連動更新下方「聲部混音與音色配置」表格中的對應欄位
+        updatePartsTableRowVoice(padNum, selected.msb, selected.lsb, selected.pc);
+
+        markModified(`Pad ${padNum} 演奏樂器已更換為: ${selected.label} (Bank ${selected.msb}-${selected.lsb}, PC ${selected.pc})`);
+
+        // D. 若當前畫面正在檢視此 Pad，立即刷新詳細資訊面板
+        if (currentActivePadNum === padNum) {
+          if (sec) showPadNotesDetail(parsed, sec, nameInput.value, padNum);
+        }
       });
 
       // 5. 卡片點擊選取事件 (展開詳細音符卷軸)
       item.addEventListener('click', () => {
+        currentActivePadNum = padNum;
         document.querySelectorAll('.pad-button-card').forEach(el => el.classList.remove('active'));
         item.classList.add('active');
         if (sec) {
@@ -352,6 +452,7 @@ function renderSections(parsed: YamahaFileParsed) {
 
       // 預設選取 Pad 1
       if (padNum === 1) {
+        currentActivePadNum = 1;
         setTimeout(() => {
           item.classList.add('active');
           if (sec) showPadNotesDetail(parsed, sec, customName, 1);
@@ -427,9 +528,6 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLab
   if (!container || !titleEl || !summaryEl || !badgeEl || !canvas) return;
   container.style.display = 'block';
 
-  const startTick = sec.startTick;
-  const endTick = sec.endTick ?? (startTick + parsed.division * 4 * (sec.measureCount || 4));
-
   // 搜尋對應 Track 提取音符
   // 在 Yamaha PAD 中，Track 1~4 分別代表 Pad 1~4 的專屬音軌
   const trackIdx = padNum; // Track 1~4
@@ -486,8 +584,26 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLab
   const ticksPerBar = parsed.division * 4;
   const actualBars = Math.max(1, Math.ceil((lastNoteTick - firstNoteTick) / ticksPerBar));
 
+  // 提取目前 Track 的 Bank MSB, Bank LSB, PC 與預設樂器名稱
+  let currentPc = 0;
+  let currentMsb = 0;
+  let currentLsb = 0;
+  if (targetTrack) {
+    for (const ev of targetTrack.events) {
+      if (ev.type === 'programChange' && ev.program !== undefined) currentPc = ev.program;
+      if (ev.type === 'controlChange') {
+        if (ev.controller === 0 && ev.value !== undefined) currentMsb = ev.value;
+        if (ev.controller === 32 && ev.value !== undefined) currentLsb = ev.value;
+      }
+    }
+  }
+
+  const matchedInst = PRESET_INSTRUMENTS.find(i => i.pc === currentPc && (currentMsb === 0 || i.msb === currentMsb))
+    || PRESET_INSTRUMENTS.find(i => i.pc === currentPc);
+  const voiceName = matchedInst ? matchedInst.label : `自訂音色 (PC ${currentPc}, Bank ${currentMsb}-${currentLsb})`;
+
   badgeEl.textContent = `音符範圍 Tick: ${firstNoteTick} ~ ${lastNoteTick} (約 ${actualBars} 小節)`;
-  summaryEl.textContent = `共 ${notes.length} 顆音符 | 音域: ${midiNoteToName(minNote)} (${minNote}) ~ ${midiNoteToName(maxNote)} (${maxNote}) | 平均力度: ${avgVel}`;
+  summaryEl.innerHTML = `<span style="display: inline-block; padding: 2px 8px; border-radius: 4px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-weight: 600; margin-right: 8px;">演奏音色: ${voiceName}</span> <span>共 ${notes.length} 顆音符</span> | <span>音域: ${midiNoteToName(minNote)} (${minNote}) ~ ${midiNoteToName(maxNote)} (${maxNote})</span> | <span>平均力度: ${avgVel}</span>`;
 
   drawNoteRoll(canvas, notes, firstNoteTick, lastNoteTick, minNote, maxNote, padNum);
 }
@@ -685,6 +801,18 @@ function renderParts(parsed: YamahaFileParsed) {
           bankLsb: lsb,
           programChange: program,
         });
+
+        // 反向同步上方 Pad 卡片的樂器下拉選單
+        updatePadCardInstrumentSelect(padNum, msb, lsb, program);
+
+        // 若當前畫面正在檢視此 Pad，立即刷新詳細資訊面板
+        if (currentActivePadNum === padNum) {
+          const sec = parsed.sections[padIdx];
+          const nameInput = document.querySelector(`.pad-card-${padNum} .pad-name-input`) as HTMLInputElement | null;
+          const currentName = nameInput ? nameInput.value : `Pad ${padNum}`;
+          if (sec) showPadNotesDetail(parsed, sec, currentName, padNum);
+        }
+
         markModified(`Pad ${padNum} 音色調整為: Bank ${msb}-${lsb}, PC ${program}`);
       };
 
