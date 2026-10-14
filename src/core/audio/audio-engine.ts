@@ -202,6 +202,28 @@ export class AudioEngine {
   }
 
   /**
+   * 試聽單一音符/音色 (例如在音色庫彈奏預聽)
+   */
+  public playAuditionNote(note: number = 60, durationSec: number = 0.6, params: ChannelAudioParams = {}) {
+    this.init();
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    this.triggerVoice(note, 100, now, durationSec, params);
+
+    if (this.selectedMidiOutput) {
+      const ch = (this.currentPadNum ?? 1) - 1;
+      try {
+        this.selectedMidiOutput.send([0x90 | ch, note, 100]);
+        setTimeout(() => {
+          try {
+            this.selectedMidiOutput?.send([0x80 | ch, note, 0]);
+          } catch {}
+        }, durationSec * 1000);
+      } catch {}
+    }
+  }
+
+  /**
    * 播放指定音符序列
    */
   public playSequence(

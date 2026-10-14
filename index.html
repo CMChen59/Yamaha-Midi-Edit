@@ -159,6 +159,65 @@
     </main>
   </div>
 
+  <!-- Yamaha PSR-SX920 原廠音色搜尋與替換視窗 (Voice Search Modal) -->
+  <div id="voice-search-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div>
+          <h3 class="modal-title">🎹 Yamaha PSR-SX920 原廠音色庫搜尋</h3>
+          <p class="modal-subtitle">即時搜尋 1,500+ 原廠音色、查看 MSB-LSB-PC 身分證並一鍵套用至打擊墊</p>
+        </div>
+        <button type="button" id="btn-close-voice-modal" class="modal-close-btn" title="關閉視窗">&times;</button>
+      </div>
+
+      <!-- 目標 Pad 選擇提示 -->
+      <div class="modal-target-bar">
+        <span>目前套用目標：</span>
+        <span id="modal-target-pad-badge" class="target-pad-badge">Pad 1</span>
+        <span style="color: #64748b; font-size: 0.75rem; margin-left: 8px;">(點選音色後將自動更新此 Pad 的三聯號與圖示代碼)</span>
+      </div>
+
+      <!-- 搜尋列 -->
+      <div class="modal-search-bar">
+        <div class="search-input-wrapper">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="voice-search-input" placeholder="輸入樂器名稱 (如 Concert, Strings, Pizz)、中文 (鋼琴, 弦樂) 或三聯號 (0-113-75)..." />
+          <button type="button" id="btn-clear-voice-search" class="clear-search-btn" style="display: none;">&times;</button>
+        </div>
+      </div>
+
+      <!-- 分類標籤快捷列 -->
+      <div class="category-pills" id="voice-category-pills">
+        <!-- 動態渲染各分類標籤 -->
+      </div>
+
+      <!-- 音色結果列表 -->
+      <div class="voice-list-container">
+        <table class="voice-table">
+          <thead>
+            <tr>
+              <th style="width: 50px; text-align: center;">圖標</th>
+              <th>音色名稱 (英文 / 繁體中文說明)</th>
+              <th style="width: 100px;">樂器分類</th>
+              <th style="width: 75px; text-align: center;">類型</th>
+              <th style="width: 110px;">Bank MSB-LSB</th>
+              <th style="width: 70px;">Program</th>
+              <th style="width: 140px; text-align: center;">操作</th>
+            </tr>
+          </thead>
+          <tbody id="voice-list-tbody">
+            <!-- 動態渲染音色列表 -->
+          </tbody>
+        </table>
+      </div>
+
+      <div class="modal-footer">
+        <span id="voice-count-label" style="font-size: 0.8rem; color: #94a3b8;">共 0 種音色符合</span>
+        <button type="button" id="btn-close-modal-footer" class="btn btn-secondary" style="padding: 4px 14px; font-size: 0.8rem;">關閉</button>
+      </div>
+    </div>
+  </div>
+
   <script type="module" src="./src/ui/app.ts"></script>
 </body>
 </html>

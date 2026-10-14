@@ -4,6 +4,13 @@ import { YamahaPadModifier } from '../core/writer/pad-modifier';
 import { audioEngine } from '../core/audio/audio-engine';
 import type { NoteEvent, PlaybackState } from '../core/audio/audio-engine';
 import type { YamahaFileParsed, YamahaSection, MidiTrack } from '../core/models/types';
+import {
+  findYamahaVoice,
+  searchYamahaVoices,
+  VOICE_CATEGORIES,
+  YamahaVoice,
+  VoiceCategory,
+} from '../core/data/yamaha-voices';
 
 console.log('[Yamaha App] 系統腳本已載入');
 
@@ -107,6 +114,7 @@ function updatePadCardInstrumentSelect(padNum: number, msb: number, lsb: number,
   const select = document.querySelector(`.pad-card-${padNum} .inst-select`) as HTMLSelectElement | null;
   if (!select) return;
 
+  const yVoice = findYamahaVoice(msb, lsb, pc);
   const matched = PRESET_INSTRUMENTS.find(i => i.pc === pc && (msb === 0 || i.msb === msb))
     || PRESET_INSTRUMENTS.find(i => i.pc === pc);
 
@@ -119,8 +127,250 @@ function updatePadCardInstrumentSelect(padNum: number, msb: number, lsb: number,
       customOpt.value = 'custom';
       select.appendChild(customOpt);
     }
-    customOpt.textContent = `⚙️ 自訂音色 (PC ${pc}, Bank ${msb}-${lsb})`;
+    if (yVoice) {
+      customOpt.textContent = `🎹 ${yVoice.name} (${yVoice.chineseName})`;
+    } else {
+      customOpt.textContent = `⚙️ 自訂音色 (PC ${pc}, Bank ${msb}-${lsb})`;
+    }
     select.value = 'custom';
+  }
+}
+
+// ========================================================
+// Yamaha PSR-SX920 原廠音色搜尋與替換面板控制 (Voice Modal)
+// ========================================================
+let targetModalPadNum: number = 1;
+let currentModalCategory: VoiceCategory | 'ALL' = 'ALL';
+let currentModalSearchQuery: string = '';
+
+function initVoiceSearchModal() {
+  const modal = document.getElementById('voice-search-modal');
+  const btnClose = document.getElementById('btn-close-voice-modal');
+  const btnCloseFooter = document.getElementById('btn-close-modal-footer');
+  const searchInput = document.getElementById('voice-search-input') as HTMLInputElement | null;
+  const btnClearSearch = document.getElementById('btn-clear-voice-search');
+  const pillsContainer = document.getElementById('voice-category-pills');
+
+  if (!modal) return;
+
+  const handleClose = () => closeVoiceModal();
+  if (btnClose) btnClose.addEventListener('click', handleClose);
+  if (btnCloseFooter) btnCloseFooter.addEventListener('click', handleClose);
+
+  // 點選遮罩背景關閉
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeVoiceModal();
+  });
+
+  // 按下 ESC 鍵關閉
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal.style.display !== 'none') {
+      closeVoiceModal();
+    }
+  });
+
+  // 即時搜尋輸入監聽
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      currentModalSearchQuery = searchInput.value.trim();
+      if (btnClearSearch) {
+        btnClearSearch.style.display = searchInput.value ? 'block' : 'none';
+      }
+      renderVoiceModalList();
+    });
+  }
+
+  // 清除搜尋框內容
+  if (btnClearSearch && searchInput) {
+    btnClearSearch.addEventListener('click', () => {
+      searchInput.value = '';
+      currentModalSearchQuery = '';
+      btnClearSearch.style.display = 'none';
+      searchInput.focus();
+      renderVoiceModalList();
+    });
+  }
+
+  // 動態渲染各分類標籤
+  if (pillsContainer) {
+    pillsContainer.innerHTML = '';
+    VOICE_CATEGORIES.forEach((cat) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `cat-pill ${cat.key === currentModalCategory ? 'active' : ''}`;
+      btn.innerHTML = `${cat.icon} ${cat.label}`;
+      btn.addEventListener('click', () => {
+        currentModalCategory = cat.key;
+        pillsContainer.querySelectorAll('.cat-pill').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        renderVoiceModalList();
+      });
+      pillsContainer.appendChild(btn);
+    });
+  }
+}
+
+function openVoiceModal(padNum: number) {
+  const modal = document.getElementById('voice-search-modal');
+  const badge = document.getElementById('modal-target-pad-badge');
+  const searchInput = document.getElementById('voice-search-input') as HTMLInputElement | null;
+  if (!modal) return;
+
+  targetModalPadNum = padNum;
+  if (badge) {
+    badge.textContent = `Pad ${padNum}`;
+  }
+
+  modal.style.display = 'flex';
+  if (searchInput) {
+    setTimeout(() => searchInput.focus(), 60);
+  }
+  renderVoiceModalList();
+}
+
+function closeVoiceModal() {
+  const modal = document.getElementById('voice-search-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+function auditionSingleVoice(voice: YamahaVoice) {
+  let pitch = 60; // C4
+  let isDrum = false;
+
+  if (voice.category === 'Bass') pitch = 48; // C3
+  else if (voice.category === 'Woodwind') pitch = 72; // C5
+  else if (voice.category === 'Drums' || voice.category === 'Percussion') {
+    isDrum = true;
+    pitch = 38; // Snare
+  }
+
+  let instrumentId = 'grand-piano';
+  if (voice.category === 'Piano' || voice.category === 'E.Piano') {
+    instrumentId = 'grand-piano';
+  } else if (voice.category === 'Strings') {
+    instrumentId = voice.id.includes('pizz') ? 'pizzicato' : 'strings';
+  } else if (voice.category === 'Guitar') {
+    instrumentId = 'guitar';
+  } else if (voice.category === 'Bass') {
+    instrumentId = 'bass';
+  } else if (voice.category === 'Saxophone' || voice.category === 'Brass') {
+    instrumentId = 'brass';
+  } else if (voice.category === 'Woodwind') {
+    instrumentId = 'flute';
+  }
+
+  audioEngine.playAuditionNote(pitch, 0.7, {
+    instrumentId,
+    pc: voice.pc,
+    isDrum,
+  });
+}
+
+function applyVoiceToPad(padNum: number, voice: YamahaVoice) {
+  if (!currentParsed) return;
+
+  // 1. 更新 Track 0 的 Yamaha 圖示代碼 (I1~I4)
+  YamahaPadModifier.setPadIcon(currentParsed, padNum, voice.icon);
+
+  // 2. 更新 Track 混音 Bank MSB, Bank LSB, Program Change
+  YamahaPadModifier.setPadMixing(currentParsed, padNum, {
+    bankMsb: voice.msb,
+    bankLsb: voice.lsb,
+    programChange: voice.pc,
+  });
+
+  // 3. 同步下方表格與卡片輸入框
+  updatePartsTableRowVoice(padNum, voice.msb, voice.lsb, voice.pc);
+  updatePadCardInstrumentSelect(padNum, voice.msb, voice.lsb, voice.pc);
+
+  // 4. 若當前畫面正在檢視此 Pad，立即刷新詳細資訊面板
+  if (currentActivePadNum === padNum) {
+    const sec = currentParsed.sections[padNum - 1];
+    const nameInput = document.querySelector(`.pad-card-${padNum} .pad-name-input`) as HTMLInputElement | null;
+    const currentName = nameInput ? nameInput.value : `Pad ${padNum}`;
+    if (sec) showPadNotesDetail(currentParsed, sec, currentName, padNum);
+  }
+
+  // 5. 觸發試聽音
+  auditionSingleVoice(voice);
+
+  // 6. 標記變更
+  markModified(`Pad ${padNum} 音色已更換為: ${voice.name} (${voice.chineseName}) [Bank ${voice.msb}-${voice.lsb}, PC ${voice.pc}]`);
+
+  // 7. 關閉視窗
+  closeVoiceModal();
+}
+
+function renderVoiceModalList() {
+  const tbody = document.getElementById('voice-list-tbody');
+  const countLabel = document.getElementById('voice-count-label');
+  if (!tbody) return;
+
+  const voices = searchYamahaVoices(currentModalSearchQuery, currentModalCategory);
+
+  if (countLabel) {
+    countLabel.textContent = `共 ${voices.length} 種音色符合`;
+  }
+
+  if (voices.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="7" style="text-align: center; padding: 36px 12px; color: #94a3b8;">
+          <div style="font-size: 1.8rem; margin-bottom: 8px;">🔍</div>
+          <div>找不到符合條件的 Yamaha 原廠音色</div>
+          <div style="font-size: 0.75rem; color: #64748b; margin-top: 4px;">請嘗試更換關鍵字、樂器類別或清除搜尋篩選</div>
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = '';
+  for (const voice of voices) {
+    const tr = document.createElement('tr');
+    tr.className = 'voice-row';
+
+    const catMeta = VOICE_CATEGORIES.find(c => c.key === voice.category);
+    const catIcon = catMeta ? catMeta.icon : '🎵';
+
+    let typeClass = 'standard';
+    if (voice.type === 'S.Art!') typeClass = 'sart';
+    else if (voice.type === 'Live!') typeClass = 'live';
+    else if (voice.type === 'Sweet!') typeClass = 'sweet';
+    else if (voice.type === 'Cool!') typeClass = 'cool';
+    else if (voice.type === 'MegaVoice') typeClass = 'megavoice';
+
+    tr.innerHTML = `
+      <td style="text-align: center; font-size: 1.2rem;">${catIcon}</td>
+      <td>
+        <div style="font-weight: 600; color: #fff;">${voice.name}</div>
+        <div style="font-size: 0.74rem; color: #94a3b8;">${voice.chineseName}</div>
+      </td>
+      <td><span style="font-size: 0.78rem; color: #cbd5e1;">${voice.category}</span></td>
+      <td style="text-align: center;">
+        <span class="voice-type-badge voice-type-${typeClass}">${voice.type || 'Standard'}</span>
+      </td>
+      <td><code style="font-family: monospace; color: #38bdf8; font-size: 0.8rem;">${voice.msb} - ${voice.lsb}</code></td>
+      <td><code style="font-family: monospace; color: #f59e0b; font-size: 0.8rem;">${voice.pc}</code></td>
+      <td style="text-align: center; white-space: nowrap;">
+        <button type="button" class="btn-preview-voice" title="試聽此音色發聲">▶ 試聽</button>
+        <button type="button" class="btn-apply-voice" title="套用至 Pad ${targetModalPadNum}">套用</button>
+      </td>
+    `;
+
+    const btnPreview = tr.querySelector('.btn-preview-voice') as HTMLButtonElement;
+    btnPreview.addEventListener('click', (e) => {
+      e.stopPropagation();
+      auditionSingleVoice(voice);
+    });
+
+    const btnApply = tr.querySelector('.btn-apply-voice') as HTMLButtonElement;
+    btnApply.addEventListener('click', (e) => {
+      e.stopPropagation();
+      applyVoiceToPad(targetModalPadNum, voice);
+    });
+
+    tbody.appendChild(tr);
   }
 }
 
@@ -228,6 +478,9 @@ function initEvents() {
       updateAuditionUIState(null);
     });
   }
+
+  // 初始化 Yamaha PSR-SX920 原廠音色庫搜尋彈窗
+  initVoiceSearchModal();
 }
 
 // 處理本機檔案
@@ -538,7 +791,8 @@ function renderSections(parsed: YamahaFileParsed) {
       // 檢查 Track 0 原始檔案所帶的 Yamaha Icon 代碼 (如 'S809')
       const currentIcon = parsed.padConfig?.icons[padIdx];
 
-      // 智慧比對目前最符合的預設樂器
+      // 智慧比對目前最符合的預設樂器或 Yamaha 原廠音色
+      const yVoice = findYamahaVoice(currentMsb, currentLsb, currentPc);
       let matchedInst = PRESET_INSTRUMENTS.find(inst => inst.pc === currentPc && (currentMsb === 0 || inst.msb === currentMsb));
       if (!matchedInst) {
         matchedInst = PRESET_INSTRUMENTS.find(inst => inst.pc === currentPc);
@@ -554,7 +808,11 @@ function renderSections(parsed: YamahaFileParsed) {
         .map(inst => `<option value="${inst.id}" ${inst.id === selectedId ? 'selected' : ''}>${inst.label}</option>`)
         .join('');
       if (isCustomVoice) {
-        iconOptionsHtml += `<option value="custom" selected>⚙️ 自訂音色 (PC ${currentPc}, Bank ${currentMsb}-${currentLsb})</option>`;
+        if (yVoice) {
+          iconOptionsHtml += `<option value="custom" selected>🎹 ${yVoice.name} (${yVoice.chineseName})</option>`;
+        } else {
+          iconOptionsHtml += `<option value="custom" selected>⚙️ 自訂音色 (PC ${currentPc}, Bank ${currentMsb}-${currentLsb})</option>`;
+        }
       }
 
       item.innerHTML = `
@@ -577,6 +835,7 @@ function renderSections(parsed: YamahaFileParsed) {
             <select class="icon-select inst-select" title="更換演奏樂器與音色 (更換後下表與音軌將同步連動)">
               ${iconOptionsHtml}
             </select>
+            <button type="button" class="btn-open-voice-modal" data-pad="${padNum}" title="開啟 Yamaha PSR-SX920 原廠音色庫搜尋視窗">🔍 音色庫</button>
           </div>
         </div>
       `;
@@ -587,6 +846,15 @@ function renderSections(parsed: YamahaFileParsed) {
         btnAudition.addEventListener('click', (e) => {
           e.stopPropagation();
           togglePadAudition(padNum);
+        });
+      }
+
+      // 0.5 原廠音色庫搜尋按鈕事件
+      const btnOpenVoice = item.querySelector(`.btn-open-voice-modal[data-pad="${padNum}"]`) as HTMLButtonElement | null;
+      if (btnOpenVoice) {
+        btnOpenVoice.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openVoiceModal(padNum);
         });
       }
 
@@ -794,9 +1062,12 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLab
     }
   }
 
+  const yVoice = findYamahaVoice(currentMsb, currentLsb, currentPc);
   const matchedInst = PRESET_INSTRUMENTS.find(i => i.pc === currentPc && (currentMsb === 0 || i.msb === currentMsb))
     || PRESET_INSTRUMENTS.find(i => i.pc === currentPc);
-  const voiceName = matchedInst ? matchedInst.label : `自訂音色 (PC ${currentPc}, Bank ${currentMsb}-${currentLsb})`;
+  const voiceName = yVoice
+    ? `${yVoice.name} (${yVoice.chineseName})`
+    : (matchedInst ? matchedInst.label : `自訂音色 (PC ${currentPc}, Bank ${currentMsb}-${currentLsb})`);
 
   badgeEl.textContent = `音符範圍 Tick: ${firstNoteTick} ~ ${lastNoteTick} (共 ${actualBars} 小節)`;
   summaryEl.innerHTML = `<span style="display: inline-block; padding: 2px 8px; border-radius: 4px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-weight: 600; margin-right: 8px;">演奏音色: ${voiceName}</span> <span>共 ${notes.length} 顆音符</span> | <span>音域: ${midiNoteToName(minNote)} (${minNote}) ~ ${midiNoteToName(maxNote)} (${maxNote})</span> | <span>平均力度: ${avgVel}</span>`;
@@ -1574,7 +1845,10 @@ function renderParts(parsed: YamahaFileParsed) {
           </div>
         </td>
         <td>
-          <input type="number" min="0" max="127" class="mixing-num-input pc-${padNum}" value="${pc ?? 0}" title="Program Change (音色代碼 0~127)" />
+          <div style="display: flex; gap: 4px; align-items: center;">
+            <input type="number" min="0" max="127" class="mixing-num-input pc-${padNum}" value="${pc ?? 0}" title="Program Change (音色代碼 0~127)" />
+            <button type="button" class="btn-open-voice-modal" data-pad="${padNum}" title="開啟 Yamaha PSR-SX920 原廠音色庫搜尋視窗" style="padding: 2px 6px;">🔍 庫</button>
+          </div>
         </td>
         <td>
           <div class="mixing-slider-container">
@@ -1658,6 +1932,14 @@ function renderParts(parsed: YamahaFileParsed) {
       inputMsb.addEventListener('change', onVoiceChange);
       inputLsb.addEventListener('change', onVoiceChange);
       inputPc.addEventListener('change', onVoiceChange);
+
+      const btnOpenMixerVoice = tr.querySelector(`.btn-open-voice-modal[data-pad="${padNum}"]`) as HTMLButtonElement | null;
+      if (btnOpenMixerVoice) {
+        btnOpenMixerVoice.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openVoiceModal(padNum);
+        });
+      }
 
       // 點擊該列直接連動展開上方對應的 Pad 卡片
       tr.addEventListener('click', (e) => {
