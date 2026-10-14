@@ -114,4 +114,45 @@ describe('步驟 2.1: Pad 屬性與混音編輯雙向同步驗證 (PadModifier V
     expect(note65OnVel).toBe(118);
     expect(note65Dur).toBe(192);
   });
+
+  it('能成功平移修改音符的起始時間位置 (startTick) 與音高 (note)', () => {
+    const sample1Path = path.resolve(__dirname, '../samples/4006-1_PAD.PAD');
+    const rawBuffer = new Uint8Array(fs.readFileSync(sample1Path));
+    const parsed = YamahaParser.parse(rawBuffer, 'PAD');
+
+    // 將 Pad 1 第一顆音符 (Note 65, Start 4608, Dur 384) 移動到 Start 4800，音高改為 67 (G4)
+    const success = YamahaPadModifier.updateNoteEvent(
+      parsed,
+      1,
+      { note: 65, startTick: 4608, oldDurationTick: 384 },
+      { startTick: 4800, note: 67 }
+    );
+    expect(success).toBe(true);
+
+    // 導出二進位並重新解析
+    const modifiedBytes = YamahaWriter.write(parsed);
+    const reParsed = YamahaParser.parse(modifiedBytes, 'PAD');
+
+    let curTick = 0;
+    const trk1 = reParsed.tracks[1];
+    let note67OnTick: number | undefined;
+    let note67OffTick: number | undefined;
+
+    for (const ev of trk1.events) {
+      curTick += ev.delta;
+      if (ev.type === 'noteOn' && ev.noteNumber === 67 && ev.velocity && ev.velocity > 0) {
+        if (note67OnTick === undefined) {
+          note67OnTick = curTick;
+        }
+      } else if ((ev.type === 'noteOff' || (ev.type === 'noteOn' && ev.velocity === 0)) && ev.noteNumber === 67) {
+        if (note67OnTick !== undefined && note67OffTick === undefined) {
+          note67OffTick = curTick;
+        }
+      }
+    }
+
+    expect(note67OnTick).toBe(4800);
+    // 音長維持 384，所以 Note-Off 應在 4800 + 384 = 5184
+    expect(note67OffTick).toBe(5184);
+  });
 });

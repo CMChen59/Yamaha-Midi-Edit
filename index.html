@@ -113,9 +113,13 @@
                 <span class="inspector-label">音名:</span>
                 <span id="insp-pitch-name" class="inspector-val-pitch">E5 (76)</span>
               </div>
-              <div class="inspector-item">
+              <div class="inspector-item" style="display: flex; align-items: center; gap: 4px;">
                 <span class="inspector-label">位置:</span>
-                <span id="insp-position-text" class="inspector-val-pos">第 2 小節 第 4.5 拍</span>
+                <button type="button" id="btn-nudge-prev-bar" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem;" title="往前移動 1 小節">⏪</button>
+                <button type="button" id="btn-nudge-prev-beat" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem;" title="往前移動 1 拍">◀</button>
+                <span id="insp-position-text" class="inspector-val-pos" style="min-width: 95px; text-align: center; font-variant-numeric: tabular-nums;">第 2 小節 第 4.5 拍</span>
+                <button type="button" id="btn-nudge-next-beat" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem;" title="往後移動 1 拍">▶</button>
+                <button type="button" id="btn-nudge-next-bar" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem;" title="往後移動 1 小節">⏩</button>
               </div>
               <div class="inspector-item">
                 <label for="insp-duration-input" class="inspector-label">音長(Ticks):</label>

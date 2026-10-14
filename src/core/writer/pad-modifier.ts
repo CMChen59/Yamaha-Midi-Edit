@@ -219,13 +219,13 @@ export class YamahaPadModifier {
   }
 
   /**
-   * 更新指定 Pad 音軌中特定音符的力度 (Velocity) 與長度 (Duration Ticks)
+   * 更新指定 Pad 音軌中特定音符的力度 (Velocity)、長度 (Duration Ticks)、起始位置 (Start Tick) 或音高 (Note Number)
    */
   public static updateNoteEvent(
     parsed: YamahaFileParsed,
     padNum: number,
     target: { note: number; startTick: number; oldDurationTick: number },
-    updates: { velocity?: number; durationTick?: number }
+    updates: { velocity?: number; durationTick?: number; startTick?: number; note?: number }
   ): boolean {
     const track = parsed.tracks[padNum];
     if (!track || !track.events) return false;
@@ -267,6 +267,11 @@ export class YamahaPadModifier {
 
     let modified = false;
 
+    // 計算當前有效音長 (供移動起始位置時保持音長)
+    const effectiveDur = updates.durationTick !== undefined
+      ? Math.max(1, Math.round(updates.durationTick))
+      : (offEntry ? offEntry.absTick - onEntry.absTick : target.oldDurationTick);
+
     // 更新力度 (Velocity)
     if (updates.velocity !== undefined) {
       const newVel = Math.max(1, Math.min(127, Math.round(updates.velocity)));
@@ -274,10 +279,23 @@ export class YamahaPadModifier {
       modified = true;
     }
 
-    // 更新音長 (Duration Ticks)
-    if (updates.durationTick !== undefined && offEntry) {
-      const newDur = Math.max(1, Math.round(updates.durationTick));
-      offEntry.absTick = onEntry.absTick + newDur;
+    // 更新音高 (Note Number)
+    if (updates.note !== undefined) {
+      const newNote = Math.max(0, Math.min(127, Math.round(updates.note)));
+      onEntry.ev.noteNumber = newNote;
+      if (offEntry) offEntry.ev.noteNumber = newNote;
+      modified = true;
+    }
+
+    // 更新起始位置 (Start Tick)
+    if (updates.startTick !== undefined) {
+      const newStart = Math.max(0, Math.round(updates.startTick));
+      onEntry.absTick = newStart;
+      if (offEntry) offEntry.absTick = newStart + effectiveDur;
+      modified = true;
+    } else if (updates.durationTick !== undefined && offEntry) {
+      // 若只更新音長，不變更起始位置
+      offEntry.absTick = onEntry.absTick + effectiveDur;
       modified = true;
     }
 
@@ -285,8 +303,12 @@ export class YamahaPadModifier {
 
     // 保證 End of Track (0x2F) 不早於任何事件
     const endMeta = annotated.find((item) => item.ev.type === 'meta' && item.ev.metaType === 0x2f);
-    if (endMeta && offEntry && offEntry.absTick > endMeta.absTick) {
-      endMeta.absTick = offEntry.absTick;
+    if (endMeta) {
+      for (const item of annotated) {
+        if (item.ev !== endMeta.ev && item.absTick > endMeta.absTick) {
+          endMeta.absTick = item.absTick;
+        }
+      }
     }
 
     // 依據 absTick 重新排序，若 absTick 相同則維持原有相對順序

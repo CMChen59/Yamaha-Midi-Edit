@@ -1233,6 +1233,15 @@ let resizingPreviewDuration: { startTick: number; note: number; durationTick: nu
 let currentPlotW = 1000;
 let currentWindowTotalTicks = 384;
 
+// 音符平移調整狀態 (Note Position Moving State)
+let isMovingNote = false;
+let movingTargetNote: RenderedNoteBox | null = null;
+let movingStartMouseX = 0;
+let movingStartTick = 0;
+let currentMovingStartTick = 0;
+let movingPreviewStartTick: { oldStartTick: number; note: number; newStartTick: number } | null = null;
+let currentGridStartTick = 0;
+
 function isMouseNearRightEdge(b: RenderedNoteBox, mouseX: number, mouseY: number): boolean {
   if (mouseY < b.y - 2 || mouseY > b.y + b.h + 2) return false;
   const rightEdge = b.x + b.w;
@@ -1244,7 +1253,7 @@ function resetHoverInfo() {
   hoveredNoteBox = null;
   const hoverInfoEl = document.getElementById('canvas-hover-info');
   if (hoverInfoEl) {
-    hoverInfoEl.textContent = '💡 點選任意音符可開啟屬性檢查器，移至音符右邊緣 ↔ 可拖曳縮放音長';
+    hoverInfoEl.textContent = '💡 點選任意音符可開啟屬性檢查器，拖曳音符可平移小節/拍點，移至右邊緣 ↔ 可縮放音長';
     hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.08)';
   }
 }
@@ -1292,6 +1301,7 @@ function drawNoteRoll(
 
   // 時間基準：向左對齊至整數小節起點
   const gridStartTick = Math.floor(firstNoteTick / ticksPerBar) * ticksPerBar;
+  currentGridStartTick = gridStartTick;
   const totalDurationTicks = Math.max(lastNoteTick - gridStartTick, ticksPerBar);
   const totalBars = Math.max(1, Math.ceil(totalDurationTicks / ticksPerBar));
   currentTotalBars = totalBars;
@@ -1525,17 +1535,26 @@ function drawNoteRoll(
     const boxes: RenderedNoteBox[] = [];
 
     for (const n of notes) {
+      let currentStartTick = n.startTick;
       let currentDuration = n.durationTick;
+
+      // 邊緣拖曳縮放預覽
       if (resizingPreviewDuration && resizingPreviewDuration.startTick === n.startTick && resizingPreviewDuration.note === n.note) {
         currentDuration = resizingPreviewDuration.durationTick;
       }
-      const noteEndTick = n.startTick + currentDuration;
+
+      // 本體拖曳平移預覽
+      if (movingPreviewStartTick && movingPreviewStartTick.oldStartTick === n.startTick && movingPreviewStartTick.note === n.note) {
+        currentStartTick = movingPreviewStartTick.newStartTick;
+      }
+
+      const noteEndTick = currentStartTick + currentDuration;
       // 排除視窗以外的音符
-      if (noteEndTick <= windowStartTick || n.startTick >= windowEndTick) {
+      if (noteEndTick <= windowStartTick || currentStartTick >= windowEndTick) {
         continue;
       }
 
-      const relTick = n.startTick - windowStartTick;
+      const relTick = currentStartTick - windowStartTick;
       const x = scaleW + (relTick / windowTotalTicks) * plotW;
       const noteW = Math.max((currentDuration / windowTotalTicks) * plotW, 5);
       const rowY = rulerH + (displayMaxNote - n.note) * semitoneH;
@@ -1543,13 +1562,13 @@ function drawNoteRoll(
       const noteY = rowY + 1;
 
       // 絕對位置以全段 gridStartTick 為基準計算
-      const absRelTick = n.startTick - gridStartTick;
+      const absRelTick = currentStartTick - gridStartTick;
       const pos = formatNotePosition(absRelTick, ticksPerBeat, beatsPerBar);
 
       const box: RenderedNoteBox = {
         x, y: noteY, w: noteW, h: noteH,
         note: n.note, velocity: n.velocity,
-        startTick: n.startTick, durationTick: currentDuration,
+        startTick: currentStartTick, durationTick: currentDuration,
         posChinese: pos.chinese,
         posStandard: pos.standard,
         posDisplayFull: pos.displayFull,
@@ -1559,8 +1578,8 @@ function drawNoteRoll(
       const isSelected = selectedNoteBox && selectedNoteBox.startTick === n.startTick && selectedNoteBox.note === n.note;
       const isHovered = highlightedBox && highlightedBox.startTick === n.startTick && highlightedBox.note === n.note;
       const isSounding = playheadRelTick !== null && playheadRelTick !== undefined &&
-        (playheadRelTick >= (n.startTick - gridStartTick)) &&
-        (playheadRelTick < (n.startTick + currentDuration - gridStartTick));
+        (playheadRelTick >= (currentStartTick - gridStartTick)) &&
+        (playheadRelTick < (currentStartTick + currentDuration - gridStartTick));
 
       // 依據 velocity 力度調整透明度
       const alpha = (isSelected || isHovered || isSounding) ? 1.0 : (0.55 + (n.velocity / 127) * 0.45);
@@ -1794,7 +1813,7 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
   const hoverInfoEl = document.getElementById('canvas-hover-info');
 
   canvas.addEventListener('mousemove', (e) => {
-    if (isResizingNote) return;
+    if (isResizingNote || isMovingNote) return;
 
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
@@ -1813,7 +1832,7 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
     if (edgeHit) {
       canvas.style.cursor = 'ew-resize';
     } else if (bodyHit) {
-      canvas.style.cursor = 'pointer';
+      canvas.style.cursor = 'grab';
     } else {
       canvas.style.cursor = 'default';
     }
@@ -1832,16 +1851,16 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
         hoverInfoEl.style.backgroundColor = 'rgba(245, 158, 11, 0.16)';
       } else if (bodyHit) {
         const durStr = formatNoteDuration(bodyHit.durationTick, currentTicksPerBeat, currentBeatsPerBar);
-        hoverInfoEl.innerHTML = `🎯 音符: <strong>${midiNoteToName(bodyHit.note)}</strong> (${bodyHit.note}) ｜ 位置: ${bodyHit.posDisplayFull} ｜ 音長: <strong>${durStr}</strong> ｜ 力度: <strong>${bodyHit.velocity}</strong>`;
+        hoverInfoEl.innerHTML = `🎯 音符: <strong>${midiNoteToName(bodyHit.note)}</strong> (${bodyHit.note}) ｜ 位置: ${bodyHit.posDisplayFull} ｜ 音長: <strong>${durStr}</strong> ｜ 力度: <strong>${bodyHit.velocity}</strong> ｜ ↔ 拖曳可平移位置 ｜ 右邊緣 ↔ 縮放音長`;
         hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.16)';
       } else {
-        hoverInfoEl.textContent = '💡 點選任意音符可開啟屬性檢查器，移至音符右邊緣 ↔ 可拖曳縮放音長';
+        hoverInfoEl.textContent = '💡 點選任意音符可開啟屬性檢查器，拖曳音符可平移小節/拍點，移至右邊緣 ↔ 可縮放音長';
         hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.08)';
       }
     }
   });
 
-  // 音符右邊緣拖曳縮放開始 (Mousedown to start resize)
+  // 音符拖曳開始 (Mousedown to start resize or move)
   canvas.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return; // 僅限滑鼠左鍵
     const rect = canvas.getBoundingClientRect();
@@ -1852,6 +1871,11 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
 
     const reversedBoxes = [...lastRenderedNoteBoxes].reverse();
     const edgeHit = reversedBoxes.find(b => isMouseNearRightEdge(b, mouseX, mouseY));
+    const bodyHit = edgeHit || reversedBoxes.find(b =>
+      mouseX >= b.x && mouseX <= b.x + b.w &&
+      mouseY >= b.y && mouseY <= b.y + b.h
+    );
+
     if (edgeHit) {
       isResizingNote = true;
       resizingTargetNote = edgeHit;
@@ -1864,101 +1888,187 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
       document.body.style.cursor = 'ew-resize';
       canvas.style.cursor = 'ew-resize';
       e.preventDefault();
+    } else if (bodyHit) {
+      isMovingNote = true;
+      movingTargetNote = bodyHit;
+      movingStartMouseX = e.clientX;
+      movingStartTick = bodyHit.startTick;
+      currentMovingStartTick = bodyHit.startTick;
+      isDragThresholdMet = false;
+      hasJustDragged = false;
+      selectNote(bodyHit);
+      document.body.style.cursor = 'grabbing';
+      canvas.style.cursor = 'grabbing';
+      e.preventDefault();
     }
   });
 
   // 全域滑鼠拖曳監聽 (Window Mousemove for smooth dragging outside canvas)
   window.addEventListener('mousemove', (e) => {
-    if (!isResizingNote || !resizingTargetNote) return;
-
-    const deltaClientX = e.clientX - resizingStartMouseX;
-    if (Math.abs(deltaClientX) > 2) {
-      isDragThresholdMet = true;
-    }
-
-    const rect = canvas.getBoundingClientRect();
-    const canvasDeltaX = deltaClientX * (canvas.width / rect.width);
-    const deltaTicks = (canvasDeltaX / currentPlotW) * currentWindowTotalTicks;
-
-    let newDur = Math.round(resizingStartDuration + deltaTicks);
-
-    // 網格對齊 (Grid Snap)：預設對齊 1/32 音符 (如 12 ticks 或 60 ticks)，按住 Shift 鍵可 1 Tick 自由微調
-    const isFineTune = e.shiftKey;
-    const snapStep = isFineTune ? 1 : Math.max(12, Math.round(currentTicksPerBeat / 8));
-    newDur = Math.round(newDur / snapStep) * snapStep;
-    newDur = Math.max(isFineTune ? 1 : snapStep, Math.min(newDur, currentWindowTotalTicks * 2));
-
-    if (newDur !== currentResizingDuration) {
-      currentResizingDuration = newDur;
-      resizingPreviewDuration = {
-        startTick: resizingTargetNote.startTick,
-        note: resizingTargetNote.note,
-        durationTick: newDur,
-      };
-      if (currentCanvasRedraw) currentCanvasRedraw();
-
-      if (hoverInfoEl) {
-        const durStr = formatNoteDuration(newDur, currentTicksPerBeat, currentBeatsPerBar);
-        hoverInfoEl.innerHTML = `↔ 拖曳調整音長: <strong>${midiNoteToName(resizingTargetNote.note)}</strong> ｜ 新音長: <strong>${durStr}</strong> (${newDur} ticks)${isFineTune ? ' <span style="color:#f59e0b;font-weight:600;">[精細微調]</span>' : ' <span style="opacity:0.75">(按住 Shift 可 1 Tick 微調)</span>'}`;
-        hoverInfoEl.style.backgroundColor = 'rgba(245, 158, 11, 0.2)';
+    if (isResizingNote && resizingTargetNote) {
+      const deltaClientX = e.clientX - resizingStartMouseX;
+      if (Math.abs(deltaClientX) > 2) {
+        isDragThresholdMet = true;
       }
 
-      const durInput = document.getElementById('insp-duration-input') as HTMLInputElement | null;
-      const durDescEl = document.getElementById('insp-duration-desc');
-      if (durInput) durInput.value = `${newDur}`;
-      if (durDescEl) durDescEl.textContent = `(${formatShortDuration(newDur, currentTicksPerBeat, currentBeatsPerBar)})`;
+      const rect = canvas.getBoundingClientRect();
+      const canvasDeltaX = deltaClientX * (canvas.width / rect.width);
+      const deltaTicks = (canvasDeltaX / currentPlotW) * currentWindowTotalTicks;
+
+      let newDur = Math.round(resizingStartDuration + deltaTicks);
+
+      // 網格對齊 (Grid Snap)：預設對齊 1/32 音符 (如 12 ticks 或 60 ticks)，按住 Shift 鍵可 1 Tick 自由微調
+      const isFineTune = e.shiftKey;
+      const snapStep = isFineTune ? 1 : Math.max(12, Math.round(currentTicksPerBeat / 8));
+      newDur = Math.round(newDur / snapStep) * snapStep;
+      newDur = Math.max(isFineTune ? 1 : snapStep, Math.min(newDur, currentWindowTotalTicks * 2));
+
+      if (newDur !== currentResizingDuration) {
+        currentResizingDuration = newDur;
+        resizingPreviewDuration = {
+          startTick: resizingTargetNote.startTick,
+          note: resizingTargetNote.note,
+          durationTick: newDur,
+        };
+        if (currentCanvasRedraw) currentCanvasRedraw();
+
+        if (hoverInfoEl) {
+          const durStr = formatNoteDuration(newDur, currentTicksPerBeat, currentBeatsPerBar);
+          hoverInfoEl.innerHTML = `↔ 拖曳調整音長: <strong>${midiNoteToName(resizingTargetNote.note)}</strong> ｜ 新音長: <strong>${durStr}</strong> (${newDur} ticks)${isFineTune ? ' <span style="color:#f59e0b;font-weight:600;">[精細微調]</span>' : ' <span style="opacity:0.75">(按住 Shift 可 1 Tick 微調)</span>'}`;
+          hoverInfoEl.style.backgroundColor = 'rgba(245, 158, 11, 0.2)';
+        }
+
+        const durInput = document.getElementById('insp-duration-input') as HTMLInputElement | null;
+        const durDescEl = document.getElementById('insp-duration-desc');
+        if (durInput) durInput.value = `${newDur}`;
+        if (durDescEl) durDescEl.textContent = `(${formatShortDuration(newDur, currentTicksPerBeat, currentBeatsPerBar)})`;
+      }
+    } else if (isMovingNote && movingTargetNote) {
+      const deltaClientX = e.clientX - movingStartMouseX;
+      if (Math.abs(deltaClientX) > 2) {
+        isDragThresholdMet = true;
+      }
+
+      const rect = canvas.getBoundingClientRect();
+      const canvasDeltaX = deltaClientX * (canvas.width / rect.width);
+      const deltaTicks = (canvasDeltaX / currentPlotW) * currentWindowTotalTicks;
+
+      let newStart = Math.max(0, Math.round(movingStartTick + deltaTicks));
+
+      // 網格對齊 (Grid Snap)：預設對齊 1/16 音符 (例如 96 PPQ 下為 24 Ticks, 480 PPQ 下為 120 Ticks)，按住 Shift 鍵可 1 Tick 自由微調
+      const isFineTune = e.shiftKey;
+      const snapStep = isFineTune ? 1 : Math.max(12, Math.round(currentTicksPerBeat / 4));
+      newStart = Math.round(newStart / snapStep) * snapStep;
+      newStart = Math.max(0, newStart);
+
+      if (newStart !== currentMovingStartTick) {
+        currentMovingStartTick = newStart;
+        movingPreviewStartTick = {
+          oldStartTick: movingTargetNote.startTick,
+          note: movingTargetNote.note,
+          newStartTick: newStart,
+        };
+        if (currentCanvasRedraw) currentCanvasRedraw();
+
+        const pos = formatNotePosition(newStart - currentGridStartTick, currentTicksPerBeat, currentBeatsPerBar);
+        if (hoverInfoEl) {
+          hoverInfoEl.innerHTML = `↔ 平移音符位置: <strong>${midiNoteToName(movingTargetNote.note)}</strong> ｜ 新位置: <strong>${pos.displayFull}</strong> (${pos.chinese})${isFineTune ? ' <span style="color:#f59e0b;font-weight:600;">[精細微調]</span>' : ' <span style="opacity:0.75">(按住 Shift 可 1 Tick 微調)</span>'}`;
+          hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.25)';
+        }
+
+        const posEl = document.getElementById('insp-position-text');
+        if (posEl) posEl.textContent = pos.chinese;
+      }
     }
   });
 
-  // 全域滑鼠釋放監聽 (Window Mouseup to commit duration modification)
+  // 全域滑鼠釋放監聽 (Window Mouseup to commit duration or position modification)
   window.addEventListener('mouseup', () => {
-    if (!isResizingNote || !resizingTargetNote) return;
+    if (isResizingNote && resizingTargetNote) {
+      const target = resizingTargetNote;
+      const finalDuration = currentResizingDuration;
+      const didChange = isDragThresholdMet && (finalDuration !== resizingStartDuration);
 
-    const target = resizingTargetNote;
-    const finalDuration = currentResizingDuration;
-    const didChange = isDragThresholdMet && (finalDuration !== resizingStartDuration);
+      isResizingNote = false;
+      resizingTargetNote = null;
+      resizingPreviewDuration = null;
+      document.body.style.cursor = '';
+      if (canvas) canvas.style.cursor = 'default';
 
-    isResizingNote = false;
-    resizingTargetNote = null;
-    resizingPreviewDuration = null;
-    document.body.style.cursor = '';
-    if (canvas) canvas.style.cursor = 'default';
-
-    if (didChange) {
-      hasJustDragged = true;
-      try {
-        if (currentParsed) {
-          YamahaPadModifier.updateNoteEvent(
-            currentParsed,
-            currentCanvasPadNum,
-            { note: target.note, startTick: target.startTick, oldDurationTick: resizingStartDuration },
-            { durationTick: finalDuration }
-          );
-          markModified(`已拖曳微調 Pad ${currentCanvasPadNum} 音符 ${midiNoteToName(target.note)} 音長為 ${finalDuration} Ticks`);
-          refreshCurrentPadDetail();
-          auditionSelectedNote(target.note, finalDuration, target.velocity);
-        }
-      } catch (err: any) {
-        console.error('Failed to update note duration by dragging:', err);
-        if (hoverInfoEl) {
-          hoverInfoEl.innerHTML = `⚠️ <span style="color:#ef4444;">調整音長失敗: ${err.message}</span>`;
-          hoverInfoEl.style.backgroundColor = 'rgba(239, 68, 68, 0.15)';
+      if (didChange) {
+        hasJustDragged = true;
+        try {
+          if (currentParsed) {
+            YamahaPadModifier.updateNoteEvent(
+              currentParsed,
+              currentCanvasPadNum,
+              { note: target.note, startTick: target.startTick, oldDurationTick: resizingStartDuration },
+              { durationTick: finalDuration }
+            );
+            markModified(`已拖曳微調 Pad ${currentCanvasPadNum} 音符 ${midiNoteToName(target.note)} 音長為 ${finalDuration} Ticks`);
+            refreshCurrentPadDetail();
+            auditionSelectedNote(target.note, finalDuration, target.velocity);
+          }
+        } catch (err: any) {
+          console.error('Failed to update note duration by dragging:', err);
+          if (hoverInfoEl) {
+            hoverInfoEl.innerHTML = `⚠️ <span style="color:#ef4444;">調整音長失敗: ${err.message}</span>`;
+            hoverInfoEl.style.backgroundColor = 'rgba(239, 68, 68, 0.15)';
+          }
         }
       }
-    }
 
-    setTimeout(() => {
-      hasJustDragged = false;
-    }, 100);
+      setTimeout(() => {
+        hasJustDragged = false;
+      }, 100);
+    } else if (isMovingNote && movingTargetNote) {
+      const target = movingTargetNote;
+      const finalStart = currentMovingStartTick;
+      const didChange = isDragThresholdMet && (finalStart !== movingStartTick);
+
+      isMovingNote = false;
+      movingTargetNote = null;
+      movingPreviewStartTick = null;
+      document.body.style.cursor = '';
+      if (canvas) canvas.style.cursor = 'default';
+
+      if (didChange) {
+        hasJustDragged = true;
+        try {
+          if (currentParsed) {
+            YamahaPadModifier.updateNoteEvent(
+              currentParsed,
+              currentCanvasPadNum,
+              { note: target.note, startTick: movingStartTick, oldDurationTick: target.durationTick },
+              { startTick: finalStart }
+            );
+            const pos = formatNotePosition(finalStart - currentGridStartTick, currentTicksPerBeat, currentBeatsPerBar);
+            markModified(`已平移 Pad ${currentCanvasPadNum} 音符 ${midiNoteToName(target.note)} 位置至 ${pos.displayFull}`);
+            refreshCurrentPadDetail();
+            auditionSelectedNote(target.note, target.durationTick, target.velocity);
+          }
+        } catch (err: any) {
+          console.error('Failed to move note position by dragging:', err);
+          if (hoverInfoEl) {
+            hoverInfoEl.innerHTML = `⚠️ <span style="color:#ef4444;">移動音符失敗: ${err.message}</span>`;
+            hoverInfoEl.style.backgroundColor = 'rgba(239, 68, 68, 0.15)';
+          }
+        }
+      }
+
+      setTimeout(() => {
+        hasJustDragged = false;
+      }, 100);
+    }
   });
 
   canvas.addEventListener('mouseleave', () => {
-    if (isResizingNote) return;
+    if (isResizingNote || isMovingNote) return;
     if (hoveredNoteBox) {
       hoveredNoteBox = null;
       if (currentCanvasRedraw) currentCanvasRedraw();
       if (hoverInfoEl) {
-        hoverInfoEl.textContent = '💡 點選任意音符可開啟屬性檢查器，移至音符右邊緣 ↔ 可拖曳縮放音長';
+        hoverInfoEl.textContent = '💡 點選任意音符可開啟屬性檢查器，拖曳音符可平移小節/拍點，移至右邊緣 ↔ 可縮放音長';
         hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.08)';
       }
     }
@@ -2113,6 +2223,57 @@ function initNoteInspectorEvents() {
         refreshCurrentPadDetail();
         auditionSelectedNote(selectedNoteBox.note, selectedNoteBox.durationTick, newVel);
       }
+    });
+  }
+
+  // 位置微調快捷鍵 (Nudge Position Buttons: ⏪ 前移1小節, ◀ 前移1拍, ▶ 後移1拍, ⏩ 後移1小節)
+  const btnNudgePrevBeat = document.getElementById('btn-nudge-prev-beat');
+  const btnNudgeNextBeat = document.getElementById('btn-nudge-next-beat');
+  const btnNudgePrevBar = document.getElementById('btn-nudge-prev-bar');
+  const btnNudgeNextBar = document.getElementById('btn-nudge-next-bar');
+
+  const shiftSelectedNotePosition = (tickDelta: number) => {
+    if (!selectedNoteBox || !currentParsed) return;
+    const oldStart = selectedNoteBox.startTick;
+    const newStart = Math.max(0, oldStart + tickDelta);
+    if (newStart === oldStart) return;
+
+    const success = YamahaPadModifier.updateNoteEvent(
+      currentParsed,
+      currentCanvasPadNum,
+      { note: selectedNoteBox.note, startTick: oldStart, oldDurationTick: selectedNoteBox.durationTick },
+      { startTick: newStart }
+    );
+
+    if (success) {
+      selectedNoteBox.startTick = newStart;
+      const pos = formatNotePosition(newStart - currentGridStartTick, currentTicksPerBeat, currentBeatsPerBar);
+      markModified(`已平移 Pad ${currentCanvasPadNum} 音符 ${midiNoteToName(selectedNoteBox.note)} 位置至 ${pos.displayFull}`);
+      refreshCurrentPadDetail();
+      auditionSelectedNote(selectedNoteBox.note, selectedNoteBox.durationTick, selectedNoteBox.velocity);
+    }
+  };
+
+  if (btnNudgePrevBeat) {
+    btnNudgePrevBeat.addEventListener('click', () => {
+      shiftSelectedNotePosition(-currentTicksPerBeat);
+    });
+  }
+  if (btnNudgeNextBeat) {
+    btnNudgeNextBeat.addEventListener('click', () => {
+      shiftSelectedNotePosition(currentTicksPerBeat);
+    });
+  }
+  if (btnNudgePrevBar) {
+    btnNudgePrevBar.addEventListener('click', () => {
+      const ticksPerBar = currentTicksPerBeat * currentBeatsPerBar;
+      shiftSelectedNotePosition(-ticksPerBar);
+    });
+  }
+  if (btnNudgeNextBar) {
+    btnNudgeNextBar.addEventListener('click', () => {
+      const ticksPerBar = currentTicksPerBeat * currentBeatsPerBar;
+      shiftSelectedNotePosition(ticksPerBar);
     });
   }
 }
