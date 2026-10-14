@@ -1108,12 +1108,19 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLab
 
 function drawEmptyCanvas(canvas: HTMLCanvasElement) {
   const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#64748b';
-  ctx.font = '14px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('無音符資料', canvas.width / 2, canvas.height / 2);
+  if (ctx) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#64748b';
+    ctx.font = '14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('無音符資料', canvas.width / 2, canvas.height / 2);
+  }
+
+  const velCanvas = document.getElementById('pad-velocity-canvas') as HTMLCanvasElement | null;
+  if (velCanvas) {
+    const vctx = velCanvas.getContext('2d');
+    if (vctx) vctx.clearRect(0, 0, velCanvas.width, velCanvas.height);
+  }
 }
 
 function formatNoteDuration(ticks: number, ticksPerBeat: number, beatsPerBar: number = 4): string {
@@ -1244,6 +1251,29 @@ let currentMovingStartTick = 0;
 let movingPreviewStartTick: { oldStartTick: number; note: number; newStartTick: number } | null = null;
 let currentGridStartTick = 0;
 
+// 力度軌道 (Velocity Lane) 調整狀態
+interface RenderedVelocityStalk {
+  x: number;
+  topY: number;
+  baseY: number;
+  note: number;
+  velocity: number;
+  startTick: number;
+  durationTick: number;
+}
+
+let isVelocityLaneVisible = true;
+let isDraggingVelocity = false;
+let velocityDragTarget: RenderedVelocityStalk | null = null;
+let velocityStartMouseY = 0;
+let velocityStartVal = 0;
+let currentVelocityDragVal = 0;
+let velocityPreviewOverride: { startTick: number; note: number; velocity: number } | null = null;
+let lastRenderedVelocityStalks: RenderedVelocityStalk[] = [];
+let hoveredVelocityStalk: RenderedVelocityStalk | null = null;
+let isVelocityEventsBound = false;
+let isVelocityToggleBound = false;
+
 function isMouseNearRightEdge(b: RenderedNoteBox, mouseX: number, mouseY: number): boolean {
   if (mouseY < b.y - 2 || mouseY > b.y + b.h + 2) return false;
   const rightEdge = b.x + b.w;
@@ -1253,9 +1283,10 @@ function isMouseNearRightEdge(b: RenderedNoteBox, mouseX: number, mouseY: number
 
 function resetHoverInfo() {
   hoveredNoteBox = null;
+  hoveredVelocityStalk = null;
   const hoverInfoEl = document.getElementById('canvas-hover-info');
   if (hoverInfoEl) {
-    hoverInfoEl.textContent = '💡 點選任意音符可開啟屬性檢查器，拖曳音符可平移小節/拍點，移至右邊緣 ↔ 可縮放音長';
+    hoverInfoEl.textContent = '💡 點選任意音符可開啟屬性檢查器，拖曳音符可平移位置，右邊緣 ↔ 縮放音長，下方 📊 力度軌道可直接上下微調力度';
     hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.08)';
   }
 }
@@ -1577,14 +1608,20 @@ function drawNoteRoll(
       };
       boxes.push(box);
 
+      let currentVelocity = n.velocity;
+      if (velocityPreviewOverride && velocityPreviewOverride.startTick === n.startTick && velocityPreviewOverride.note === n.note) {
+        currentVelocity = velocityPreviewOverride.velocity;
+      }
+
       const isSelected = selectedNoteBox && selectedNoteBox.startTick === n.startTick && selectedNoteBox.note === n.note;
-      const isHovered = highlightedBox && highlightedBox.startTick === n.startTick && highlightedBox.note === n.note;
+      const isHovered = (highlightedBox && highlightedBox.startTick === n.startTick && highlightedBox.note === n.note) ||
+                        (hoveredVelocityStalk && hoveredVelocityStalk.startTick === n.startTick && hoveredVelocityStalk.note === n.note);
       const isSounding = playheadRelTick !== null && playheadRelTick !== undefined &&
         (playheadRelTick >= (currentStartTick - gridStartTick)) &&
         (playheadRelTick < (currentStartTick + currentDuration - gridStartTick));
 
       // 依據 velocity 力度調整透明度
-      const alpha = (isSelected || isHovered || isSounding) ? 1.0 : (0.55 + (n.velocity / 127) * 0.45);
+      const alpha = (isSelected || isHovered || isSounding) ? 1.0 : (0.55 + (currentVelocity / 127) * 0.45);
       ctx.globalAlpha = alpha;
       ctx.fillStyle = isSounding ? '#fde047' : (isSelected ? '#f59e0b' : (isHovered ? '#38bdf8' : theme.fill));
 
@@ -1671,6 +1708,23 @@ function drawNoteRoll(
         ctx.restore();
       }
     }
+
+    // 9. 同步繪製下方 DAW 力度軌道 (Velocity Lane)
+    const velocityCanvas = document.getElementById('pad-velocity-canvas') as HTMLCanvasElement | null;
+    if (velocityCanvas && isVelocityLaneVisible) {
+      drawVelocityLane(
+        velocityCanvas,
+        notes,
+        padNum,
+        viewStartBar,
+        viewBars,
+        ticksPerBar,
+        gridStartTick,
+        playheadRelTick,
+        hoveredVelocityStalk
+      );
+      setupVelocityLaneEvents(velocityCanvas);
+    }
   };
 
   currentCanvasRedraw = () => redraw(hoveredNoteBox, currentPlayheadRelTick, currentActiveNoteNumbers);
@@ -1679,10 +1733,398 @@ function drawNoteRoll(
 
   // 註冊滑鼠懸停檢視事件
   setupCanvasHoverEvents(canvas);
+  setupVelocityToggle();
 
   // 更新小節滑動條與縮放控制項
   updateTimelineNavigationUI(totalBars);
   setupScrollEvents(canvas);
+}
+
+/**
+ * 繪製下方專業 DAW 力度軌道 (Velocity Lane)
+ */
+function drawVelocityLane(
+  canvas: HTMLCanvasElement,
+  notes: Array<{ note: number; velocity: number; startTick: number; durationTick: number }>,
+  padNum: number,
+  viewStartBar: number,
+  viewBars: number,
+  ticksPerBar: number,
+  gridStartTick: number,
+  playheadRelTick: number | null = null,
+  highlightedStalk: RenderedVelocityStalk | null = null
+) {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  const w = canvas.width;
+  const h = canvas.height;
+  const scaleW = 54;
+  const plotW = w - scaleW;
+  const windowStartTick = gridStartTick + (viewStartBar - 1) * ticksPerBar;
+  const windowTotalTicks = viewBars * ticksPerBar;
+  const windowEndTick = windowStartTick + windowTotalTicks;
+
+  ctx.clearRect(0, 0, w, h);
+
+  // 1. 背景底色
+  ctx.fillStyle = '#0c0e14';
+  ctx.fillRect(scaleW, 0, plotW, h);
+
+  // 2. 左側標尺欄
+  ctx.fillStyle = '#161821';
+  ctx.fillRect(0, 0, scaleW, h);
+  ctx.strokeStyle = '#333846';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(scaleW, 0);
+  ctx.lineTo(scaleW, h);
+  ctx.stroke();
+
+  // 左側文字標示 VELOCITY
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = 'bold 8.5px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('VELOCITY', scaleW / 2, 12);
+
+  // 水平參考刻度線 (127, 64)
+  const stalkBaseY = h - 6;
+  const stalkMaxH = h - 18;
+  const refLevels = [
+    { val: 127, label: '127' },
+    { val: 64, label: '64' },
+  ];
+  for (const ref of refLevels) {
+    const y = stalkBaseY - (ref.val / 127) * stalkMaxH;
+    ctx.strokeStyle = 'rgba(71, 85, 105, 0.25)';
+    ctx.lineWidth = 0.5;
+    ctx.setLineDash([2, 3]);
+    ctx.beginPath();
+    ctx.moveTo(scaleW, y);
+    ctx.lineTo(w, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = '#64748b';
+    ctx.font = '8px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(ref.label, scaleW - 4, y + 3);
+  }
+
+  // 3. 垂直小節線與拍子線 (Beat & Bar Grid Lines)
+  for (let bar = 0; bar <= viewBars; bar++) {
+    const barX = scaleW + (bar / viewBars) * plotW;
+    ctx.strokeStyle = '#333846';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(barX, 0);
+    ctx.lineTo(barX, h);
+    ctx.stroke();
+  }
+
+  const totalBeats = viewBars * currentBeatsPerBar;
+  for (let b = 0; b <= totalBeats; b++) {
+    if (b % currentBeatsPerBar === 0) continue;
+    const beatX = scaleW + (b / totalBeats) * plotW;
+    ctx.strokeStyle = 'rgba(71, 85, 105, 0.2)';
+    ctx.lineWidth = 0.8;
+    ctx.setLineDash([2, 2]);
+    ctx.beginPath();
+    ctx.moveTo(beatX, 0);
+    ctx.lineTo(beatX, h);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // 4. 繪製音符對應之力度柱狀 Stalks
+  const themeColors = [
+    { stalk: '#3b82f6', handle: '#60a5fa' },
+    { stalk: '#10b981', handle: '#34d399' },
+    { stalk: '#f59e0b', handle: '#fbbf24' },
+    { stalk: '#ec4899', handle: '#f472b6' },
+  ];
+  const theme = themeColors[(padNum - 1) % themeColors.length];
+
+  const stalks: RenderedVelocityStalk[] = [];
+
+  // Group notes by startTick to handle chords (offset overlapping stalks slightly)
+  const notesAtTick = new Map<number, typeof notes>();
+  for (const n of notes) {
+    let currentStart = n.startTick;
+    if (movingPreviewStartTick && movingPreviewStartTick.oldStartTick === n.startTick && movingPreviewStartTick.note === n.note) {
+      currentStart = movingPreviewStartTick.newStartTick;
+    }
+    const arr = notesAtTick.get(currentStart) || [];
+    arr.push(n);
+    notesAtTick.set(currentStart, arr);
+  }
+
+  for (const [tick, chordNotes] of notesAtTick.entries()) {
+    if (tick < windowStartTick || tick >= windowEndTick) continue;
+
+    const relTick = tick - windowStartTick;
+    const baseX = scaleW + (relTick / windowTotalTicks) * plotW;
+
+    chordNotes.forEach((n, idx) => {
+      let currentVel = n.velocity;
+      if (velocityPreviewOverride && velocityPreviewOverride.startTick === n.startTick && velocityPreviewOverride.note === n.note) {
+        currentVel = velocityPreviewOverride.velocity;
+      }
+
+      // If multiple notes in chord, offset by 5px each so all are distinct and clickable
+      const offset = chordNotes.length > 1 ? (idx - (chordNotes.length - 1) / 2) * 5 : 0;
+      const stalkX = Math.round(baseX + 3 + offset);
+
+      const stalkH = Math.max(3, Math.round((currentVel / 127) * stalkMaxH));
+      const stalkTopY = stalkBaseY - stalkH;
+
+      const isSelected = selectedNoteBox && selectedNoteBox.startTick === n.startTick && selectedNoteBox.note === n.note;
+      const isHovered = (hoveredNoteBox && hoveredNoteBox.startTick === n.startTick && hoveredNoteBox.note === n.note) ||
+                        (highlightedStalk && highlightedStalk.startTick === n.startTick && highlightedStalk.note === n.note);
+
+      // Stalk vertical line
+      ctx.beginPath();
+      ctx.moveTo(stalkX, stalkBaseY);
+      ctx.lineTo(stalkX, stalkTopY);
+      ctx.strokeStyle = isSelected ? '#fbbf24' : (isHovered ? '#38bdf8' : theme.stalk);
+      ctx.lineWidth = isSelected ? 3 : (isHovered ? 2.5 : 1.8);
+      ctx.globalAlpha = isSelected || isHovered ? 1.0 : 0.4 + (currentVel / 127) * 0.6;
+      ctx.stroke();
+
+      // Top handle (Circle dot)
+      const radius = isSelected ? 4.5 : (isHovered ? 4 : 3);
+      ctx.beginPath();
+      ctx.arc(stalkX, stalkTopY, radius, 0, Math.PI * 2);
+      ctx.fillStyle = isSelected ? '#fbbf24' : (isHovered ? '#38bdf8' : theme.handle);
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = isSelected ? 1.5 : 1;
+      ctx.stroke();
+
+      // If selected or hovered, show the exact velocity number badge above handle
+      if (isSelected || isHovered) {
+        ctx.fillStyle = isSelected ? '#fbbf24' : '#38bdf8';
+        ctx.font = 'bold 9px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${currentVel}`, stalkX, Math.max(10, stalkTopY - 5));
+      }
+
+      ctx.globalAlpha = 1.0;
+
+      stalks.push({
+        x: stalkX,
+        topY: stalkTopY,
+        baseY: stalkBaseY,
+        note: n.note,
+        velocity: currentVel,
+        startTick: n.startTick,
+        durationTick: n.durationTick,
+      });
+    });
+  }
+
+  lastRenderedVelocityStalks = stalks;
+
+  // 5. 走帶游標 (Playhead Cursor) 同步繪製
+  if (playheadRelTick !== null && playheadRelTick !== undefined) {
+    const playheadAbsTick = gridStartTick + playheadRelTick;
+    if (playheadAbsTick >= windowStartTick && playheadAbsTick <= windowEndTick) {
+      const playheadX = scaleW + ((playheadAbsTick - windowStartTick) / windowTotalTicks) * plotW;
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(playheadX, 0);
+      ctx.lineTo(playheadX, h);
+      ctx.strokeStyle = '#22c55e';
+      ctx.lineWidth = 1.5;
+      ctx.shadowColor = '#22c55e';
+      ctx.shadowBlur = 6;
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+}
+
+function setupVelocityLaneEvents(canvas: HTMLCanvasElement) {
+  if (isVelocityEventsBound) return;
+  isVelocityEventsBound = true;
+
+  const hoverInfoEl = document.getElementById('canvas-hover-info');
+
+  canvas.addEventListener('mousemove', (e) => {
+    if (isDraggingVelocity) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const mouseX = (e.clientX - rect.left) * scaleX;
+    const mouseY = (e.clientY - rect.top) * scaleY;
+
+    // Hit test: Find stalk within 8px horizontal distance
+    const hitStalk = lastRenderedVelocityStalks.find(s =>
+      Math.abs(mouseX - s.x) <= 8 && mouseY >= s.topY - 8 && mouseY <= s.baseY + 4
+    );
+
+    if (hitStalk) {
+      canvas.style.cursor = 'ns-resize';
+      if (hitStalk !== hoveredVelocityStalk) {
+        hoveredVelocityStalk = hitStalk;
+        if (currentCanvasRedraw) currentCanvasRedraw();
+      }
+      if (hoverInfoEl) {
+        hoverInfoEl.innerHTML = `📊 力度調節: <strong>${midiNoteToName(hitStalk.note)}</strong> (${hitStalk.note}) ｜ 力度: <strong>${hitStalk.velocity}</strong> / 127 ｜ ↕ 上下拖曳可即時微調力度`;
+        hoverInfoEl.style.backgroundColor = 'rgba(245, 158, 11, 0.16)';
+      }
+    } else {
+      canvas.style.cursor = 'default';
+      if (hoveredVelocityStalk) {
+        hoveredVelocityStalk = null;
+        if (currentCanvasRedraw) currentCanvasRedraw();
+        if (hoverInfoEl) {
+          hoverInfoEl.textContent = '💡 點選任意音符可開啟屬性檢查器，拖曳音符可平移位置，右邊緣 ↔ 縮放音長，下方 📊 力度軌道可直接上下微調力度';
+          hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.08)';
+        }
+      }
+    }
+  });
+
+  canvas.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const mouseX = (e.clientX - rect.left) * scaleX;
+    const mouseY = (e.clientY - rect.top) * scaleY;
+
+    const hitStalk = lastRenderedVelocityStalks.find(s =>
+      Math.abs(mouseX - s.x) <= 8 && mouseY >= s.topY - 8 && mouseY <= s.baseY + 4
+    );
+
+    if (hitStalk) {
+      isDraggingVelocity = true;
+      velocityDragTarget = hitStalk;
+      velocityStartMouseY = e.clientY;
+      velocityStartVal = hitStalk.velocity;
+      currentVelocityDragVal = hitStalk.velocity;
+
+      // Select corresponding note in piano roll
+      const matchedBox = lastRenderedNoteBoxes.find(b => b.startTick === hitStalk.startTick && b.note === hitStalk.note);
+      if (matchedBox) {
+        selectNote(matchedBox);
+      }
+
+      document.body.style.cursor = 'ns-resize';
+      canvas.style.cursor = 'ns-resize';
+      e.preventDefault();
+    }
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (isDraggingVelocity && velocityDragTarget) {
+      // 1px upward = +1.1 velocity; 1px downward = -1.1 velocity
+      const deltaY = velocityStartMouseY - e.clientY;
+      const newVel = Math.max(1, Math.min(127, Math.round(velocityStartVal + deltaY * 1.1)));
+
+      if (newVel !== currentVelocityDragVal) {
+        currentVelocityDragVal = newVel;
+        velocityPreviewOverride = {
+          startTick: velocityDragTarget.startTick,
+          note: velocityDragTarget.note,
+          velocity: newVel,
+        };
+
+        if (currentCanvasRedraw) currentCanvasRedraw();
+
+        if (hoverInfoEl) {
+          hoverInfoEl.innerHTML = `📊 調整力度: <strong>${midiNoteToName(velocityDragTarget.note)}</strong> ｜ 新力度: <strong>${newVel}</strong> / 127 ｜ 放開滑鼠自動發聲試聽與儲存`;
+          hoverInfoEl.style.backgroundColor = 'rgba(245, 158, 11, 0.25)';
+        }
+
+        const velInput = document.getElementById('insp-velocity-input') as HTMLInputElement | null;
+        if (velInput) velInput.value = `${newVel}`;
+      }
+    }
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (isDraggingVelocity && velocityDragTarget) {
+      const target = velocityDragTarget;
+      const finalVel = currentVelocityDragVal;
+      const didChange = finalVel !== velocityStartVal;
+
+      isDraggingVelocity = false;
+      velocityDragTarget = null;
+      velocityPreviewOverride = null;
+      document.body.style.cursor = '';
+      if (canvas) canvas.style.cursor = 'default';
+
+      if (didChange) {
+        hasJustDragged = true;
+        try {
+          if (currentParsed) {
+            YamahaPadModifier.updateNoteEvent(
+              currentParsed,
+              currentCanvasPadNum,
+              { note: target.note, startTick: target.startTick, oldDurationTick: target.durationTick },
+              { velocity: finalVel }
+            );
+            if (selectedNoteBox) {
+              selectedNoteBox.velocity = finalVel;
+            }
+            markModified(`已微調 Pad ${currentCanvasPadNum} 音符 ${midiNoteToName(target.note)} 力度為 ${finalVel}`);
+            refreshCurrentPadDetail();
+            auditionSelectedNote(target.note, target.durationTick, finalVel);
+          }
+        } catch (err: any) {
+          console.error('Failed to update note velocity:', err);
+        }
+      } else {
+        if (currentCanvasRedraw) currentCanvasRedraw();
+      }
+
+      setTimeout(() => {
+        hasJustDragged = false;
+      }, 100);
+    }
+  });
+
+  canvas.addEventListener('mouseleave', () => {
+    if (isDraggingVelocity) return;
+    if (hoveredVelocityStalk) {
+      hoveredVelocityStalk = null;
+      if (currentCanvasRedraw) currentCanvasRedraw();
+      if (hoverInfoEl) {
+        hoverInfoEl.textContent = '💡 點選任意音符可開啟屬性檢查器，拖曳音符可平移位置，右邊緣 ↔ 縮放音長，下方 📊 力度軌道可直接上下微調力度';
+        hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.08)';
+      }
+    }
+  });
+}
+
+function setupVelocityToggle() {
+  if (isVelocityToggleBound) return;
+  isVelocityToggleBound = true;
+
+  const btnToggle = document.getElementById('btn-toggle-velocity-lane');
+  const wrapper = document.getElementById('velocity-lane-wrapper');
+  const noteCanvas = document.getElementById('pad-note-canvas');
+
+  if (btnToggle && wrapper) {
+    btnToggle.addEventListener('click', () => {
+      isVelocityLaneVisible = !isVelocityLaneVisible;
+      if (isVelocityLaneVisible) {
+        wrapper.style.display = 'block';
+        btnToggle.className = 'toggle-btn active-rp';
+        btnToggle.textContent = '📊 力度軌道 ▾';
+        if (noteCanvas) noteCanvas.style.borderRadius = '6px 6px 0 0';
+        if (currentCanvasRedraw) currentCanvasRedraw();
+      } else {
+        wrapper.style.display = 'none';
+        btnToggle.className = 'toggle-btn inactive';
+        btnToggle.textContent = '📊 力度軌道 ▸';
+        if (noteCanvas) noteCanvas.style.borderRadius = '6px';
+      }
+    });
+  }
 }
 
 function updateTimelineNavigationUI(totalBars: number) {
