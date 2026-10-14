@@ -1286,7 +1286,7 @@ function resetHoverInfo() {
   hoveredVelocityStalk = null;
   const hoverInfoEl = document.getElementById('canvas-hover-info');
   if (hoverInfoEl) {
-    hoverInfoEl.textContent = '💡 點選任意音符可開啟屬性檢查器，拖曳音符可平移位置，右邊緣 ↔ 縮放音長，下方 📊 力度軌道可直接上下微調力度';
+    hoverInfoEl.textContent = '💡 點選音符可開啓檢查器微調音高 (▲/▼ 或方向鍵 ↑/↓)、平移位置 (↔ 或 ◀/▶)、縮放音長、調整力度';
     hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.08)';
   }
 }
@@ -2295,10 +2295,10 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
         hoverInfoEl.style.backgroundColor = 'rgba(245, 158, 11, 0.16)';
       } else if (bodyHit) {
         const durStr = formatNoteDuration(bodyHit.durationTick, currentTicksPerBeat, currentBeatsPerBar);
-        hoverInfoEl.innerHTML = `🎯 音符: <strong>${midiNoteToName(bodyHit.note)}</strong> (${bodyHit.note}) ｜ 位置: ${bodyHit.posDisplayFull} ｜ 音長: <strong>${durStr}</strong> ｜ 力度: <strong>${bodyHit.velocity}</strong> ｜ ↔ 拖曳可平移位置 ｜ 右邊緣 ↔ 縮放音長`;
+        hoverInfoEl.innerHTML = `🎯 音符: <strong>${midiNoteToName(bodyHit.note)}</strong> (${bodyHit.note}) ｜ 音長: <strong>${durStr}</strong> ｜ 點選開啟檢查器 (支援方向鍵 ↑/↓ 升降半音、Shift+↑/↓ 八度) ｜ ↔ 拖曳平移 ｜ 右端 ↔ 縮放`;
         hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.16)';
       } else {
-        hoverInfoEl.textContent = '💡 點選任意音符可開啟屬性檢查器，拖曳音符可平移小節/拍點，移至右邊緣 ↔ 可縮放音長';
+        hoverInfoEl.textContent = '💡 點選音符可開啓檢查器微調音高 (▲/▼ 或方向鍵 ↑/↓)、平移位置 (↔ 或 ◀/▶)、縮放音長、調整力度';
         hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.08)';
       }
     }
@@ -2527,7 +2527,7 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
       hoveredNoteBox = null;
       if (currentCanvasRedraw) currentCanvasRedraw();
       if (hoverInfoEl) {
-        hoverInfoEl.textContent = '💡 點選任意音符可開啟屬性檢查器，拖曳音符可平移小節/拍點，移至右邊緣 ↔ 可縮放音長';
+        hoverInfoEl.textContent = '💡 點選音符可開啓檢查器微調音高 (▲/▼ 或方向鍵 ↑/↓)、平移位置 (↔ 或 ◀/▶)、縮放音長、調整力度';
         hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.08)';
       }
     }
@@ -2666,6 +2666,48 @@ function initNoteInspectorEvents() {
     });
   }
 
+  // 音高微調快捷鍵 (Pitch Transpose Buttons: -8度 降八度, ▼ 降半音, ▲ 升半音, +8度 升八度)
+  const btnPitchDownOct = document.getElementById('btn-pitch-down-oct');
+  const btnPitchDownSemi = document.getElementById('btn-pitch-down-semi');
+  const btnPitchUpSemi = document.getElementById('btn-pitch-up-semi');
+  const btnPitchUpOct = document.getElementById('btn-pitch-up-oct');
+
+  const shiftSelectedNotePitch = (semiDelta: number) => {
+    if (!selectedNoteBox || !currentParsed) return;
+    const oldNote = selectedNoteBox.note;
+    const newNote = Math.max(0, Math.min(127, oldNote + semiDelta));
+    if (newNote === oldNote) return;
+
+    const success = YamahaPadModifier.updateNoteEvent(
+      currentParsed,
+      currentCanvasPadNum,
+      { note: oldNote, startTick: selectedNoteBox.startTick, oldDurationTick: selectedNoteBox.durationTick },
+      { note: newNote }
+    );
+
+    if (success) {
+      selectedNoteBox.note = newNote;
+      const pitchEl = document.getElementById('insp-pitch-name');
+      if (pitchEl) pitchEl.textContent = `${midiNoteToName(newNote)} (${newNote})`;
+      markModified(`已移調 Pad ${currentCanvasPadNum} 音符 ${midiNoteToName(oldNote)} 至 ${midiNoteToName(newNote)} (${newNote})`);
+      refreshCurrentPadDetail();
+      auditionSelectedNote(newNote, selectedNoteBox.durationTick, selectedNoteBox.velocity);
+    }
+  };
+
+  if (btnPitchDownOct) {
+    btnPitchDownOct.addEventListener('click', () => shiftSelectedNotePitch(-12));
+  }
+  if (btnPitchDownSemi) {
+    btnPitchDownSemi.addEventListener('click', () => shiftSelectedNotePitch(-1));
+  }
+  if (btnPitchUpSemi) {
+    btnPitchUpSemi.addEventListener('click', () => shiftSelectedNotePitch(1));
+  }
+  if (btnPitchUpOct) {
+    btnPitchUpOct.addEventListener('click', () => shiftSelectedNotePitch(12));
+  }
+
   // 位置微調快捷鍵 (Nudge Position Buttons: ⏪ 前移1小節, ◀ 前移1拍, ▶ 後移1拍, ⏩ 後移1小節)
   const btnNudgePrevBeat = document.getElementById('btn-nudge-prev-beat');
   const btnNudgeNextBeat = document.getElementById('btn-nudge-next-beat');
@@ -2716,6 +2758,35 @@ function initNoteInspectorEvents() {
       shiftSelectedNotePosition(ticksPerBar);
     });
   }
+
+  // 鍵盤方向鍵快捷鍵支援 (DAW 級操作手感)
+  window.addEventListener('keydown', (e) => {
+    if (!selectedNoteBox || !currentParsed) return;
+    const activeEl = document.activeElement;
+    const tag = (activeEl?.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const delta = e.shiftKey ? 12 : 1;
+      shiftSelectedNotePitch(delta);
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const delta = e.shiftKey ? -12 : -1;
+      shiftSelectedNotePitch(delta);
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const deltaTicks = e.shiftKey ? -currentTicksPerBeat * currentBeatsPerBar : -currentTicksPerBeat;
+      shiftSelectedNotePosition(deltaTicks);
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      const deltaTicks = e.shiftKey ? currentTicksPerBeat * currentBeatsPerBar : currentTicksPerBeat;
+      shiftSelectedNotePosition(deltaTicks);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      deselectNote();
+    }
+  });
 }
 
 function renderParts(parsed: YamahaFileParsed) {

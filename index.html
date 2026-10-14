@@ -121,9 +121,13 @@
                 <span class="inspector-dot"></span>
                 <span id="insp-note-title" style="font-weight: 700; color: #fbbf24;">選取音符</span>
               </div>
-              <div class="inspector-item">
-                <span class="inspector-label">音名:</span>
-                <span id="insp-pitch-name" class="inspector-val-pitch">E5 (76)</span>
+              <div class="inspector-item" style="display: flex; align-items: center; gap: 4px;">
+                <span class="inspector-label">音高:</span>
+                <button type="button" id="btn-pitch-down-oct" class="toggle-btn" style="padding: 1px 5px; font-size: 0.7rem;" title="降 1 個八度 (-12半音，Shift + ↓)">-8度</button>
+                <button type="button" id="btn-pitch-down-semi" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem;" title="降半音 (鍵盤 ↓)">▼</button>
+                <span id="insp-pitch-name" class="inspector-val-pitch" style="min-width: 62px; text-align: center;">E5 (76)</span>
+                <button type="button" id="btn-pitch-up-semi" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem;" title="升半音 (鍵盤 ↑)">▲</button>
+                <button type="button" id="btn-pitch-up-oct" class="toggle-btn" style="padding: 1px 5px; font-size: 0.7rem;" title="升 1 個八度 (+12半音，Shift + ↑)">+8度</button>
               </div>
               <div class="inspector-item" style="display: flex; align-items: center; gap: 4px;">
                 <span class="inspector-label">位置:</span>
