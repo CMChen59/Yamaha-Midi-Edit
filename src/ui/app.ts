@@ -941,8 +941,9 @@ function drawNoteRoll(
   const displayMaxNote = Math.min(127, maxNote + 1);
   const noteRange = Math.max(displayMaxNote - displayMinNote + 1, 8);
 
-  // 依音域跨度動態自適應畫布高度 (寬音域如弦樂自動伸展為 280~320px，窄音域如鋼琴保持 220px)
-  const targetCanvasHeight = noteRange > 20 ? 300 : (noteRange > 14 ? 260 : 220);
+  // 依音域跨度動態自適應畫布高度，保證每個半音至少有約 12.5px 舒適垂直空間，讓所有黑白鍵音名 100% 完整排下
+  const rulerH = 26;
+  const targetCanvasHeight = Math.max(220, Math.min(460, Math.round(noteRange * 12.5 + rulerH)));
   if (canvas.height !== targetCanvasHeight) {
     canvas.height = targetCanvasHeight;
     canvas.style.height = `${targetCanvasHeight}px`;
@@ -974,7 +975,6 @@ function drawNoteRoll(
   currentTotalBars = totalBars;
 
   // 畫面區域配置 (Layout Margins)
-  const rulerH = 26;   // 頂部小節時間軸尺規高度
   const scaleW = 54;   // 左側音名與琴鍵欄寬度 (擴展為 54px 提供鋼琴鍵與升降號完整空間)
   const plotW = w - scaleW;
   const plotH = h - rulerH;
@@ -1144,7 +1144,6 @@ function drawNoteRoll(
       const noteName = midiNoteToName(n);
       const isBlack = [1, 3, 6, 8, 10].includes(n % 12);
       const isC = n % 12 === 0;
-      const isNatural = !isBlack;
       const hasNotesOnPitch = activePitches.has(n);
 
       // A. 繪製精緻鋼琴琴鍵紋理 (Mini Piano Keys)
@@ -1165,33 +1164,23 @@ function drawNoteRoll(
         ctx.strokeRect(2, rowY + 1, keyW, Math.max(semitoneH - 1, 2));
       }
 
-      // B. 智慧音名顯示密度判定：
-      // 1. 若 semitoneH >= 11 (音域窄/高度充裕)：所有半音皆顯示
-      // 2. 若 semitoneH >= 7.5 (中等/寬音域)：顯示所有白鍵 (C, D, E, F, G, A, B) 以及「該軌有演奏的音」
-      // 3. 若 semitoneH < 7.5 (極寬音域)：顯示 C 音、極端音、以及所有「實際有演奏的音」
-      const shouldDisplayLabel =
-        semitoneH >= 11 ||
-        (semitoneH >= 7.5 && isNatural) ||
-        isC ||
-        hasNotesOnPitch ||
-        n === minNote ||
-        n === maxNote;
-
-      if (shouldDisplayLabel) {
-        if (isC) {
-          ctx.fillStyle = '#38bdf8';
-          ctx.font = 'bold 10px sans-serif';
-        } else if (hasNotesOnPitch) {
-          ctx.fillStyle = isBlack ? '#c084fc' : '#f1f5f9';
-          ctx.font = 'bold 9px sans-serif';
-        } else {
-          ctx.fillStyle = isBlack ? '#475569' : '#94a3b8';
-          ctx.font = '9px sans-serif';
-        }
-
-        ctx.textAlign = 'right';
-        ctx.fillText(noteName, scaleW - 6, rowY + semitoneH / 2 + 3);
+      // B. 100% 完整音名標示 (黑鍵、白鍵與半音全數顯示，徹底消除黑色空白不一致現象)
+      if (isC) {
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = 'bold 9.5px sans-serif';
+      } else if (hasNotesOnPitch) {
+        ctx.fillStyle = isBlack ? '#c084fc' : '#ffffff';
+        ctx.font = 'bold 9px sans-serif';
+      } else if (isBlack) {
+        ctx.fillStyle = '#64748b'; // 未演奏黑鍵：精緻沉穩灰
+        ctx.font = '8.5px sans-serif';
+      } else {
+        ctx.fillStyle = '#cbd5e1'; // 未演奏白鍵：清晰淺灰白
+        ctx.font = '9px sans-serif';
       }
+
+      ctx.textAlign = 'right';
+      ctx.fillText(noteName, scaleW - 6, rowY + semitoneH / 2 + 3);
     }
 
     // 7. 繪製音符方塊 (使用 Clip 限制在畫布主體區域內)
