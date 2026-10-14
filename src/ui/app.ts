@@ -934,6 +934,20 @@ function drawNoteRoll(
   ticksPerBeat: number = 96,
   beatsPerBar: number = 4
 ) {
+  // 垂直音高基準 (保留適度邊距)
+  const minNote = Math.min(...notes.map(n => n.note));
+  const maxNote = Math.max(...notes.map(n => n.note));
+  const displayMinNote = Math.max(0, minNote - 1);
+  const displayMaxNote = Math.min(127, maxNote + 1);
+  const noteRange = Math.max(displayMaxNote - displayMinNote + 1, 8);
+
+  // 依音域跨度動態自適應畫布高度 (寬音域如弦樂自動伸展為 280~320px，窄音域如鋼琴保持 220px)
+  const targetCanvasHeight = noteRange > 20 ? 300 : (noteRange > 14 ? 260 : 220);
+  if (canvas.height !== targetCanvasHeight) {
+    canvas.height = targetCanvasHeight;
+    canvas.style.height = `${targetCanvasHeight}px`;
+  }
+
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
@@ -959,16 +973,9 @@ function drawNoteRoll(
   const totalBars = Math.max(1, Math.ceil(totalDurationTicks / ticksPerBar));
   currentTotalBars = totalBars;
 
-  // 垂直音高基準 (保留適度邊距)
-  const minNote = Math.min(...notes.map(n => n.note));
-  const maxNote = Math.max(...notes.map(n => n.note));
-  const displayMinNote = Math.max(0, minNote - 1);
-  const displayMaxNote = Math.min(127, maxNote + 1);
-  const noteRange = Math.max(displayMaxNote - displayMinNote + 1, 8);
-
   // 畫面區域配置 (Layout Margins)
   const rulerH = 26;   // 頂部小節時間軸尺規高度
-  const scaleW = 48;   // 左側音名欄寬度
+  const scaleW = 54;   // 左側音名與琴鍵欄寬度 (擴展為 54px 提供鋼琴鍵與升降號完整空間)
   const plotW = w - scaleW;
   const plotH = h - rulerH;
 
@@ -1115,7 +1122,7 @@ function drawNoteRoll(
       }
     }
 
-    // 6. 左側音名刻度欄 (Pitch Ruler & Scale)
+    // 6. 左側音名刻度欄與鋼琴鍵 (Pitch Ruler & Mini Piano Scale)
     ctx.fillStyle = '#161821';
     ctx.fillRect(0, 0, scaleW, h);
     ctx.strokeStyle = '#333846';
@@ -1128,18 +1135,62 @@ function drawNoteRoll(
     ctx.fillStyle = '#94a3b8';
     ctx.font = '10px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('音名', scaleW / 2, rulerH - 8);
+    ctx.fillText('琴鍵/音名', scaleW / 2, rulerH - 8);
+
+    const activePitches = new Set(notes.map(n => n.note));
 
     for (let n = displayMinNote; n <= displayMaxNote; n++) {
       const rowY = rulerH + (displayMaxNote - n) * semitoneH;
       const noteName = midiNoteToName(n);
+      const isBlack = [1, 3, 6, 8, 10].includes(n % 12);
       const isC = n % 12 === 0;
+      const isNatural = !isBlack;
+      const hasNotesOnPitch = activePitches.has(n);
 
-      if (isC || semitoneH >= 12 || n === minNote || n === maxNote) {
-        ctx.fillStyle = isC ? '#38bdf8' : '#94a3b8';
-        ctx.font = isC ? 'bold 10px sans-serif' : '9px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(noteName, scaleW / 2, rowY + semitoneH / 2 + 3);
+      // A. 繪製精緻鋼琴琴鍵紋理 (Mini Piano Keys)
+      const keyW = scaleW - 6;
+      if (isBlack) {
+        // 黑鍵短塊 (Raised Black Key)
+        ctx.fillStyle = '#1a1c24';
+        ctx.fillRect(2, rowY + 1, keyW * 0.62, Math.max(semitoneH - 1, 2));
+        ctx.strokeStyle = '#2d3345';
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(2, rowY + 1, keyW * 0.62, Math.max(semitoneH - 1, 2));
+      } else {
+        // 白鍵底色 (White Key)
+        ctx.fillStyle = isC ? '#232938' : '#1c202a';
+        ctx.fillRect(2, rowY + 1, keyW, Math.max(semitoneH - 1, 2));
+        ctx.strokeStyle = isC ? 'rgba(56, 189, 248, 0.4)' : '#292d3b';
+        ctx.lineWidth = isC ? 1 : 0.5;
+        ctx.strokeRect(2, rowY + 1, keyW, Math.max(semitoneH - 1, 2));
+      }
+
+      // B. 智慧音名顯示密度判定：
+      // 1. 若 semitoneH >= 11 (音域窄/高度充裕)：所有半音皆顯示
+      // 2. 若 semitoneH >= 7.5 (中等/寬音域)：顯示所有白鍵 (C, D, E, F, G, A, B) 以及「該軌有演奏的音」
+      // 3. 若 semitoneH < 7.5 (極寬音域)：顯示 C 音、極端音、以及所有「實際有演奏的音」
+      const shouldDisplayLabel =
+        semitoneH >= 11 ||
+        (semitoneH >= 7.5 && isNatural) ||
+        isC ||
+        hasNotesOnPitch ||
+        n === minNote ||
+        n === maxNote;
+
+      if (shouldDisplayLabel) {
+        if (isC) {
+          ctx.fillStyle = '#38bdf8';
+          ctx.font = 'bold 10px sans-serif';
+        } else if (hasNotesOnPitch) {
+          ctx.fillStyle = isBlack ? '#c084fc' : '#f1f5f9';
+          ctx.font = 'bold 9px sans-serif';
+        } else {
+          ctx.fillStyle = isBlack ? '#475569' : '#94a3b8';
+          ctx.font = '9px sans-serif';
+        }
+
+        ctx.textAlign = 'right';
+        ctx.fillText(noteName, scaleW - 6, rowY + semitoneH / 2 + 3);
       }
     }
 
