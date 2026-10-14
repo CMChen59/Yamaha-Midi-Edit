@@ -19,7 +19,8 @@ flowchart TD
     Step21["步驟 2.1：Pad Studio 互動編輯介面升級<br/>(屬性面板、開關、推桿、音色選擇)"] --> Step22["步驟 2.2：試聽引擎、音色庫與音符微調<br/>(2.2-A, 2.2-B, 2.2-C 【✅ 全數完工】)"]
     Step22 --> Step22_D["步驟 2.2-D：小節結構擴展與精確小節複製<br/>(Bar Extension & Measure Copying)【✅ 已完工】"]
     Step22_D --> Step22_E["步驟 2.2-E：小節剪除順移與內容清空<br/>(Ripple Delete & Clear Measure)【📋 後續計畫】"]
-    Step22_E --> Step23["步驟 2.3：外部 MIDI 匯入與切片分配<br/>(Import .mid & Assign to Pad 1~4)"]
+    Step22_E --> Step22_F["步驟 2.2-F：Web MIDI 實體琴硬體直連與發聲<br/>(Hardware MIDI Output & Authentic Audition)【📋 後續計畫】"]
+    Step22_F --> Step23["步驟 2.3：外部 MIDI 匯入與切片分配<br/>(Import .mid & Assign to Pad 1~4)"]
     Step23 --> Step24["步驟 2.4：Yamaha PAD 二進位合成器<br/>(Marker 排版 + CASM/控制標籤生成)"]
     Step24 --> Step25["步驟 2.5：端對端自動化測試與回歸防護<br/>(E2E Testing & Regression Check)"]
 ```
@@ -94,6 +95,20 @@ flowchart TD
   - 無需手動清空音符即可直接刪除任意小節，後方音符時序與拍點完美遞補無偏移。
   - 二進位 Delta-Time 重算與單元測試 100% 通過。
 
+### 步驟 2.2-F：Web MIDI 實體琴硬體直連與發聲 (Hardware MIDI Output & Authentic Audition) 【📋 列入後續計畫】
+* **工作項目**：
+  1. **實體琴輸出埠自動偵測**：
+     - 頂部控制列配置 `[🎹 實體琴直連: 關閉 ▼]` 設備選單與狀態燈。
+     - 透過 `navigator.requestMIDIAccess()` 自動偵測插上電腦的 Yamaha 設備（如 `Digital Workstation`、`Yamaha USB-MIDI` 等）。
+  2. **發聲路由雙向切換**：
+     - 支援切換「電腦喇叭 (Web Audio 內建合成)」與「實體琴輸出 (Web MIDI 直連)」或雙軌並行。
+  3. **琴端原廠音色自動同步 (Bank & Program Change)**：
+     - 播放 Pad 或點選音符試聽時，自動向琴端對應通道發送 Bank Select (CC0 MSB / CC32 LSB) 與 Program Change (PC)，使 PSR-SX920 自動切換至指定原廠樂器音色發聲。
+  4. **即時混音與防掛音保護**：
+     - 同步傳送 CC7 (音量) 與 CC10 (聲相)，停止播放時廣播 `CC 123 (All Notes Off)` 防殘音。
+* **驗收標準**：
+  - 電腦透過 USB-to-Host 線連接 PSR-SX920 後，選取琴端連接埠，點選試聽能直接由實體琴以原廠頂級音源與音色發聲。
+
 ### 步驟 2.3：外部標準 MIDI 匯入與切片分配 (MIDI Import & Slicing)
 * **工作項目**：
   1. 提供「匯入外部 MIDI」功能，支援拖入任意標準 `.mid` 檔案。
@@ -142,6 +157,7 @@ flowchart TD
 | 2.2-C 鋼琴卷軸實時音符微調 | **已完成** | AI & User | **通過** (模組一~四 + 方案A + 實測驗收 100%) | 支援檢查器、音長縮放、位置平移、力度軌道、音高移調按鈕與快捷鍵、刪除與三向新增音符 |
 | 2.2-D 小節結構擴展與複製 | **已完成** | AI & User | **通過** (小節擴展步進器 + 1➔3/5 跳小節複製 + 尺規點選 + Ctrl+D + 單元測試 100%) | 支援 Pad 長度步進器 (追加 1~2 小節)、精準小節傳送選單 (1 ➔ 3/5)、尺規點選複製貼上與 Ctrl+D 倍增 |
 | 2.2-E 小節剪除順移與內容清空 | 後續計畫 | AI & User | - | 支援模式A (Ripple Delete 剪除順移後方音符)、模式B (Clear Measure 僅清空音符)、快捷鍵與工具列按鈕 |
+| 2.2-F Web MIDI 實體琴直連發聲 | 後續計畫 | AI & User | - | 支援 Web MIDI 輸出埠自動偵測、實體琴原廠音色切換 (Bank/PC)、CC7/CC10 同步與 All Notes Off 防掛音 |
 | 2.3 外部 MIDI 匯入與切片分配 | 待開始 | AI | - | 支援外部 .mid 匯入並指派至 Pad 1~4 |
 | 2.4 Yamaha PAD 二進位合成器 | 待開始 | AI | - | 自動排版時間軸、生成控制標籤與 CASM |
 | 2.5 端對端測試與回歸防護 | 待開始 | AI & User | - | 全套測試 100% 通過與實機驗收準備 |
