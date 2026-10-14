@@ -155,4 +155,86 @@ describe('步驟 2.1: Pad 屬性與混音編輯雙向同步驗證 (PadModifier V
     // 音長維持 384，所以 Note-Off 應在 4800 + 384 = 5184
     expect(note67OffTick).toBe(5184);
   });
+
+  it('能成功刪除特定音符 (deleteNoteEvent) 並保持時間軸正確性與二進位重構', () => {
+    const sample1Path = path.resolve(__dirname, '../samples/4006-1_PAD.PAD');
+    const rawBuffer = new Uint8Array(fs.readFileSync(sample1Path));
+    const parsed = YamahaParser.parse(rawBuffer, 'PAD');
+
+    // 刪除 Pad 1 第一顆音符 (Note 65, Start 4608, Dur 384)
+    const success = YamahaPadModifier.deleteNoteEvent(parsed, 1, {
+      note: 65,
+      startTick: 4608,
+      oldDurationTick: 384,
+    });
+    expect(success).toBe(true);
+
+    // 導出二進位並重新解析
+    const modifiedBytes = YamahaWriter.write(parsed);
+    const reParsed = YamahaParser.parse(modifiedBytes, 'PAD');
+
+    let curTick = 0;
+    const trk1 = reParsed.tracks[1];
+    let foundDeletedNote = false;
+    let nextNoteStartTick: number | undefined;
+
+    for (const ev of trk1.events) {
+      curTick += ev.delta;
+      if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
+        if (ev.noteNumber === 65 && curTick === 4608) {
+          foundDeletedNote = true;
+        }
+        if (nextNoteStartTick === undefined && curTick >= 4992) {
+          nextNoteStartTick = curTick;
+        }
+      }
+    }
+
+    expect(foundDeletedNote).toBe(false);
+    // 下一顆音符 (Note 64 at 4992) 的時間位置不受影響
+    expect(nextNoteStartTick).toBe(4992);
+  });
+
+  it('能成功新增全新音符 (addNoteEvent) 並正確排序 Note-On/Off 與導出二進位', () => {
+    const sample1Path = path.resolve(__dirname, '../samples/4006-1_PAD.PAD');
+    const rawBuffer = new Uint8Array(fs.readFileSync(sample1Path));
+    const parsed = YamahaParser.parse(rawBuffer, 'PAD');
+
+    // 在 Pad 1 新增一顆 Note 84 (C6), Start 4700, Dur 96, Vel 110
+    const success = YamahaPadModifier.addNoteEvent(parsed, 1, {
+      note: 84,
+      startTick: 4700,
+      durationTick: 96,
+      velocity: 110,
+    });
+    expect(success).toBe(true);
+
+    // 導出二進位並重新解析
+    const modifiedBytes = YamahaWriter.write(parsed);
+    const reParsed = YamahaParser.parse(modifiedBytes, 'PAD');
+
+    let curTick = 0;
+    const trk1 = reParsed.tracks[1];
+    let createdNoteOn: { tick: number; vel: number } | undefined;
+    let createdNoteOff: { tick: number } | undefined;
+
+    for (const ev of trk1.events) {
+      curTick += ev.delta;
+      if (ev.type === 'noteOn' && ev.noteNumber === 84 && (ev.velocity ?? 0) > 0) {
+        if (!createdNoteOn) {
+          createdNoteOn = { tick: curTick, vel: ev.velocity! };
+        }
+      } else if ((ev.type === 'noteOff' || (ev.type === 'noteOn' && ev.velocity === 0)) && ev.noteNumber === 84) {
+        if (!createdNoteOff) {
+          createdNoteOff = { tick: curTick };
+        }
+      }
+    }
+
+    expect(createdNoteOn).toBeDefined();
+    expect(createdNoteOn?.tick).toBe(4700);
+    expect(createdNoteOn?.vel).toBe(110);
+    expect(createdNoteOff).toBeDefined();
+    expect(createdNoteOff?.tick).toBe(4700 + 96);
+  });
 });

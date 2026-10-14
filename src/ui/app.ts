@@ -1240,6 +1240,9 @@ let hasJustDragged = false;
 let resizingPreviewDuration: { startTick: number; note: number; durationTick: number } | null = null;
 let currentPlotW = 1000;
 let currentWindowTotalTicks = 384;
+let currentWindowStartTick = 0;
+let currentDisplayMaxNote = 72;
+let currentSemitoneH = 15;
 
 // 音符平移調整狀態 (Note Position Moving State)
 let isMovingNote = false;
@@ -1286,7 +1289,7 @@ function resetHoverInfo() {
   hoveredVelocityStalk = null;
   const hoverInfoEl = document.getElementById('canvas-hover-info');
   if (hoverInfoEl) {
-    hoverInfoEl.textContent = '💡 點選音符可開啓檢查器微調音高 (▲/▼ 或方向鍵 ↑/↓)、平移位置 (↔ 或 ◀/▶)、縮放音長、調整力度';
+    hoverInfoEl.textContent = '💡 雙擊空白處新增音符 ｜ 點選音符微調音高 (▲/▼ 或方向鍵 ↑/↓)、平移 (↔ 或 ◀/▶)、Delete 鍵刪除 ｜ 下方 📊 力度軌道可調力度';
     hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.08)';
   }
 }
@@ -1383,6 +1386,8 @@ function drawNoteRoll(
 
     currentPlotW = plotW;
     currentWindowTotalTicks = windowTotalTicks;
+    currentWindowStartTick = windowStartTick;
+    currentDisplayMaxNote = displayMaxNote;
 
     ctx.clearRect(0, 0, w, h);
 
@@ -1392,6 +1397,7 @@ function drawNoteRoll(
 
     // 2. 水平音高線 (黑白琴鍵交替底色)
     const semitoneH = plotH / noteRange;
+    currentSemitoneH = semitoneH;
     for (let n = displayMinNote; n <= displayMaxNote; n++) {
       const rowY = rulerH + (displayMaxNote - n) * semitoneH;
       const isBlackKey = [1, 3, 6, 8, 10].includes(n % 12);
@@ -2295,10 +2301,10 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
         hoverInfoEl.style.backgroundColor = 'rgba(245, 158, 11, 0.16)';
       } else if (bodyHit) {
         const durStr = formatNoteDuration(bodyHit.durationTick, currentTicksPerBeat, currentBeatsPerBar);
-        hoverInfoEl.innerHTML = `🎯 音符: <strong>${midiNoteToName(bodyHit.note)}</strong> (${bodyHit.note}) ｜ 音長: <strong>${durStr}</strong> ｜ 點選開啟檢查器 (支援方向鍵 ↑/↓ 升降半音、Shift+↑/↓ 八度) ｜ ↔ 拖曳平移 ｜ 右端 ↔ 縮放`;
+        hoverInfoEl.innerHTML = `🎯 音符: <strong>${midiNoteToName(bodyHit.note)}</strong> (${bodyHit.note}) ｜ 音長: <strong>${durStr}</strong> ｜ 點選開啟檢查器 (可按 Delete 刪除、↑/↓ 移調) ｜ ↔ 拖曳平移 ｜ 右端 ↔ 縮放`;
         hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.16)';
       } else {
-        hoverInfoEl.textContent = '💡 點選音符可開啓檢查器微調音高 (▲/▼ 或方向鍵 ↑/↓)、平移位置 (↔ 或 ◀/▶)、縮放音長、調整力度';
+        hoverInfoEl.textContent = '💡 雙擊空白處新增音符 ｜ 點選音符微調音高 (▲/▼ 或方向鍵 ↑/↓)、平移 (↔ 或 ◀/▶)、Delete 鍵刪除 ｜ 下方 📊 力度軌道可調力度';
         hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.08)';
       }
     }
@@ -2527,7 +2533,7 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
       hoveredNoteBox = null;
       if (currentCanvasRedraw) currentCanvasRedraw();
       if (hoverInfoEl) {
-        hoverInfoEl.textContent = '💡 點選音符可開啓檢查器微調音高 (▲/▼ 或方向鍵 ↑/↓)、平移位置 (↔ 或 ◀/▶)、縮放音長、調整力度';
+        hoverInfoEl.textContent = '💡 雙擊空白處新增音符 ｜ 點選音符微調音高 (▲/▼ 或方向鍵 ↑/↓)、平移 (↔ 或 ◀/▶)、Delete 鍵刪除 ｜ 下方 📊 力度軌道可調力度';
         hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.08)';
       }
     }
@@ -2540,6 +2546,67 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
       return;
     }
     // 選取與取消選取已由 mousedown 精準執行，避免任何點擊抖動或二次發聲
+  });
+
+  // 雙擊畫布空白處新增音符 (Double-Click Canvas to Create Note)
+  canvas.addEventListener('dblclick', (e) => {
+    if (!currentParsed) return;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const mouseX = (e.clientX - rect.left) * scaleX;
+    const mouseY = (e.clientY - rect.top) * scaleY;
+
+    const scaleW = 54;
+    const rulerH = 26;
+
+    // 必須在鋼琴卷軸音符區域內
+    if (mouseX < scaleW || mouseY < rulerH || mouseY > canvas.height) return;
+
+    // 檢查是否點在既有音符上方 (若有點在音符上則不重複建立)
+    const reversedBoxes = [...lastRenderedNoteBoxes].reverse();
+    const hit = reversedBoxes.find(b =>
+      mouseX >= b.x && mouseX <= b.x + b.w &&
+      mouseY >= b.y && mouseY <= b.y + b.h
+    );
+    if (hit) return;
+
+    // 依 Y 座標計算音高
+    const effectiveSemitoneH = currentSemitoneH > 0 ? currentSemitoneH : 15;
+    const row = Math.floor((mouseY - rulerH) / effectiveSemitoneH);
+    const noteNum = Math.max(0, Math.min(127, currentDisplayMaxNote - row));
+
+    // 依 X 座標計算起始拍點 (吸附 1/16 音符網格)
+    const effectivePlotW = currentPlotW > 0 ? currentPlotW : (canvas.width - scaleW);
+    const effectiveWindowTotalTicks = currentWindowTotalTicks > 0 ? currentWindowTotalTicks : (currentTicksPerBeat * currentBeatsPerBar * 4);
+    const relTick = ((mouseX - scaleW) / effectivePlotW) * effectiveWindowTotalTicks;
+    const rawTick = currentWindowStartTick + relTick;
+    const snapStep = Math.max(12, Math.round(currentTicksPerBeat / 4)); // 預設 1/16 音符 (24 ticks)
+    const snappedStartTick = Math.max(0, Math.round(rawTick / snapStep) * snapStep);
+
+    // 預設長度：若當前選取的音符有音長，繼承該音長；否則預設為 1 拍 (currentTicksPerBeat)
+    const durTick = selectedNoteBox ? selectedNoteBox.durationTick : currentTicksPerBeat;
+    const vel = selectedNoteBox ? selectedNoteBox.velocity : 100;
+
+    const success = YamahaPadModifier.addNoteEvent(currentParsed, currentCanvasPadNum, {
+      note: noteNum,
+      startTick: snappedStartTick,
+      durationTick: durTick,
+      velocity: vel,
+    });
+
+    if (success) {
+      markModified(`已在 Pad ${currentCanvasPadNum} 新增音符 ${midiNoteToName(noteNum)} (${noteNum})`);
+      refreshCurrentPadDetail();
+
+      // 在重新渲染的方塊中尋找剛建立的音符並選取它
+      const newBox = lastRenderedNoteBoxes.find(b => b.startTick === snappedStartTick && b.note === noteNum);
+      if (newBox) {
+        selectNote(newBox);
+      } else {
+        auditionSelectedNote(noteNum, durTick, vel);
+      }
+    }
   });
 
   initNoteInspectorEvents();
@@ -2616,6 +2683,28 @@ function initNoteInspectorEvents() {
         auditionSelectedNote(selectedNoteBox.note, selectedNoteBox.durationTick, selectedNoteBox.velocity);
       }
     });
+  }
+
+  // 刪除音符按鈕與邏輯
+  const btnDelete = document.getElementById('btn-insp-delete');
+  const deleteSelectedNote = () => {
+    if (!selectedNoteBox || !currentParsed) return;
+    const target = {
+      note: selectedNoteBox.note,
+      startTick: selectedNoteBox.startTick,
+      oldDurationTick: selectedNoteBox.durationTick,
+    };
+    const noteName = midiNoteToName(target.note);
+    const success = YamahaPadModifier.deleteNoteEvent(currentParsed, currentCanvasPadNum, target);
+    if (success) {
+      deselectNote();
+      markModified(`已刪除 Pad ${currentCanvasPadNum} 音符 ${noteName} (${target.note})`);
+      refreshCurrentPadDetail();
+    }
+  };
+
+  if (btnDelete) {
+    btnDelete.addEventListener('click', deleteSelectedNote);
   }
 
   if (durInput) {
@@ -2785,6 +2874,9 @@ function initNoteInspectorEvents() {
     } else if (e.key === 'Escape') {
       e.preventDefault();
       deselectNote();
+    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault();
+      deleteSelectedNote();
     }
   });
 }
