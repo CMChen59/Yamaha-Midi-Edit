@@ -488,6 +488,249 @@ export class YamahaPadModifier {
   }
 
   /**
+   * 取得指定 Pad 當前的總小節數 (綜合考量音符範圍、End-of-Track 與 Section 標記)
+   */
+  public static getPadBarLength(parsed: YamahaFileParsed, padNum: number): number {
+    const track = parsed.tracks[padNum];
+    if (!track || !track.events) return 4;
+
+    const division = parsed.division || 96;
+    const beatsPerBar = parsed.timeSignature?.numerator || 4;
+    const ticksPerBar = division * beatsPerBar;
+
+    let curTick = 0;
+    const noteTicks: { start: number; end: number }[] = [];
+    const active = new Map<number, number>();
+    let endOfTrackTick = 0;
+
+    for (const ev of track.events) {
+      curTick += ev.delta;
+      if (ev.type === 'noteOn' && ev.noteNumber !== undefined && (ev.velocity ?? 0) > 0) {
+        active.set(ev.noteNumber, curTick);
+      } else if ((ev.type === 'noteOff' || (ev.type === 'noteOn' && ev.velocity === 0)) && ev.noteNumber !== undefined) {
+        const st = active.get(ev.noteNumber);
+        if (st !== undefined) {
+          noteTicks.push({ start: st, end: curTick });
+          active.delete(ev.noteNumber);
+        }
+      } else if (ev.type === 'meta' && ev.metaType === 0x2f) {
+        endOfTrackTick = curTick;
+      }
+    }
+
+    if (noteTicks.length === 0) {
+      const sec = parsed.sections ? parsed.sections[padNum - 1] : undefined;
+      if (sec && sec.measureCount) return sec.measureCount;
+      if (endOfTrackTick > 0) return Math.max(1, Math.round(endOfTrackTick / ticksPerBar));
+      return 4;
+    }
+
+    const firstNoteTick = Math.min(...noteTicks.map((n) => n.start));
+    const lastNoteTick = Math.max(...noteTicks.map((n) => n.end));
+    const gridStartTick = Math.floor(firstNoteTick / ticksPerBar) * ticksPerBar;
+
+    const notesBars = Math.max(1, Math.ceil((lastNoteTick - gridStartTick) / ticksPerBar));
+    const endMetaBars = endOfTrackTick > gridStartTick
+      ? Math.max(1, Math.round((endOfTrackTick - gridStartTick) / ticksPerBar))
+      : 1;
+
+    const sec = parsed.sections ? parsed.sections[padNum - 1] : undefined;
+    const secBars = sec && sec.measureCount ? sec.measureCount : 1;
+
+    return Math.max(notesBars, endMetaBars, secBars);
+  }
+
+  /**
+   * 設定指定 Pad 的總小節數 (透過重算並推移 End-of-Track 標記，同步更新二進位 RawChunk 與 Section 標記)
+   */
+  public static setPadBarLength(parsed: YamahaFileParsed, padNum: number, targetBars: number): boolean {
+    const track = parsed.tracks[padNum];
+    if (!track || !track.events) return false;
+
+    const newBars = Math.max(1, Math.min(64, Math.round(targetBars)));
+    const division = parsed.division || 96;
+    const beatsPerBar = parsed.timeSignature?.numerator || 4;
+    const ticksPerBar = division * beatsPerBar;
+
+    let curTick = 0;
+    const annotated = track.events.map((ev, index) => {
+      curTick += ev.delta;
+      return { ev, absTick: curTick, index };
+    });
+
+    const noteStarts = annotated
+      .filter((i) => i.ev.type === 'noteOn' && (i.ev.velocity ?? 0) > 0)
+      .map((i) => i.absTick);
+    const firstNoteTick = noteStarts.length > 0 ? Math.min(...noteStarts) : 0;
+    const gridStartTick = Math.floor(firstNoteTick / ticksPerBar) * ticksPerBar;
+
+    let targetEndTick = gridStartTick + newBars * ticksPerBar;
+
+    // 尋找 End of Track (Meta 0x2F)
+    let endMeta = annotated.find((item) => item.ev.type === 'meta' && item.ev.metaType === 0x2f);
+    if (!endMeta) {
+      const eotEv: MidiEvent = {
+        delta: 0,
+        type: 'meta',
+        metaType: 0x2f,
+        metaData: new Uint8Array(0),
+      };
+      endMeta = { ev: eotEv, absTick: targetEndTick, index: annotated.length + 999 };
+      annotated.push(endMeta);
+    } else {
+      endMeta.absTick = targetEndTick;
+    }
+
+    // 保證 End of Track 不早於任何現存音符事件
+    for (const item of annotated) {
+      if (item !== endMeta && item.absTick > endMeta.absTick) {
+        endMeta.absTick = item.absTick;
+      }
+    }
+
+    // 重新排序並計算 delta-time
+    annotated.sort((a, b) => {
+      if (a.absTick !== b.absTick) return a.absTick - b.absTick;
+      if (a.ev.type === 'meta' && a.ev.metaType === 0x2f) return 1;
+      if (b.ev.type === 'meta' && b.ev.metaType === 0x2f) return -1;
+      return a.index - b.index;
+    });
+
+    let prevTick = 0;
+    track.events = annotated.map((item) => {
+      const delta = item.absTick - prevTick;
+      prevTick = item.absTick;
+      item.ev.delta = Math.max(0, delta);
+      return item.ev;
+    });
+
+    // 同步更新 parsed.sections
+    if (parsed.sections && parsed.sections[padNum - 1]) {
+      parsed.sections[padNum - 1].measureCount = newBars;
+      parsed.sections[padNum - 1].endTick = targetEndTick;
+    }
+
+    this.rebuildTrackRawChunk(track);
+    return true;
+  }
+
+  /**
+   * 複製指定 Pad 的特定小節音符至目標小節 (支援 1➔3、1➔5 等跳小節複製，自動擴展總小節數)
+   */
+  public static copyPadMeasure(
+    parsed: YamahaFileParsed,
+    padNum: number,
+    sourceBar: number, // 1-indexed, 例如 1
+    targetBar: number, // 1-indexed, 例如 3 或 5
+    mode: 'replace' | 'merge' = 'replace'
+  ): { success: boolean; copiedCount: number; newTotalBars: number } {
+    const track = parsed.tracks[padNum];
+    if (!track || !track.events) return { success: false, copiedCount: 0, newTotalBars: 1 };
+    if (sourceBar <= 0 || targetBar <= 0 || sourceBar === targetBar) {
+      return { success: false, copiedCount: 0, newTotalBars: this.getPadBarLength(parsed, padNum) };
+    }
+
+    const division = parsed.division || 96;
+    const beatsPerBar = parsed.timeSignature?.numerator || 4;
+    const ticksPerBar = division * beatsPerBar;
+
+    // 提取當前軌道的所有 Note 事件
+    let curTick = 0;
+    const noteList: { note: number; velocity: number; startTick: number; durationTick: number }[] = [];
+    const active = new Map<number, { tick: number; velocity: number }>();
+
+    for (const ev of track.events) {
+      curTick += ev.delta;
+      if (ev.type === 'noteOn' && ev.noteNumber !== undefined && (ev.velocity ?? 0) > 0) {
+        active.set(ev.noteNumber, { tick: curTick, velocity: ev.velocity! });
+      } else if ((ev.type === 'noteOff' || (ev.type === 'noteOn' && ev.velocity === 0)) && ev.noteNumber !== undefined) {
+        const st = active.get(ev.noteNumber);
+        if (st !== undefined) {
+          noteList.push({
+            note: ev.noteNumber,
+            velocity: st.velocity,
+            startTick: st.tick,
+            durationTick: Math.max(curTick - st.tick, 1),
+          });
+          active.delete(ev.noteNumber);
+        }
+      }
+    }
+
+    if (noteList.length === 0) {
+      return { success: false, copiedCount: 0, newTotalBars: this.getPadBarLength(parsed, padNum) };
+    }
+
+    const firstNoteTick = Math.min(...noteList.map((n) => n.startTick));
+    const gridStartTick = Math.floor(firstNoteTick / ticksPerBar) * ticksPerBar;
+
+    const sourceStartTick = gridStartTick + (sourceBar - 1) * ticksPerBar;
+    const sourceEndTick = sourceStartTick + ticksPerBar;
+
+    // 找出在 sourceBar 內起奏的所有音符
+    const sourceNotes = noteList.filter(
+      (n) => n.startTick >= sourceStartTick && n.startTick < sourceEndTick
+    );
+
+    if (sourceNotes.length === 0) {
+      return { success: false, copiedCount: 0, newTotalBars: this.getPadBarLength(parsed, padNum) };
+    }
+
+    const targetStartTick = gridStartTick + (targetBar - 1) * ticksPerBar;
+    const targetEndTick = targetStartTick + ticksPerBar;
+    const tickOffset = targetStartTick - sourceStartTick;
+
+    // 若 mode === 'replace'，刪除 targetBar 內已有的音符
+    if (mode === 'replace') {
+      const targetExisting = noteList.filter(
+        (n) => n.startTick >= targetStartTick && n.startTick < targetEndTick
+      );
+      for (const tNote of targetExisting) {
+        this.deleteNoteEvent(parsed, padNum, {
+          note: tNote.note,
+          startTick: tNote.startTick,
+          oldDurationTick: tNote.durationTick,
+        });
+      }
+    }
+
+    // 逐一將 sourceNotes 複製到 targetBar
+    for (const sNote of sourceNotes) {
+      const newStart = sNote.startTick + tickOffset;
+      this.addNoteEvent(parsed, padNum, {
+        note: sNote.note,
+        startTick: newStart,
+        durationTick: sNote.durationTick,
+        velocity: sNote.velocity,
+      });
+    }
+
+    // 若目標小節超出原本 Pad 長度，自動擴展長度
+    const curPadLen = this.getPadBarLength(parsed, padNum);
+    const newTotalBars = Math.max(curPadLen, targetBar);
+    if (targetBar > curPadLen) {
+      this.setPadBarLength(parsed, padNum, targetBar);
+    }
+
+    return { success: true, copiedCount: sourceNotes.length, newTotalBars };
+  }
+
+  /**
+   * 一鍵倍增指定小節 (Duplicate Measure / Ctrl+D)，接續貼在下一小節
+   */
+  public static duplicatePadMeasure(
+    parsed: YamahaFileParsed,
+    padNum: number,
+    sourceBar?: number
+  ): { success: boolean; copiedCount: number; newTargetBar: number } {
+    const curLen = this.getPadBarLength(parsed, padNum);
+    const src = sourceBar !== undefined && sourceBar > 0 ? sourceBar : curLen;
+    const target = src + 1;
+    const res = this.copyPadMeasure(parsed, padNum, src, target, 'replace');
+    return { success: res.success, copiedCount: res.copiedCount, newTargetBar: target };
+  }
+
+  /**
    * 重新編碼標準 MIDI Track (MTrk) 的二進位 Byte Buffer
    */
   public static rebuildTrackRawChunk(track: MidiTrack): void {

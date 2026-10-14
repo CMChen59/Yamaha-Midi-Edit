@@ -100,7 +100,32 @@
           <!-- 音符視覺化 Canvas (Interactive Piano Roll) -->
           <div class="canvas-wrapper" style="margin-top: 14px; background: #15171c; border-radius: 8px; border: 1px solid var(--border-color); padding: 12px; position: relative;">
             <div class="canvas-header-bar" style="margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; color: var(--text-muted); flex-wrap: wrap; gap: 8px;">
-              <span>🎼 鋼琴卷軸 (橫軸: 小節/拍數尺規 ｜ 縱軸: 音名 ｜ 垂直線: 小節線)</span>
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <span style="font-weight: 600; color: #e2e8f0;">🎼 鋼琴卷軸</span>
+                <!-- Pad 小節長度步進控制 -->
+                <div style="display: inline-flex; align-items: center; gap: 4px; background: #1a1e29; padding: 2px 6px; border-radius: 4px; border: 1px solid #2e3547;">
+                  <span style="color: #94a3b8; font-size: 0.72rem;">長度:</span>
+                  <button type="button" id="btn-pad-dec-bar" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem; line-height: 1;" title="減少 1 小節 (防呆保護)">-</button>
+                  <span id="label-pad-total-bars" style="color: #38bdf8; font-weight: 700; font-size: 0.74rem; min-width: 44px; text-align: center;">4 小節</span>
+                  <button type="button" id="btn-pad-inc-bar" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem; line-height: 1;" title="追加 1 小節">+</button>
+                </div>
+                <!-- 小節精確複製選單 -->
+                <div style="display: inline-flex; align-items: center; gap: 4px; background: #1a1e29; padding: 2px 6px; border-radius: 4px; border: 1px solid #2e3547;">
+                  <span style="color: #94a3b8; font-size: 0.72rem;">📋 複製小節:</span>
+                  <select id="select-copy-src-bar" style="background: #11131a; color: #f8fafc; border: 1px solid #3b4256; border-radius: 3px; font-size: 0.72rem; padding: 1px 4px;">
+                    <option value="1">第 1 小節</option>
+                  </select>
+                  <span style="color: #64748b; font-size: 0.72rem;">➔</span>
+                  <select id="select-copy-dest-bar" style="background: #11131a; color: #f8fafc; border: 1px solid #3b4256; border-radius: 3px; font-size: 0.72rem; padding: 1px 4px;">
+                    <option value="2">第 2 小節</option>
+                    <option value="3" selected>第 3 小節</option>
+                    <option value="4">第 4 小節</option>
+                    <option value="5">第 5 小節</option>
+                  </select>
+                  <button type="button" id="btn-execute-bar-copy" class="toggle-btn active-rp" style="padding: 2px 8px; font-size: 0.72rem; background: #2563eb; color: #fff; border-color: #3b82f6;" title="將來源小節音符複製貼到目標小節 (支援跳小節與自動延伸)">執行複製</button>
+                  <button type="button" id="btn-duplicate-bar" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem;" title="一鍵倍增接續小節 (Ctrl + D)">🔁 倍增</button>
+                </div>
+              </div>
               <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                 <button type="button" id="btn-add-note-action" class="toggle-btn" style="padding: 2px 10px; font-size: 0.74rem; background: #059669; color: #ffffff; border-color: #10b981; font-weight: 700;" title="在當前視野新增一顆音符">➕ 新增音符</button>
                 <button type="button" id="btn-draw-mode" class="toggle-btn inactive" style="padding: 2px 8px; font-size: 0.74rem;" title="切換畫筆模式：開啟後點擊畫布空白處直接建立音符">✏️ 畫筆模式</button>

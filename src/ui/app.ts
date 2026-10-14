@@ -1034,8 +1034,11 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLab
   titleEl.textContent = `${padLabel}${secName} 詳細內容`;
 
   if (notes.length === 0) {
+    const explicitBars = YamahaPadModifier.getPadBarLength(parsed, padNum);
     summaryEl.textContent = '此 Pad 無音符事件或使用特殊控制通道';
-    badgeEl.textContent = '無音符';
+    badgeEl.textContent = `共 ${explicitBars} 小節 (空白)`;
+    setupMeasureControls();
+    updateMeasureControlsUI(explicitBars);
     drawEmptyCanvas(canvas);
     return;
   }
@@ -1048,7 +1051,8 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLab
   const lastNoteTick = Math.max(...notes.map(n => n.startTick + n.durationTick));
   const ticksPerBar = (parsed.division || 96) * 4;
   const gridStartTick = Math.floor(firstNoteTick / ticksPerBar) * ticksPerBar;
-  const actualBars = Math.max(1, Math.ceil((lastNoteTick - gridStartTick) / ticksPerBar));
+  const explicitBars = YamahaPadModifier.getPadBarLength(parsed, padNum);
+  const actualBars = Math.max(1, Math.ceil((lastNoteTick - gridStartTick) / ticksPerBar), explicitBars);
 
   // 提取目前 Track 的 Bank MSB, Bank LSB, PC 與預設樂器名稱
   let currentPc = 0;
@@ -1092,6 +1096,8 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLab
   summaryEl.innerHTML = `<span style="display: inline-block; padding: 2px 8px; border-radius: 4px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-weight: 600; margin-right: 8px;">演奏音色: ${voiceName}</span> <span>共 ${notes.length} 顆音符</span> | <span>音域: ${midiNoteToName(minNote)} (${minNote}) ~ ${midiNoteToName(maxNote)} (${maxNote})</span> | <span>平均力度: ${avgVel}</span>`;
 
   drawNoteRoll(canvas, notes, padNum, parsed.division || 96, parsed.timeSignature?.numerator || 4);
+  setupMeasureControls();
+  updateMeasureControlsUI(actualBars);
 
   // 若當前有已選取的音符，重新在最新渲染方塊中比對並維持選取態
   if (selectedNoteBox) {
@@ -1245,6 +1251,10 @@ let currentDisplayMaxNote = 72;
 let currentSemitoneH = 15;
 let isDrawMode = false;
 let isCreationControlsBound = false;
+let isMeasureControlsBound = false;
+let currentViewBars = 4;
+let selectedRulerBar: number | null = null;
+let clipboardCopiedBar: number | null = null;
 let lastBlankClickTime = 0;
 let lastBlankClickX = 0;
 let lastBlankClickY = 0;
@@ -1337,14 +1347,16 @@ function drawNoteRoll(
   }
 
   const ticksPerBar = ticksPerBeat * beatsPerBar;
-  const firstNoteTick = Math.min(...notes.map(n => n.startTick));
-  const lastNoteTick = Math.max(...notes.map(n => n.startTick + n.durationTick));
+  const firstNoteTick = notes.length > 0 ? Math.min(...notes.map(n => n.startTick)) : 0;
+  const lastNoteTick = notes.length > 0 ? Math.max(...notes.map(n => n.startTick + n.durationTick)) : ticksPerBar;
 
   // 時間基準：向左對齊至整數小節起點
   const gridStartTick = Math.floor(firstNoteTick / ticksPerBar) * ticksPerBar;
   currentGridStartTick = gridStartTick;
   const totalDurationTicks = Math.max(lastNoteTick - gridStartTick, ticksPerBar);
-  const totalBars = Math.max(1, Math.ceil(totalDurationTicks / ticksPerBar));
+  const notesBars = Math.max(1, Math.ceil(totalDurationTicks / ticksPerBar));
+  const explicitBars = currentParsed ? YamahaPadModifier.getPadBarLength(currentParsed, padNum) : 1;
+  const totalBars = Math.max(notesBars, explicitBars);
   currentTotalBars = totalBars;
 
   // 畫面區域配置 (Layout Margins)
@@ -1384,6 +1396,7 @@ function drawNoteRoll(
       viewStartBar = 1;
       viewBars = totalBars;
     }
+    currentViewBars = viewBars;
 
     const windowStartTick = gridStartTick + (viewStartBar - 1) * ticksPerBar;
     const windowTotalTicks = viewBars * ticksPerBar;
@@ -1475,8 +1488,17 @@ function drawNoteRoll(
       const nextBarX = scaleW + ((bar + 1) / viewBars) * plotW;
       const currentBarNum = viewStartBar + bar;
 
+      // 小節標籤選取高亮背景
+      if (selectedRulerBar === currentBarNum) {
+        ctx.fillStyle = 'rgba(245, 158, 11, 0.28)';
+        ctx.fillRect(barX, 0, nextBarX - barX, rulerH);
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(barX, 0, nextBarX - barX, rulerH);
+      }
+
       // 小節標籤 (第 X 小節)
-      ctx.fillStyle = '#f8fafc';
+      ctx.fillStyle = selectedRulerBar === currentBarNum ? '#fbbf24' : '#f8fafc';
       ctx.font = 'bold 11px sans-serif';
       ctx.textAlign = 'left';
       ctx.fillText(`第 ${currentBarNum} 小節`, barX + 8, rulerH - 8);
@@ -2245,6 +2267,157 @@ function setupNoteCreationControls() {
   }
 }
 
+function updateMeasureControlsUI(totalBars: number) {
+  const labelTotalBars = document.getElementById('label-pad-total-bars');
+  const selectSrc = document.getElementById('select-copy-src-bar') as HTMLSelectElement | null;
+  const selectDest = document.getElementById('select-copy-dest-bar') as HTMLSelectElement | null;
+
+  if (labelTotalBars) {
+    labelTotalBars.textContent = `${totalBars} 小節`;
+  }
+
+  if (selectSrc) {
+    const curVal = selectSrc.value ? parseInt(selectSrc.value, 10) : 1;
+    selectSrc.innerHTML = '';
+    for (let b = 1; b <= totalBars; b++) {
+      const opt = document.createElement('option');
+      opt.value = `${b}`;
+      opt.textContent = `第 ${b} 小節`;
+      if (b === curVal || (curVal > totalBars && b === 1)) {
+        opt.selected = true;
+      }
+      selectSrc.appendChild(opt);
+    }
+  }
+
+  if (selectDest) {
+    const curVal = selectDest.value ? parseInt(selectDest.value, 10) : (totalBars >= 2 ? 3 : 2);
+    selectDest.innerHTML = '';
+    const maxDest = Math.max(totalBars + 2, 8);
+    for (let b = 1; b <= maxDest; b++) {
+      const opt = document.createElement('option');
+      opt.value = `${b}`;
+      opt.textContent = `第 ${b} 小節${b > totalBars ? ' (自動延伸)' : ''}`;
+      if (b === curVal) {
+        opt.selected = true;
+      }
+      selectDest.appendChild(opt);
+    }
+  }
+}
+
+function setupMeasureControls() {
+  if (isMeasureControlsBound) return;
+  isMeasureControlsBound = true;
+
+  const btnInc = document.getElementById('btn-pad-inc-bar');
+  const btnDec = document.getElementById('btn-pad-dec-bar');
+  const btnCopy = document.getElementById('btn-execute-bar-copy');
+  const btnDup = document.getElementById('btn-duplicate-bar');
+  const selectSrc = document.getElementById('select-copy-src-bar') as HTMLSelectElement | null;
+  const selectDest = document.getElementById('select-copy-dest-bar') as HTMLSelectElement | null;
+
+  if (btnInc) {
+    btnInc.addEventListener('click', () => {
+      if (!currentParsed) return;
+      const curLen = YamahaPadModifier.getPadBarLength(currentParsed, currentCanvasPadNum);
+      const newLen = curLen + 1;
+      YamahaPadModifier.setPadBarLength(currentParsed, currentCanvasPadNum, newLen);
+      markModified(`已將 Pad ${currentCanvasPadNum} 長度擴展為 ${newLen} 小節`);
+      refreshCurrentPadDetail();
+      const hoverInfoEl = document.getElementById('canvas-hover-info');
+      if (hoverInfoEl) {
+        hoverInfoEl.innerHTML = `➕ <span style="color:#10b981;font-weight:700;">已擴展 Pad ${currentCanvasPadNum} 長度</span>：由 ${curLen} 小節 ➔ <strong>${newLen} 小節</strong>！`;
+        hoverInfoEl.style.backgroundColor = 'rgba(16, 185, 129, 0.16)';
+      }
+    });
+  }
+
+  if (btnDec) {
+    btnDec.addEventListener('click', () => {
+      if (!currentParsed) return;
+      const curLen = YamahaPadModifier.getPadBarLength(currentParsed, currentCanvasPadNum);
+      if (curLen <= 1) return;
+
+      const track = currentParsed.tracks[currentCanvasPadNum];
+      const notes = extractTrackNotes(track);
+      const ticksPerBar = (currentParsed.division || 96) * (currentParsed.timeSignature?.numerator || 4);
+      const firstNoteTick = notes.length > 0 ? Math.min(...notes.map(n => n.startTick)) : 0;
+      const gridStartTick = Math.floor(firstNoteTick / ticksPerBar) * ticksPerBar;
+      const lastBarStartTick = gridStartTick + (curLen - 1) * ticksPerBar;
+      const hasNotesInLastBar = notes.some(n => n.startTick >= lastBarStartTick);
+
+      if (hasNotesInLastBar) {
+        const ok = window.confirm(`Pad ${currentCanvasPadNum} 的第 ${curLen} 小節包含演奏音符，確定要縮減為 ${curLen - 1} 小節嗎？`);
+        if (!ok) return;
+      }
+
+      const newLen = curLen - 1;
+      YamahaPadModifier.setPadBarLength(currentParsed, currentCanvasPadNum, newLen);
+      markModified(`已將 Pad ${currentCanvasPadNum} 長度縮減為 ${newLen} 小節`);
+      refreshCurrentPadDetail();
+      const hoverInfoEl = document.getElementById('canvas-hover-info');
+      if (hoverInfoEl) {
+        hoverInfoEl.innerHTML = `➖ <span style="color:#f59e0b;font-weight:700;">已縮減 Pad ${currentCanvasPadNum} 長度</span>：為 <strong>${newLen} 小節</strong>。`;
+        hoverInfoEl.style.backgroundColor = 'rgba(245, 158, 11, 0.16)';
+      }
+    });
+  }
+
+  if (btnCopy) {
+    btnCopy.addEventListener('click', () => {
+      if (!currentParsed || !selectSrc || !selectDest) return;
+      const srcBar = parseInt(selectSrc.value, 10);
+      const destBar = parseInt(selectDest.value, 10);
+
+      if (srcBar === destBar) {
+        alert('來源小節與目標小節相同，請在右側選擇不同的小節！');
+        return;
+      }
+
+      const result = YamahaPadModifier.copyPadMeasure(currentParsed, currentCanvasPadNum, srcBar, destBar, 'replace');
+      if (result.success) {
+        markModified(`已將 Pad ${currentCanvasPadNum} 第 ${srcBar} 小節複製至第 ${destBar} 小節 (共複製 ${result.copiedCount} 顆音符)`);
+        refreshCurrentPadDetail();
+        const hoverInfoEl = document.getElementById('canvas-hover-info');
+        if (hoverInfoEl) {
+          hoverInfoEl.innerHTML = `🎉 <span style="color:#10b981;font-weight:700;">複製成功</span>：已將第 ${srcBar} 小節複製至第 ${destBar} 小節 (共複製 ${result.copiedCount} 顆音符，總長度: ${result.newTotalBars} 小節)！`;
+          hoverInfoEl.style.backgroundColor = 'rgba(16, 185, 129, 0.16)';
+        }
+      } else {
+        alert(`第 ${srcBar} 小節沒有音符可供複製！`);
+      }
+    });
+  }
+
+  if (btnDup) {
+    btnDup.addEventListener('click', () => {
+      if (!currentParsed) return;
+      const curLen = YamahaPadModifier.getPadBarLength(currentParsed, currentCanvasPadNum);
+      let srcBar = selectSrc ? parseInt(selectSrc.value, 10) : curLen;
+      if (selectedRulerBar) {
+        srcBar = selectedRulerBar;
+      } else if (selectedNoteBox) {
+        const ticksPerBar = (currentParsed.division || 96) * (currentParsed.timeSignature?.numerator || 4);
+        srcBar = Math.floor((selectedNoteBox.startTick - currentGridStartTick) / ticksPerBar) + 1;
+      }
+
+      const result = YamahaPadModifier.duplicatePadMeasure(currentParsed, currentCanvasPadNum, srcBar);
+      if (result.success) {
+        markModified(`已將 Pad ${currentCanvasPadNum} 第 ${srcBar} 小節倍增複製至第 ${result.newTargetBar} 小節`);
+        refreshCurrentPadDetail();
+        const hoverInfoEl = document.getElementById('canvas-hover-info');
+        if (hoverInfoEl) {
+          hoverInfoEl.innerHTML = `🔁 <span style="color:#10b981;font-weight:700;">已一鍵倍增</span>：第 ${srcBar} 小節 ➔ 第 ${result.newTargetBar} 小節 (總長度: ${result.newTargetBar} 小節)！`;
+          hoverInfoEl.style.backgroundColor = 'rgba(16, 185, 129, 0.16)';
+        }
+      } else {
+        alert(`第 ${srcBar} 小節沒有音符可供倍增！`);
+      }
+    });
+  }
+}
+
 function updateTimelineNavigationUI(totalBars: number) {
   const container = document.getElementById('canvas-scroll-container');
   const btn4Bars = document.getElementById('btn-zoom-4bars') as HTMLButtonElement | null;
@@ -2666,7 +2839,37 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
 
     const scaleW = 54;
     const rulerH = 26;
-    if (mouseX < scaleW || mouseY < rulerH || mouseY > canvas.height) return;
+    if (mouseX < scaleW || mouseY > canvas.height) return;
+
+    // 點擊頂部小節時間軸尺規 (Timeline Measure Header)
+    if (mouseY < rulerH) {
+      const relX = mouseX - scaleW;
+      const clickedViewBar = Math.floor((relX / currentPlotW) * currentViewBars);
+      const clickedBar = rollStartBar + clickedViewBar;
+      selectedRulerBar = clickedBar;
+
+      const srcSelect = document.getElementById('select-copy-src-bar') as HTMLSelectElement | null;
+      if (srcSelect) {
+        srcSelect.value = String(clickedBar);
+      }
+
+      // 嘗試選取該小節的第一顆音符 (若有)
+      const ticksPerBar = currentTicksPerBeat * currentBeatsPerBar;
+      const barStartTick = currentGridStartTick + (clickedBar - 1) * ticksPerBar;
+      const barEndTick = barStartTick + ticksPerBar;
+      const firstBoxInBar = lastRenderedNoteBoxes.find(b => b.startTick >= barStartTick && b.startTick < barEndTick);
+      if (firstBoxInBar) {
+        selectNote(firstBoxInBar);
+      }
+
+      if (currentCanvasRedraw) currentCanvasRedraw();
+
+      if (hoverInfoEl) {
+        hoverInfoEl.innerHTML = `📋 <span style="color:#fbbf24;font-weight:700;">已點選第 ${clickedBar} 小節</span>：按 <kbd>Ctrl+C</kbd> 複製、點選目標小節按 <kbd>Ctrl+V</kbd> 貼上，或按 <kbd>Ctrl+D</kbd> 一鍵倍增！`;
+        hoverInfoEl.style.backgroundColor = 'rgba(245, 158, 11, 0.2)';
+      }
+      return;
+    }
 
     // 檢查是否點在既有音符上方 (若點在音符上方，由 mousedown 負責選取)
     const reversedBoxes = [...lastRenderedNoteBoxes].reverse();
@@ -2955,12 +3158,65 @@ function initNoteInspectorEvents() {
     });
   }
 
-  // 鍵盤方向鍵快捷鍵支援 (DAW 級操作手感)
+  // 鍵盤方向鍵與小節快捷鍵支援 (DAW 級操作手感)
   window.addEventListener('keydown', (e) => {
-    if (!selectedNoteBox || !currentParsed) return;
+    if (!currentParsed) return;
     const activeEl = document.activeElement;
     const tag = (activeEl?.tagName || '').toLowerCase();
     if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+
+    const hoverInfoEl = document.getElementById('canvas-hover-info');
+
+    // 支援 Ctrl+C / Ctrl+V / Ctrl+D 小節與音符操作
+    if (e.ctrlKey || e.metaKey) {
+      if (e.key === 'c' || e.key === 'C') {
+        const srcBar = selectedRulerBar || (selectedNoteBox ? Math.floor((selectedNoteBox.startTick - currentGridStartTick) / (currentTicksPerBeat * currentBeatsPerBar)) + 1 : 1);
+        clipboardCopiedBar = srcBar;
+        if (hoverInfoEl) {
+          hoverInfoEl.innerHTML = `✅ <span style="color:#10b981;font-weight:700;">已複製第 ${srcBar} 小節</span>！請點擊目標小節（或從選單指定）按 <kbd>Ctrl+V</kbd> 貼上。`;
+          hoverInfoEl.style.backgroundColor = 'rgba(16, 185, 129, 0.16)';
+        }
+        e.preventDefault();
+        return;
+      } else if (e.key === 'v' || e.key === 'V') {
+        if (clipboardCopiedBar) {
+          const destSelect = document.getElementById('select-copy-dest-bar') as HTMLSelectElement | null;
+          let targetBar = selectedRulerBar;
+          if (!targetBar || targetBar === clipboardCopiedBar) {
+            targetBar = destSelect ? parseInt(destSelect.value, 10) : (clipboardCopiedBar + 1);
+          }
+          const res = YamahaPadModifier.copyPadMeasure(currentParsed, currentCanvasPadNum, clipboardCopiedBar, targetBar, 'replace');
+          if (res.success) {
+            markModified(`已將 Pad ${currentCanvasPadNum} 第 ${clipboardCopiedBar} 小節複製至第 ${targetBar} 小節 (共複製 ${res.copiedCount} 顆音符)`);
+            refreshCurrentPadDetail();
+            if (hoverInfoEl) {
+              hoverInfoEl.innerHTML = `🎉 <span style="color:#10b981;font-weight:700;">已貼上</span>：第 ${clipboardCopiedBar} 小節 ➔ 第 ${targetBar} 小節 (共 ${res.copiedCount} 顆音符)！`;
+              hoverInfoEl.style.backgroundColor = 'rgba(16, 185, 129, 0.16)';
+            }
+          }
+          e.preventDefault();
+          return;
+        }
+      } else if (e.key === 'd' || e.key === 'D') {
+        let srcBar = selectedRulerBar;
+        if (!srcBar && selectedNoteBox) {
+          srcBar = Math.floor((selectedNoteBox.startTick - currentGridStartTick) / (currentTicksPerBeat * currentBeatsPerBar)) + 1;
+        }
+        const res = YamahaPadModifier.duplicatePadMeasure(currentParsed, currentCanvasPadNum, srcBar ?? undefined);
+        if (res.success) {
+          markModified(`已將 Pad ${currentCanvasPadNum} 第 ${srcBar || 1} 小節倍增至第 ${res.newTargetBar} 小節`);
+          refreshCurrentPadDetail();
+          if (hoverInfoEl) {
+            hoverInfoEl.innerHTML = `🔁 <span style="color:#10b981;font-weight:700;">已一鍵倍增</span>：新第 ${res.newTargetBar} 小節 (總長度: ${res.newTargetBar} 小節)！`;
+            hoverInfoEl.style.backgroundColor = 'rgba(16, 185, 129, 0.16)';
+          }
+        }
+        e.preventDefault();
+        return;
+      }
+    }
+
+    if (!selectedNoteBox) return;
 
     if (e.key === 'ArrowUp') {
       e.preventDefault();

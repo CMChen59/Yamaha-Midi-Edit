@@ -237,4 +237,68 @@ describe('步驟 2.1: Pad 屬性與混音編輯雙向同步驗證 (PadModifier V
     expect(createdNoteOff).toBeDefined();
     expect(createdNoteOff?.tick).toBe(4700 + 96);
   });
+
+  it('能正確取得與動態擴展 Pad 總小節長度 (getPadBarLength / setPadBarLength)', () => {
+    const sample1Path = path.resolve(__dirname, '../samples/4006-1_PAD.PAD');
+    const rawBuffer = new Uint8Array(fs.readFileSync(sample1Path));
+    const parsed = YamahaParser.parse(rawBuffer, 'PAD');
+
+    // 檢查初始長度 (Pad 1 至少 4 或 7 小節)
+    const initialLen = YamahaPadModifier.getPadBarLength(parsed, 1);
+    expect(initialLen).toBeGreaterThanOrEqual(4);
+
+    // 將 Pad 1 擴展至 8 小節
+    const success = YamahaPadModifier.setPadBarLength(parsed, 1, 8);
+    expect(success).toBe(true);
+
+    const newLen = YamahaPadModifier.getPadBarLength(parsed, 1);
+    expect(newLen).toBe(8);
+
+    // 驗證寫出後重新解析
+    const modifiedBytes = YamahaWriter.write(parsed);
+    const reParsed = YamahaParser.parse(modifiedBytes, 'PAD');
+    const reLen = YamahaPadModifier.getPadBarLength(reParsed, 1);
+    expect(reLen).toBe(8);
+  });
+
+  it('能精確執行跳小節複製 (例如 1➔3、1➔5) 並驗證音符相對拍點正確', () => {
+    const sample1Path = path.resolve(__dirname, '../samples/4006-1_PAD.PAD');
+    const rawBuffer = new Uint8Array(fs.readFileSync(sample1Path));
+    const parsed = YamahaParser.parse(rawBuffer, 'PAD');
+
+    // 將 Pad 1 第 1 小節音符複製到第 3 小節
+    const res = YamahaPadModifier.copyPadMeasure(parsed, 1, 1, 3, 'replace');
+    expect(res.success).toBe(true);
+    expect(res.copiedCount).toBeGreaterThan(0);
+
+    // 驗證二進位寫出重構
+    const modifiedBytes = YamahaWriter.write(parsed);
+    const reParsed = YamahaParser.parse(modifiedBytes, 'PAD');
+
+    // 提取重構後 Pad 1 的音符
+    let curTick = 0;
+    const trk1 = reParsed.tracks[1];
+    const notes: { note: number; startTick: number }[] = [];
+    for (const ev of trk1.events) {
+      curTick += ev.delta;
+      if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
+        notes.push({ note: ev.noteNumber!, startTick: curTick });
+      }
+    }
+
+    const firstTick = Math.min(...notes.map((n) => n.startTick));
+    const gridStart = Math.floor(firstTick / 384) * 384;
+
+    // 第 1 小節音符 (StartTick: gridStart ~ gridStart + 384)
+    const bar1Notes = notes.filter((n) => n.startTick >= gridStart && n.startTick < gridStart + 384);
+    // 第 3 小節音符 (StartTick: gridStart + 768 ~ gridStart + 1152)
+    const bar3Notes = notes.filter((n) => n.startTick >= gridStart + 768 && n.startTick < gridStart + 1152);
+
+    expect(bar3Notes.length).toBe(bar1Notes.length);
+    // 檢查相對拍點偏移量正好為 2 個小節 (2 * 384 = 768 Ticks)
+    for (let i = 0; i < bar1Notes.length; i++) {
+      expect(bar3Notes[i].note).toBe(bar1Notes[i].note);
+      expect(bar3Notes[i].startTick - bar1Notes[i].startTick).toBe(768);
+    }
+  });
 });
