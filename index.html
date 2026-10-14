@@ -103,9 +103,38 @@
               <span>🎼 鋼琴卷軸 (橫軸: 小節/拍數尺規 ｜ 縱軸: 音名 ｜ 垂直線: 小節線)</span>
               <span style="font-size: 0.72rem; color: #64748b;">高力度(亮色) ➔ 低力度(暗色)</span>
             </div>
+            <!-- 音符即時屬性檢查器 (Note Inspector) -->
+            <div id="note-inspector-bar" class="note-inspector-bar" style="display: none;">
+              <div class="inspector-badge">
+                <span class="inspector-dot"></span>
+                <span id="insp-note-title" style="font-weight: 700; color: #fbbf24;">選取音符</span>
+              </div>
+              <div class="inspector-item">
+                <span class="inspector-label">音名:</span>
+                <span id="insp-pitch-name" class="inspector-val-pitch">E5 (76)</span>
+              </div>
+              <div class="inspector-item">
+                <span class="inspector-label">位置:</span>
+                <span id="insp-position-text" class="inspector-val-pos">第 2 小節 第 4.5 拍</span>
+              </div>
+              <div class="inspector-item">
+                <label for="insp-duration-input" class="inspector-label">音長(Ticks):</label>
+                <input type="number" id="insp-duration-input" min="1" max="7680" step="12" class="inspector-input" title="修改音長 (96 Ticks = 1 拍)" />
+                <span id="insp-duration-desc" class="inspector-dur-desc">(16分音符)</span>
+              </div>
+              <div class="inspector-item">
+                <label for="insp-velocity-input" class="inspector-label">力度(Velocity):</label>
+                <input type="number" id="insp-velocity-input" min="1" max="127" class="inspector-input" title="修改敲擊力度 (1~127)" />
+              </div>
+              <div class="inspector-actions">
+                <button type="button" id="btn-insp-preview" class="btn-insp-preview" title="試聽此單音">▶ 試聽單音</button>
+                <button type="button" id="btn-insp-close" class="modal-close-btn" style="font-size: 1.1rem; padding: 0 4px;" title="取消選取">&times;</button>
+              </div>
+            </div>
+
             <!-- 固定高度資訊列，徹底消除滑鼠懸停時的畫面抖動 -->
-            <div id="canvas-hover-info" style="min-height: 28px; height: 28px; line-height: 28px; margin-bottom: 8px; font-size: 0.8rem; color: #38bdf8; background: rgba(56, 189, 248, 0.08); padding: 0 12px; border-radius: 4px; border: 1px solid rgba(56, 189, 248, 0.18); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box;">💡 將滑鼠懸停於音符上方可檢視音長與小節數</div>
-            <canvas id="pad-note-canvas" width="1120" height="220" style="width: 100%; height: 220px; display: block; border-radius: 6px; cursor: crosshair;"></canvas>
+            <div id="canvas-hover-info" style="min-height: 28px; height: 28px; line-height: 28px; margin-bottom: 8px; font-size: 0.8rem; color: #38bdf8; background: rgba(56, 189, 248, 0.08); padding: 0 12px; border-radius: 4px; border: 1px solid rgba(56, 189, 248, 0.18); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box;">💡 點選任意音符可開啟屬性檢查器，手動微調音長與力度</div>
+            <canvas id="pad-note-canvas" width="1120" height="220" style="width: 100%; height: 220px; display: block; border-radius: 6px; cursor: pointer;"></canvas>
 
             <!-- 小節時間軸滑桿與視野控制項 (Timeline Navigation & Zoom) -->
             <div id="canvas-scroll-container" style="display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; padding: 6px 12px; background: #181a22; border-radius: 6px; border: 1px solid #2a2e3b; flex-wrap: wrap;">

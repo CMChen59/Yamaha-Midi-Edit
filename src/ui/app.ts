@@ -1,7 +1,7 @@
 import { YamahaParser } from '../core/parser/yamaha-parser';
 import { YamahaWriter } from '../core/writer/yamaha-writer';
 import { YamahaPadModifier } from '../core/writer/pad-modifier';
-import { audioEngine } from '../core/audio/audio-engine';
+import { audioEngine, ticksToSeconds } from '../core/audio/audio-engine';
 import type { NoteEvent, PlaybackState } from '../core/audio/audio-engine';
 import type { YamahaFileParsed, YamahaSection, MidiTrack } from '../core/models/types';
 import {
@@ -1069,10 +1069,39 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLab
     ? `${yVoice.name} (${yVoice.chineseName})`
     : (matchedInst ? matchedInst.label : `自訂音色 (PC ${currentPc}, Bank ${currentMsb}-${currentLsb})`);
 
+  let instId = 'grand-piano';
+  if (yVoice) {
+    if (yVoice.category === 'Strings') instId = yVoice.id.includes('pizz') ? 'pizzicato' : 'strings';
+    else if (yVoice.category === 'Guitar') instId = 'guitar';
+    else if (yVoice.category === 'Bass') instId = 'bass';
+    else if (yVoice.category === 'Saxophone' || yVoice.category === 'Brass') instId = 'brass';
+    else if (yVoice.category === 'Woodwind') instId = 'flute';
+    else if (yVoice.category === 'Drums' || yVoice.category === 'Percussion') instId = 'drums';
+  } else if (matchedInst) {
+    instId = matchedInst.id;
+  }
+  currentCanvasPadInstrument = {
+    instrumentId: instId,
+    pc: currentPc,
+    isDrum: (currentPc >= 120 || (yVoice && (yVoice.category === 'Drums' || yVoice.category === 'Percussion'))),
+  };
+
   badgeEl.textContent = `音符範圍 Tick: ${firstNoteTick} ~ ${lastNoteTick} (共 ${actualBars} 小節)`;
   summaryEl.innerHTML = `<span style="display: inline-block; padding: 2px 8px; border-radius: 4px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-weight: 600; margin-right: 8px;">演奏音色: ${voiceName}</span> <span>共 ${notes.length} 顆音符</span> | <span>音域: ${midiNoteToName(minNote)} (${minNote}) ~ ${midiNoteToName(maxNote)} (${maxNote})</span> | <span>平均力度: ${avgVel}</span>`;
 
   drawNoteRoll(canvas, notes, padNum, parsed.division || 96, parsed.timeSignature?.numerator || 4);
+
+  // 若當前有已選取的音符，重新在最新渲染方塊中比對並維持選取態
+  if (selectedNoteBox) {
+    const reFound = lastRenderedNoteBoxes.find(b => b.startTick === selectedNoteBox!.startTick && b.note === selectedNoteBox!.note);
+    if (reFound) {
+      selectedNoteBox = reFound;
+      updateInspectorFields(reFound);
+      if (currentCanvasRedraw) currentCanvasRedraw();
+    } else {
+      deselectNote();
+    }
+  }
 }
 
 function drawEmptyCanvas(canvas: HTMLCanvasElement) {
@@ -1174,6 +1203,9 @@ interface RenderedNoteBox {
 
 let lastRenderedNoteBoxes: RenderedNoteBox[] = [];
 let hoveredNoteBox: RenderedNoteBox | null = null;
+let selectedNoteBox: RenderedNoteBox | null = null;
+let currentCanvasPadInstrument: { instrumentId?: string; pc?: number; isDrum?: boolean } = {};
+let isInspectorEventsBound = false;
 let currentCanvasRedraw: (() => void) | null = null;
 let currentCanvasRedrawWithPlayhead: ((relTick: number | null, activeNotes?: number[]) => void) | null = null;
 let currentPlayheadRelTick: number | null = null;
@@ -1498,15 +1530,16 @@ function drawNoteRoll(
       };
       boxes.push(box);
 
+      const isSelected = selectedNoteBox && selectedNoteBox.startTick === n.startTick && selectedNoteBox.note === n.note;
       const isHovered = highlightedBox && highlightedBox.startTick === n.startTick && highlightedBox.note === n.note;
       const isSounding = playheadRelTick !== null && playheadRelTick !== undefined &&
         (playheadRelTick >= (n.startTick - gridStartTick)) &&
         (playheadRelTick < (n.startTick + n.durationTick - gridStartTick));
 
       // 依據 velocity 力度調整透明度
-      const alpha = (isHovered || isSounding) ? 1.0 : (0.55 + (n.velocity / 127) * 0.45);
+      const alpha = (isSelected || isHovered || isSounding) ? 1.0 : (0.55 + (n.velocity / 127) * 0.45);
       ctx.globalAlpha = alpha;
-      ctx.fillStyle = isSounding ? '#fde047' : (isHovered ? '#38bdf8' : theme.fill);
+      ctx.fillStyle = isSounding ? '#fde047' : (isSelected ? '#f59e0b' : (isHovered ? '#38bdf8' : theme.fill));
 
       ctx.beginPath();
       if (ctx.roundRect) ctx.roundRect(x, noteY, noteW, noteH, 3);
@@ -1515,14 +1548,19 @@ function drawNoteRoll(
 
       // 邊框
       ctx.globalAlpha = 1.0;
-      ctx.strokeStyle = isSounding ? '#ffffff' : (isHovered ? '#ffffff' : theme.border);
-      ctx.lineWidth = (isHovered || isSounding) ? 2 : 1;
+      ctx.strokeStyle = isSounding ? '#ffffff' : (isSelected ? '#ffffff' : (isHovered ? '#ffffff' : theme.border));
+      ctx.lineWidth = isSelected ? 2.5 : ((isHovered || isSounding) ? 2 : 1);
       ctx.stroke();
 
-      // 懸停/發聲光暈效果
+      // 懸停/選取/發聲光暈效果
       if (isSounding) {
         ctx.shadowColor = '#facc15';
         ctx.shadowBlur = 12;
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+      } else if (isSelected) {
+        ctx.shadowColor = '#fbbf24';
+        ctx.shadowBlur = 14;
         ctx.stroke();
         ctx.shadowBlur = 0;
       } else if (isHovered) {
@@ -1746,7 +1784,7 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
           hoverInfoEl.innerHTML = `🎯 音符: <strong>${midiNoteToName(found.note)}</strong> (${found.note}) ｜ 位置: ${found.posDisplayFull} ｜ 音長: <strong>${durStr}</strong> ｜ 力度: <strong>${found.velocity}</strong>`;
           hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.16)';
         } else {
-          hoverInfoEl.textContent = '💡 將滑鼠懸停於音符上方可檢視音長與小節數';
+          hoverInfoEl.textContent = '💡 點選任意音符可開啟屬性檢查器，手動微調音長與力度';
           hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.08)';
         }
       }
@@ -1758,11 +1796,157 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
       hoveredNoteBox = null;
       if (currentCanvasRedraw) currentCanvasRedraw();
       if (hoverInfoEl) {
-        hoverInfoEl.textContent = '💡 將滑鼠懸停於音符上方可檢視音長與小節數';
+        hoverInfoEl.textContent = '💡 點選任意音符可開啟屬性檢查器，手動微調音長與力度';
         hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.08)';
       }
     }
   });
+
+  // 音符點選事件 (Note Selection)
+  canvas.addEventListener('click', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const clickX = (e.clientX - rect.left) * scaleX;
+    const clickY = (e.clientY - rect.top) * scaleY;
+
+    // 搜尋點選的音符方塊
+    const clicked = lastRenderedNoteBoxes.find(b =>
+      clickX >= b.x && clickX <= b.x + b.w &&
+      clickY >= b.y && clickY <= b.y + b.h
+    );
+
+    if (clicked) {
+      selectNote(clicked);
+    } else {
+      // 點擊空白區域：取消選取
+      deselectNote();
+    }
+  });
+
+  initNoteInspectorEvents();
+}
+
+function selectNote(box: RenderedNoteBox) {
+  selectedNoteBox = box;
+  if (currentCanvasRedraw) currentCanvasRedraw();
+
+  updateInspectorFields(box);
+
+  // 點擊即時發聲試聽
+  auditionSelectedNote(box.note, box.durationTick, box.velocity);
+}
+
+function updateInspectorFields(box: RenderedNoteBox) {
+  const inspectorBar = document.getElementById('note-inspector-bar');
+  const pitchEl = document.getElementById('insp-pitch-name');
+  const posEl = document.getElementById('insp-position-text');
+  const durInput = document.getElementById('insp-duration-input') as HTMLInputElement | null;
+  const durDescEl = document.getElementById('insp-duration-desc');
+  const velInput = document.getElementById('insp-velocity-input') as HTMLInputElement | null;
+
+  if (inspectorBar) inspectorBar.style.display = 'flex';
+  if (pitchEl) pitchEl.textContent = `${midiNoteToName(box.note)} (${box.note})`;
+  if (posEl) posEl.textContent = box.posChinese;
+  if (durInput) durInput.value = `${box.durationTick}`;
+  if (durDescEl) durDescEl.textContent = `(${formatShortDuration(box.durationTick, currentTicksPerBeat, currentBeatsPerBar)})`;
+  if (velInput) velInput.value = `${box.velocity}`;
+}
+
+function deselectNote() {
+  if (!selectedNoteBox) return;
+  selectedNoteBox = null;
+  if (currentCanvasRedraw) currentCanvasRedraw();
+
+  const inspectorBar = document.getElementById('note-inspector-bar');
+  if (inspectorBar) inspectorBar.style.display = 'none';
+}
+
+function auditionSelectedNote(note: number, durTicks: number, velocity: number) {
+  const durSec = Math.max(0.1, Math.min(2.0, ticksToSeconds(durTicks, 120, currentTicksPerBeat)));
+  audioEngine.playAuditionNote(note, durSec, {
+    ...currentCanvasPadInstrument,
+    volume: velocity,
+  });
+}
+
+function refreshCurrentPadDetail() {
+  if (!currentParsed) return;
+  const sec = currentParsed.sections[currentCanvasPadNum - 1];
+  const nameInput = document.querySelector(`.pad-card-${currentCanvasPadNum} .pad-name-input`) as HTMLInputElement | null;
+  const currentName = nameInput ? nameInput.value : `Pad ${currentCanvasPadNum}`;
+  showPadNotesDetail(currentParsed, sec, currentName, currentCanvasPadNum);
+}
+
+function initNoteInspectorEvents() {
+  if (isInspectorEventsBound) return;
+  isInspectorEventsBound = true;
+
+  const durInput = document.getElementById('insp-duration-input') as HTMLInputElement | null;
+  const durDescEl = document.getElementById('insp-duration-desc');
+  const velInput = document.getElementById('insp-velocity-input') as HTMLInputElement | null;
+  const btnPreview = document.getElementById('btn-insp-preview');
+  const btnClose = document.getElementById('btn-insp-close');
+
+  if (btnClose) {
+    btnClose.addEventListener('click', () => deselectNote());
+  }
+
+  if (btnPreview) {
+    btnPreview.addEventListener('click', () => {
+      if (selectedNoteBox) {
+        auditionSelectedNote(selectedNoteBox.note, selectedNoteBox.durationTick, selectedNoteBox.velocity);
+      }
+    });
+  }
+
+  if (durInput) {
+    durInput.addEventListener('change', () => {
+      if (!selectedNoteBox || !currentParsed) return;
+      const newDur = Math.max(1, parseInt(durInput.value, 10) || 24);
+      durInput.value = `${newDur}`;
+      if (durDescEl) {
+        durDescEl.textContent = `(${formatShortDuration(newDur, currentTicksPerBeat, currentBeatsPerBar)})`;
+      }
+
+      const oldDur = selectedNoteBox.durationTick;
+      const success = YamahaPadModifier.updateNoteEvent(
+        currentParsed,
+        currentCanvasPadNum,
+        { note: selectedNoteBox.note, startTick: selectedNoteBox.startTick, oldDurationTick: oldDur },
+        { durationTick: newDur }
+      );
+
+      if (success) {
+        selectedNoteBox.durationTick = newDur;
+        markModified(`已微調 Pad ${currentCanvasPadNum} 音符 ${midiNoteToName(selectedNoteBox.note)} 音長為 ${newDur} Ticks`);
+        refreshCurrentPadDetail();
+        auditionSelectedNote(selectedNoteBox.note, newDur, selectedNoteBox.velocity);
+      }
+    });
+  }
+
+  if (velInput) {
+    velInput.addEventListener('change', () => {
+      if (!selectedNoteBox || !currentParsed) return;
+      const newVel = Math.max(1, Math.min(127, parseInt(velInput.value, 10) || 80));
+      velInput.value = `${newVel}`;
+
+      const success = YamahaPadModifier.updateNoteEvent(
+        currentParsed,
+        currentCanvasPadNum,
+        { note: selectedNoteBox.note, startTick: selectedNoteBox.startTick, oldDurationTick: selectedNoteBox.durationTick },
+        { velocity: newVel }
+      );
+
+      if (success) {
+        selectedNoteBox.velocity = newVel;
+        markModified(`已微調 Pad ${currentCanvasPadNum} 音符 ${midiNoteToName(selectedNoteBox.note)} 力度為 ${newVel}`);
+        refreshCurrentPadDetail();
+        auditionSelectedNote(selectedNoteBox.note, selectedNoteBox.durationTick, newVel);
+      }
+    });
+  }
 }
 
 function renderParts(parsed: YamahaFileParsed) {

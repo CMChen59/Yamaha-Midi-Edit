@@ -73,4 +73,45 @@ describe('步驟 2.1: Pad 屬性與混音編輯雙向同步驗證 (PadModifier V
     expect(vol2).toBe(98);
     expect(pan2).toBe(40);
   });
+
+  it('能成功修改 Pad 音軌中特定音符的力度 (Velocity) 與長度 (Duration)', () => {
+    const sample1Path = path.resolve(__dirname, '../samples/4006-1_PAD.PAD');
+    const rawBuffer = new Uint8Array(fs.readFileSync(sample1Path));
+    const parsed = YamahaParser.parse(rawBuffer, 'PAD');
+
+    // 檢查 Pad 1 第一顆音符 (Note 65, Start 4608, Dur 384, Vel 88)
+    const success = YamahaPadModifier.updateNoteEvent(
+      parsed,
+      1,
+      { note: 65, startTick: 4608, oldDurationTick: 384 },
+      { velocity: 118, durationTick: 192 }
+    );
+    expect(success).toBe(true);
+
+    // 導出二進位並重新解析
+    const modifiedBytes = YamahaWriter.write(parsed);
+    const reParsed = YamahaParser.parse(modifiedBytes, 'PAD');
+
+    // 提取 Track 1 音符
+    let curTick = 0;
+    const trk1 = reParsed.tracks[1];
+    let note65OnVel: number | undefined;
+    let note65Dur: number | undefined;
+
+    for (const ev of trk1.events) {
+      curTick += ev.delta;
+      if (ev.type === 'noteOn' && ev.noteNumber === 65 && ev.velocity && ev.velocity > 0) {
+        if (curTick === 4608) {
+          note65OnVel = ev.velocity;
+        }
+      } else if ((ev.type === 'noteOff' || (ev.type === 'noteOn' && ev.velocity === 0)) && ev.noteNumber === 65) {
+        if (note65OnVel !== undefined && note65Dur === undefined) {
+          note65Dur = curTick - 4608;
+        }
+      }
+    }
+
+    expect(note65OnVel).toBe(118);
+    expect(note65Dur).toBe(192);
+  });
 });

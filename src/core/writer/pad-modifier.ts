@@ -219,6 +219,97 @@ export class YamahaPadModifier {
   }
 
   /**
+   * 更新指定 Pad 音軌中特定音符的力度 (Velocity) 與長度 (Duration Ticks)
+   */
+  public static updateNoteEvent(
+    parsed: YamahaFileParsed,
+    padNum: number,
+    target: { note: number; startTick: number; oldDurationTick: number },
+    updates: { velocity?: number; durationTick?: number }
+  ): boolean {
+    const track = parsed.tracks[padNum];
+    if (!track || !track.events) return false;
+
+    let curTick = 0;
+    const annotated = track.events.map((ev, index) => {
+      curTick += ev.delta;
+      return { ev, absTick: curTick, index };
+    });
+
+    // 尋找目標 Note-On 事件
+    const onEntry = annotated.find(
+      (item) =>
+        item.absTick === target.startTick &&
+        item.ev.type === 'noteOn' &&
+        item.ev.noteNumber === target.note &&
+        (item.ev.velocity ?? 0) > 0
+    );
+    if (!onEntry) return false;
+
+    // 尋找對應的 Note-Off 事件 (Note-Off 或 Note-On with vel=0)
+    let offEntry = annotated.find(
+      (item) =>
+        item.index > onEntry.index &&
+        item.absTick === target.startTick + target.oldDurationTick &&
+        item.ev.noteNumber === target.note &&
+        (item.ev.type === 'noteOff' || (item.ev.type === 'noteOn' && item.ev.velocity === 0))
+    );
+
+    if (!offEntry) {
+      // 容錯備用：找第一個在此 Note-On 之後的 Note-Off
+      offEntry = annotated.find(
+        (item) =>
+          item.index > onEntry.index &&
+          item.ev.noteNumber === target.note &&
+          (item.ev.type === 'noteOff' || (item.ev.type === 'noteOn' && item.ev.velocity === 0))
+      );
+    }
+
+    let modified = false;
+
+    // 更新力度 (Velocity)
+    if (updates.velocity !== undefined) {
+      const newVel = Math.max(1, Math.min(127, Math.round(updates.velocity)));
+      onEntry.ev.velocity = newVel;
+      modified = true;
+    }
+
+    // 更新音長 (Duration Ticks)
+    if (updates.durationTick !== undefined && offEntry) {
+      const newDur = Math.max(1, Math.round(updates.durationTick));
+      offEntry.absTick = onEntry.absTick + newDur;
+      modified = true;
+    }
+
+    if (!modified) return false;
+
+    // 保證 End of Track (0x2F) 不早於任何事件
+    const endMeta = annotated.find((item) => item.ev.type === 'meta' && item.ev.metaType === 0x2f);
+    if (endMeta && offEntry && offEntry.absTick > endMeta.absTick) {
+      endMeta.absTick = offEntry.absTick;
+    }
+
+    // 依據 absTick 重新排序，若 absTick 相同則維持原有相對順序
+    annotated.sort((a, b) => {
+      if (a.absTick !== b.absTick) return a.absTick - b.absTick;
+      return a.index - b.index;
+    });
+
+    // 重新計算各事件之 delta-time
+    let prevTick = 0;
+    track.events = annotated.map((item) => {
+      const delta = item.absTick - prevTick;
+      prevTick = item.absTick;
+      item.ev.delta = Math.max(0, delta);
+      return item.ev;
+    });
+
+    // 重新編碼該 Track 的二進位 rawChunk
+    this.rebuildTrackRawChunk(track);
+    return true;
+  }
+
+  /**
    * 重新編碼標準 MIDI Track (MTrk) 的二進位 Byte Buffer
    */
   public static rebuildTrackRawChunk(track: MidiTrack): void {
