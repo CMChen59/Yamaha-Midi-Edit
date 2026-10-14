@@ -1907,21 +1907,23 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
   window.addEventListener('mousemove', (e) => {
     if (isResizingNote && resizingTargetNote) {
       const deltaClientX = e.clientX - resizingStartMouseX;
-      if (Math.abs(deltaClientX) > 2) {
-        isDragThresholdMet = true;
+      if (!isDragThresholdMet) {
+        if (Math.abs(deltaClientX) >= 5) {
+          isDragThresholdMet = true;
+        } else {
+          return;
+        }
       }
 
       const rect = canvas.getBoundingClientRect();
       const canvasDeltaX = deltaClientX * (canvas.width / rect.width);
       const deltaTicks = (canvasDeltaX / currentPlotW) * currentWindowTotalTicks;
 
-      let newDur = Math.round(resizingStartDuration + deltaTicks);
-
       // 網格對齊 (Grid Snap)：預設對齊 1/32 音符 (如 12 ticks 或 60 ticks)，按住 Shift 鍵可 1 Tick 自由微調
       const isFineTune = e.shiftKey;
       const snapStep = isFineTune ? 1 : Math.max(12, Math.round(currentTicksPerBeat / 8));
-      newDur = Math.round(newDur / snapStep) * snapStep;
-      newDur = Math.max(isFineTune ? 1 : snapStep, Math.min(newDur, currentWindowTotalTicks * 2));
+      const snappedDeltaTicks = Math.round(deltaTicks / snapStep) * snapStep;
+      let newDur = Math.max(isFineTune ? 1 : snapStep, Math.min(resizingStartDuration + snappedDeltaTicks, currentWindowTotalTicks * 2));
 
       if (newDur !== currentResizingDuration) {
         currentResizingDuration = newDur;
@@ -1945,21 +1947,23 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
       }
     } else if (isMovingNote && movingTargetNote) {
       const deltaClientX = e.clientX - movingStartMouseX;
-      if (Math.abs(deltaClientX) > 2) {
-        isDragThresholdMet = true;
+      if (!isDragThresholdMet) {
+        if (Math.abs(deltaClientX) >= 6) {
+          isDragThresholdMet = true;
+        } else {
+          return; // 未超過 6px 拖曳門檻（純點擊手震），絕不啟動預覽或變更任何座標
+        }
       }
 
       const rect = canvas.getBoundingClientRect();
       const canvasDeltaX = deltaClientX * (canvas.width / rect.width);
       const deltaTicks = (canvasDeltaX / currentPlotW) * currentWindowTotalTicks;
 
-      let newStart = Math.max(0, Math.round(movingStartTick + deltaTicks));
-
-      // 網格對齊 (Grid Snap)：預設對齊 1/16 音符 (例如 96 PPQ 下為 24 Ticks, 480 PPQ 下為 120 Ticks)，按住 Shift 鍵可 1 Tick 自由微調
+      // 網格對齊 (Grid Snap)：以原始 startTick 為基準累加 snappedDeltaTicks，預設對齊 1/16 音符
       const isFineTune = e.shiftKey;
       const snapStep = isFineTune ? 1 : Math.max(12, Math.round(currentTicksPerBeat / 4));
-      newStart = Math.round(newStart / snapStep) * snapStep;
-      newStart = Math.max(0, newStart);
+      const snappedDeltaTicks = Math.round(deltaTicks / snapStep) * snapStep;
+      let newStart = Math.max(0, movingStartTick + snappedDeltaTicks);
 
       if (newStart !== currentMovingStartTick) {
         currentMovingStartTick = newStart;
@@ -2016,6 +2020,8 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
             hoverInfoEl.style.backgroundColor = 'rgba(239, 68, 68, 0.15)';
           }
         }
+      } else {
+        if (currentCanvasRedraw) currentCanvasRedraw();
       }
 
       setTimeout(() => {
@@ -2036,6 +2042,9 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
         hasJustDragged = true;
         try {
           if (currentParsed) {
+            if (selectedNoteBox) {
+              selectedNoteBox.startTick = finalStart;
+            }
             YamahaPadModifier.updateNoteEvent(
               currentParsed,
               currentCanvasPadNum,
@@ -2054,6 +2063,8 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
             hoverInfoEl.style.backgroundColor = 'rgba(239, 68, 68, 0.15)';
           }
         }
+      } else {
+        if (currentCanvasRedraw) currentCanvasRedraw();
       }
 
       setTimeout(() => {
