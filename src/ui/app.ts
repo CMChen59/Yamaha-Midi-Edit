@@ -1,7 +1,9 @@
 import { YamahaParser } from '../core/parser/yamaha-parser';
 import { YamahaWriter } from '../core/writer/yamaha-writer';
 import { YamahaPadModifier } from '../core/writer/pad-modifier';
-import type { YamahaFileParsed, YamahaSection } from '../core/models/types';
+import { audioEngine } from '../core/audio/audio-engine';
+import type { NoteEvent, PlaybackState } from '../core/audio/audio-engine';
+import type { YamahaFileParsed, YamahaSection, MidiTrack } from '../core/models/types';
 
 console.log('[Yamaha App] 系統腳本已載入');
 
@@ -208,6 +210,24 @@ function initEvents() {
       }
     });
   }
+
+  // 試聽走帶控制器按鈕 (Audition Transport)
+  const btnTransportPlay = document.getElementById('btn-transport-play');
+  if (btnTransportPlay) {
+    btnTransportPlay.addEventListener('click', () => {
+      if (currentActivePadNum !== null) {
+        togglePadAudition(currentActivePadNum);
+      }
+    });
+  }
+
+  const btnTransportStop = document.getElementById('btn-transport-stop');
+  if (btnTransportStop) {
+    btnTransportStop.addEventListener('click', () => {
+      audioEngine.stop();
+      updateAuditionUIState(null);
+    });
+  }
 }
 
 // 處理本機檔案
@@ -261,6 +281,14 @@ function renderParsed(bytes: Uint8Array, filename: string, format: 'STY' | 'PAD'
         : `<span style="color: #8e96a4;">無 CASM 區塊</span>`;
     }
 
+    // 停止任何正在播放的試聽
+    audioEngine.stop();
+    updateAuditionUIState(null);
+    const bpmInput = document.getElementById('input-playback-bpm') as HTMLInputElement | null;
+    if (bpmInput && currentParsed.bpm) {
+      bpmInput.value = `${currentParsed.bpm}`;
+    }
+
     renderSections(currentParsed);
     renderParts(currentParsed);
 
@@ -273,6 +301,172 @@ function renderParsed(bytes: Uint8Array, filename: string, format: 'STY' | 'PAD'
     alert(`解析檔案失敗: ${err.message}`);
     console.error(err);
   }
+}
+
+/**
+ * 從指定 MidiTrack 提取所有 Note 事件 (轉化為 NoteEvent 結構)
+ */
+function extractTrackNotes(track: MidiTrack | undefined): NoteEvent[] {
+  const notes: NoteEvent[] = [];
+  if (!track) return notes;
+  let curTick = 0;
+  const activeNotes = new Map<number, { tick: number; velocity: number }>();
+
+  for (const ev of track.events) {
+    curTick += ev.delta;
+
+    if (ev.type === 'noteOn' && ev.noteNumber !== undefined && ev.velocity && ev.velocity > 0) {
+      activeNotes.set(ev.noteNumber, { tick: curTick, velocity: ev.velocity });
+    } else if ((ev.type === 'noteOff' || (ev.type === 'noteOn' && ev.velocity === 0)) && ev.noteNumber !== undefined) {
+      const start = activeNotes.get(ev.noteNumber);
+      if (start) {
+        notes.push({
+          note: ev.noteNumber,
+          velocity: start.velocity,
+          startTick: start.tick,
+          durationTick: Math.max(curTick - start.tick, 1),
+        });
+        activeNotes.delete(ev.noteNumber);
+      }
+    }
+  }
+  return notes;
+}
+
+/**
+ * 更新所有 Pad 卡片與 Transport 播放按鈕的視覺播放中/停止狀態
+ */
+function updateAuditionUIState(playingPadNum: number | null) {
+  for (let p = 1; p <= 4; p++) {
+    const btn = document.querySelector(`.btn-audition-${p}`) as HTMLButtonElement | null;
+    const card = document.querySelector(`.pad-card-${p}`) as HTMLElement | null;
+    if (btn) {
+      if (playingPadNum === p) {
+        btn.textContent = '⏹ 停止';
+        btn.classList.add('playing');
+      } else {
+        btn.textContent = '▶ 試聽';
+        btn.classList.remove('playing');
+      }
+    }
+    if (card) {
+      if (playingPadNum === p) card.classList.add('pad-playing');
+      else card.classList.remove('pad-playing');
+    }
+  }
+
+  const transportPlayBtn = document.getElementById('btn-transport-play') as HTMLButtonElement | null;
+  if (transportPlayBtn) {
+    if (playingPadNum !== null && playingPadNum === currentActivePadNum) {
+      transportPlayBtn.textContent = '⏹ 停止播放';
+      transportPlayBtn.classList.add('playing');
+    } else {
+      transportPlayBtn.textContent = '▶ 播放此 Pad';
+      transportPlayBtn.classList.remove('playing');
+    }
+  }
+}
+
+/**
+ * 切換單一 Pad 的即時試聽發聲
+ */
+function togglePadAudition(padNum: number) {
+  if (!currentParsed) return;
+
+  if (audioEngine.isPlaying() && audioEngine.getPlayingPadNum() === padNum) {
+    audioEngine.stop();
+    updateAuditionUIState(null);
+    return;
+  }
+
+  const track = currentParsed.tracks[padNum];
+  if (!track) return;
+
+  const notes = extractTrackNotes(track);
+  if (notes.length === 0) {
+    showStatus(`Pad ${padNum} 沒有可播放的音符事件`, false);
+    return;
+  }
+
+  let currentPc = 0;
+  let currentMsb = 0;
+  let currentLsb = 0;
+  let volume = 100;
+  let pan = 64;
+  let reverb = 40;
+
+  for (const ev of track.events) {
+    if (ev.type === 'programChange' && ev.program !== undefined) currentPc = ev.program;
+    if (ev.type === 'controlChange') {
+      if (ev.controller === 0 && ev.value !== undefined) currentMsb = ev.value;
+      if (ev.controller === 32 && ev.value !== undefined) currentLsb = ev.value;
+      if (ev.controller === 7 && ev.value !== undefined) volume = ev.value;
+      if (ev.controller === 10 && ev.value !== undefined) pan = ev.value;
+      if (ev.controller === 91 && ev.value !== undefined) reverb = ev.value;
+    }
+  }
+
+  const padIdx = padNum - 1;
+  const isRepeat = currentParsed.padConfig?.repeatFlags[padIdx] ?? false;
+  const matchedInst = PRESET_INSTRUMENTS.find(i => i.pc === currentPc && (currentMsb === 0 || i.msb === currentMsb) && (currentLsb === 0 || i.lsb === currentLsb))
+    || PRESET_INSTRUMENTS.find(i => i.pc === currentPc && (currentMsb === 0 || i.msb === currentMsb))
+    || PRESET_INSTRUMENTS.find(i => i.pc === currentPc);
+  const instrumentId = matchedInst ? matchedInst.id : 'grand-piano';
+
+  const division = currentParsed.division || 96;
+  const beatsPerBar = currentParsed.timeSignature?.numerator || 4;
+  const ticksPerBar = division * beatsPerBar;
+  const firstNoteTick = Math.min(...notes.map(n => n.startTick));
+  const lastNoteTick = Math.max(...notes.map(n => n.startTick + n.durationTick));
+  const gridStartTick = Math.floor(firstNoteTick / ticksPerBar) * ticksPerBar;
+  const totalBars = Math.max(1, Math.ceil((lastNoteTick - gridStartTick) / ticksPerBar));
+  const totalTicks = totalBars * ticksPerBar;
+
+  const bpmInput = document.getElementById('input-playback-bpm') as HTMLInputElement | null;
+  const bpm = bpmInput ? parseInt(bpmInput.value, 10) || currentParsed.bpm || 120 : currentParsed.bpm || 120;
+
+  // 自動選取該 Pad 展開下方卷軸
+  if (currentActivePadNum !== padNum) {
+    const card = document.querySelector(`.pad-card-${padNum}`) as HTMLElement | null;
+    if (card) card.click();
+  }
+
+  updateAuditionUIState(padNum);
+
+  audioEngine.playSequence(padNum, notes, {
+    bpm,
+    division,
+    beatsPerBar,
+    loop: isRepeat,
+    gridStartTick,
+    totalTicks,
+    channelParams: {
+      volume,
+      pan,
+      reverb,
+      instrumentId,
+      pc: currentPc,
+    },
+    onProgress: (state: PlaybackState) => {
+      const statusBadge = document.getElementById('transport-status-badge');
+      if (statusBadge) {
+        statusBadge.style.display = 'inline-block';
+        statusBadge.textContent = `▶ 第 ${state.currentBar} 小節 第 ${state.currentBeat} 拍 (${state.activeNoteNumbers.length} 音符)`;
+      }
+
+      if (currentActivePadNum === padNum && currentCanvasRedrawWithPlayhead) {
+        currentCanvasRedrawWithPlayhead(state.relTick, state.activeNoteNumbers);
+      }
+    },
+    onEnded: () => {
+      updateAuditionUIState(null);
+      const statusBadge = document.getElementById('transport-status-badge');
+      if (statusBadge) statusBadge.style.display = 'none';
+      if (currentCanvasRedrawWithPlayhead) {
+        currentCanvasRedrawWithPlayhead(null, []);
+      }
+    }
+  });
 }
 
 function renderSections(parsed: YamahaFileParsed) {
@@ -366,7 +560,10 @@ function renderSections(parsed: YamahaFileParsed) {
       item.innerHTML = `
         <div class="pad-header">
           <input type="text" class="pad-name-input" value="${customName}" title="點擊修改名稱" />
-          <span class="pad-raw-tag" title="Yamaha 底層段落標記: ${sec ? sec.name : 'Track ' + padNum}">${sec ? sec.name : 'Track ' + padNum}</span>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <button type="button" class="btn-audition btn-audition-${padNum}" data-pad="${padNum}" title="點擊試聽此打擊墊旋律">▶ 試聽</button>
+            <span class="pad-raw-tag" title="Yamaha 底層段落標記: ${sec ? sec.name : 'Track ' + padNum}">${sec ? sec.name : 'Track ' + padNum}</span>
+          </div>
         </div>
         <div class="pad-body">
           <div class="pad-bars-text">${barsText}</div>
@@ -383,6 +580,15 @@ function renderSections(parsed: YamahaFileParsed) {
           </div>
         </div>
       `;
+
+      // 0. 試聽播放按鈕事件
+      const btnAudition = item.querySelector(`.btn-audition-${padNum}`) as HTMLButtonElement | null;
+      if (btnAudition) {
+        btnAudition.addEventListener('click', (e) => {
+          e.stopPropagation();
+          togglePadAudition(padNum);
+        });
+      }
 
       // 1. 名稱編輯事件
       const nameInput = item.querySelector('.pad-name-input') as HTMLInputElement;
@@ -546,42 +752,13 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLab
   rollStartBar = 1;
   resetHoverInfo();
 
-  // 搜尋對應 Track 提取音符
-  // 在 Yamaha PAD 中，Track 1~4 分別代表 Pad 1~4 的專屬音軌
+  // 搜尋對應 Track 提取音符 (在 Yamaha PAD 中，Track 1~4 分別代表 Pad 1~4 的專屬音軌)
   const trackIdx = padNum; // Track 1~4
   const targetTrack = parsed.tracks[trackIdx];
+  const notes = extractTrackNotes(targetTrack);
 
-  interface NoteSpan {
-    note: number;
-    velocity: number;
-    startTick: number;
-    durationTick: number;
-  }
-
-  const notes: NoteSpan[] = [];
-  if (targetTrack) {
-    let curTick = 0;
-    const activeNotes = new Map<number, { tick: number; velocity: number }>();
-
-    for (const ev of targetTrack.events) {
-      curTick += ev.delta;
-
-      if (ev.type === 'noteOn' && ev.noteNumber !== undefined && ev.velocity && ev.velocity > 0) {
-        activeNotes.set(ev.noteNumber, { tick: curTick, velocity: ev.velocity });
-      } else if ((ev.type === 'noteOff' || (ev.type === 'noteOn' && ev.velocity === 0)) && ev.noteNumber !== undefined) {
-        const start = activeNotes.get(ev.noteNumber);
-        if (start) {
-          notes.push({
-            note: ev.noteNumber,
-            velocity: start.velocity,
-            startTick: start.tick,
-            durationTick: Math.max(curTick - start.tick, 1),
-          });
-          activeNotes.delete(ev.noteNumber);
-        }
-      }
-    }
-  }
+  // 同步試聽走帶控制器狀態
+  updateAuditionUIState(audioEngine.isPlaying() ? audioEngine.getPlayingPadNum() : null);
 
   const secName = sec ? ` (底層標記: ${sec.name})` : '';
   titleEl.textContent = `${padLabel}${secName} 詳細內容`;
@@ -727,6 +904,9 @@ interface RenderedNoteBox {
 let lastRenderedNoteBoxes: RenderedNoteBox[] = [];
 let hoveredNoteBox: RenderedNoteBox | null = null;
 let currentCanvasRedraw: (() => void) | null = null;
+let currentCanvasRedrawWithPlayhead: ((relTick: number | null, activeNotes?: number[]) => void) | null = null;
+let currentPlayheadRelTick: number | null = null;
+let currentActiveNoteNumbers: number[] = [];
 let isCanvasHoverBound = false;
 let isScrollEventsBound = false;
 let currentTicksPerBeat = 96;
@@ -765,6 +945,8 @@ function drawNoteRoll(
   if (currentCanvasPadNum !== padNum) {
     rollStartBar = 1;
     currentCanvasPadNum = padNum;
+    currentPlayheadRelTick = null;
+    currentActiveNoteNumbers = [];
   }
 
   const ticksPerBar = ticksPerBeat * beatsPerBar;
@@ -790,7 +972,24 @@ function drawNoteRoll(
   const plotW = w - scaleW;
   const plotH = h - rulerH;
 
-  const redraw = (highlightedBox?: RenderedNoteBox | null) => {
+  const redraw = (
+    highlightedBox?: RenderedNoteBox | null,
+    playheadRelTick?: number | null,
+    activeNoteNumbers: number[] = []
+  ) => {
+    currentPlayheadRelTick = playheadRelTick ?? null;
+    currentActiveNoteNumbers = activeNoteNumbers;
+
+    // 播放中自動追隨走帶指針 (在 4bars 模式下翻頁)
+    if (playheadRelTick !== null && playheadRelTick !== undefined && rollViewMode === '4bars' && totalBars > 4) {
+      const curBar = Math.floor(playheadRelTick / ticksPerBar) + 1;
+      const expectedStart = Math.floor((curBar - 1) / 4) * 4 + 1;
+      if (curBar < rollStartBar || curBar > rollStartBar + 3) {
+        rollStartBar = Math.max(1, Math.min(expectedStart, totalBars - 3));
+        updateTimelineNavigationUI(totalBars);
+      }
+    }
+
     // 每次繪製時依據當前 rollViewMode 與 rollStartBar 動態計算可見小節範圍 (View Window)
     let viewStartBar = 1;
     let viewBars = totalBars;
@@ -989,11 +1188,14 @@ function drawNoteRoll(
       boxes.push(box);
 
       const isHovered = highlightedBox && highlightedBox.startTick === n.startTick && highlightedBox.note === n.note;
+      const isSounding = playheadRelTick !== null && playheadRelTick !== undefined &&
+        (playheadRelTick >= (n.startTick - gridStartTick)) &&
+        (playheadRelTick < (n.startTick + n.durationTick - gridStartTick));
 
       // 依據 velocity 力度調整透明度
-      const alpha = isHovered ? 1.0 : (0.55 + (n.velocity / 127) * 0.45);
+      const alpha = (isHovered || isSounding) ? 1.0 : (0.55 + (n.velocity / 127) * 0.45);
       ctx.globalAlpha = alpha;
-      ctx.fillStyle = isHovered ? '#38bdf8' : theme.fill;
+      ctx.fillStyle = isSounding ? '#fde047' : (isHovered ? '#38bdf8' : theme.fill);
 
       ctx.beginPath();
       if (ctx.roundRect) ctx.roundRect(x, noteY, noteW, noteH, 3);
@@ -1002,12 +1204,17 @@ function drawNoteRoll(
 
       // 邊框
       ctx.globalAlpha = 1.0;
-      ctx.strokeStyle = isHovered ? '#ffffff' : theme.border;
-      ctx.lineWidth = isHovered ? 2 : 1;
+      ctx.strokeStyle = isSounding ? '#ffffff' : (isHovered ? '#ffffff' : theme.border);
+      ctx.lineWidth = (isHovered || isSounding) ? 2 : 1;
       ctx.stroke();
 
-      // 懸停光暈效果
-      if (isHovered) {
+      // 懸停/發聲光暈效果
+      if (isSounding) {
+        ctx.shadowColor = '#facc15';
+        ctx.shadowBlur = 12;
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+      } else if (isHovered) {
         ctx.shadowColor = '#38bdf8';
         ctx.shadowBlur = 10;
         ctx.stroke();
@@ -1031,10 +1238,42 @@ function drawNoteRoll(
 
     ctx.restore();
     lastRenderedNoteBoxes = boxes;
+
+    // 8. 繪製走帶游標 (Playhead Cursor)
+    if (playheadRelTick !== null && playheadRelTick !== undefined) {
+      const playheadAbsTick = gridStartTick + playheadRelTick;
+      if (playheadAbsTick >= windowStartTick && playheadAbsTick <= windowEndTick) {
+        const playheadX = scaleW + ((playheadAbsTick - windowStartTick) / windowTotalTicks) * plotW;
+
+        // 垂直雷射指針線
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(playheadX, rulerH);
+        ctx.lineTo(playheadX, h);
+        ctx.strokeStyle = '#22c55e';
+        ctx.lineWidth = 2;
+        ctx.shadowColor = '#22c55e';
+        ctx.shadowBlur = 8;
+        ctx.stroke();
+        ctx.restore();
+
+        // 頂部時間軸尺規上的倒三角形游標標記
+        ctx.save();
+        ctx.fillStyle = '#22c55e';
+        ctx.beginPath();
+        ctx.moveTo(playheadX - 6, 2);
+        ctx.lineTo(playheadX + 6, 2);
+        ctx.lineTo(playheadX, rulerH - 2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+    }
   };
 
-  currentCanvasRedraw = () => redraw(hoveredNoteBox);
-  redraw(null);
+  currentCanvasRedraw = () => redraw(hoveredNoteBox, currentPlayheadRelTick, currentActiveNoteNumbers);
+  currentCanvasRedrawWithPlayhead = (relTick, activeNotes) => redraw(hoveredNoteBox, relTick, activeNotes);
+  redraw(null, currentPlayheadRelTick, currentActiveNoteNumbers);
 
   // 註冊滑鼠懸停檢視事件
   setupCanvasHoverEvents(canvas);

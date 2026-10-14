@@ -1,0 +1,65 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import {
+  midiToFreq,
+  ticksToSeconds,
+  secondsToTicks,
+  AudioEngine,
+} from '../src/core/audio/audio-engine';
+
+describe('Web Audio 試聽引擎單元測試 (Audio Engine)', () => {
+  it('midiToFreq 頻率計算符合十二平均律標準', () => {
+    // A4 (MIDI 69) = 440 Hz
+    expect(midiToFreq(69)).toBeCloseTo(440.0, 1);
+
+    // A5 (MIDI 81) = 880 Hz
+    expect(midiToFreq(81)).toBeCloseTo(880.0, 1);
+
+    // A3 (MIDI 57) = 220 Hz
+    expect(midiToFreq(57)).toBeCloseTo(220.0, 1);
+
+    // Middle C (C4, MIDI 60) ≈ 261.63 Hz
+    expect(midiToFreq(60)).toBeCloseTo(261.63, 1);
+  });
+
+  it('ticksToSeconds 與 secondsToTicks 能精確互換換算', () => {
+    const bpm = 120;
+    const division = 96; // PPQ
+
+    // 在 120 BPM 下，1 拍 = 0.5 秒 = 96 Ticks
+    const oneBeatSec = ticksToSeconds(96, bpm, division);
+    expect(oneBeatSec).toBeCloseTo(0.5, 4);
+
+    const backToTicks = secondsToTicks(oneBeatSec, bpm, division);
+    expect(backToTicks).toBeCloseTo(96, 2);
+
+    // 1 小節 (4 拍 = 384 Ticks) = 2.0 秒
+    const oneBarSec = ticksToSeconds(384, bpm, division);
+    expect(oneBarSec).toBeCloseTo(2.0, 4);
+
+    // 換個不同速度 (140 BPM, 480 PPQ)
+    const customSec = ticksToSeconds(480, 140, 480);
+    expect(customSec).toBeCloseTo(60 / 140, 4);
+  });
+
+  describe('AudioEngine 生命週期與狀態管理', () => {
+    let engine: AudioEngine;
+
+    beforeEach(() => {
+      engine = new AudioEngine();
+    });
+
+    afterEach(() => {
+      engine.stop();
+    });
+
+    it('預設未播放狀態為 idle', () => {
+      expect(engine.isPlaying()).toBe(false);
+      expect(engine.getPlayingPadNum()).toBeNull();
+    });
+
+    it('呼叫 stop() 在無播放時能安全返回', () => {
+      expect(() => engine.stop()).not.toThrow();
+      expect(engine.isPlaying()).toBe(false);
+    });
+  });
+});

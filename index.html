@@ -85,6 +85,18 @@
             <span class="badge" id="pad-detail-badge">Tick 0 ~ 2688</span>
           </div>
 
+          <!-- 即時試聽走帶控制器 (Audition Transport Bar) -->
+          <div class="transport-bar" style="margin-top: 12px; display: flex; align-items: center; gap: 10px; background: #181a22; border-radius: 6px; border: 1px solid #2a2e3b; padding: 6px 12px; flex-wrap: wrap;">
+            <button type="button" id="btn-transport-play" class="btn-audition" style="padding: 4px 12px; font-size: 0.78rem;">▶ 播放此 Pad</button>
+            <button type="button" id="btn-transport-stop" class="toggle-btn" style="padding: 4px 10px; font-size: 0.78rem;">⏹ 停止</button>
+            <div style="display: flex; align-items: center; gap: 6px; font-size: 0.76rem;">
+              <span style="color: #94a3b8;">試聽速度:</span>
+              <input type="number" id="input-playback-bpm" min="40" max="260" value="120" style="width: 52px; background: #16181f; border: 1px solid #333846; border-radius: 4px; color: #fff; text-align: center; font-size: 0.76rem; padding: 2px 4px;" title="修改試聽 BPM 速度" />
+              <span style="color: #64748b;">BPM</span>
+            </div>
+            <div id="transport-status-badge" class="transport-badge" style="margin-left: auto; display: none;">第 1 小節 第 1 拍</div>
+          </div>
+
           <!-- 音符視覺化 Canvas (Interactive Piano Roll) -->
           <div class="canvas-wrapper" style="margin-top: 14px; background: #15171c; border-radius: 8px; border: 1px solid var(--border-color); padding: 12px; position: relative;">
             <div class="canvas-header-bar" style="margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; color: var(--text-muted);">
