@@ -1019,6 +1019,7 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLab
   // 僅在切換不同 Pad 時才重設視野起始小節，編輯同一個 Pad 時保留當前檢視小節
   if (currentCanvasPadNum !== padNum) {
     rollStartBar = 1;
+    selectedRulerBar = null;
   }
   resetHoverInfo();
 
@@ -1252,7 +1253,12 @@ let currentSemitoneH = 15;
 let isDrawMode = false;
 let isCreationControlsBound = false;
 let isMeasureControlsBound = false;
-let currentViewBars = 4;
+interface RenderedRulerBox {
+  barNum: number;
+  x: number;
+  w: number;
+}
+let lastRenderedRulerBoxes: RenderedRulerBox[] = [];
 let selectedRulerBar: number | null = null;
 let clipboardCopiedBar: number | null = null;
 let lastBlankClickTime = 0;
@@ -1396,7 +1402,6 @@ function drawNoteRoll(
       viewStartBar = 1;
       viewBars = totalBars;
     }
-    currentViewBars = viewBars;
 
     const windowStartTick = gridStartTick + (viewStartBar - 1) * ticksPerBar;
     const windowTotalTicks = viewBars * ticksPerBar;
@@ -1483,10 +1488,17 @@ function drawNoteRoll(
     ctx.lineTo(w, rulerH);
     ctx.stroke();
 
+    lastRenderedRulerBoxes = [];
     for (let bar = 0; bar < viewBars; bar++) {
       const barX = scaleW + (bar / viewBars) * plotW;
       const nextBarX = scaleW + ((bar + 1) / viewBars) * plotW;
       const currentBarNum = viewStartBar + bar;
+
+      lastRenderedRulerBoxes.push({
+        barNum: currentBarNum,
+        x: barX,
+        w: nextBarX - barX,
+      });
 
       // 小節標籤選取高亮背景
       if (selectedRulerBar === currentBarNum) {
@@ -2843,9 +2855,9 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
 
     // 點擊頂部小節時間軸尺規 (Timeline Measure Header)
     if (mouseY < rulerH) {
-      const relX = mouseX - scaleW;
-      const clickedViewBar = Math.floor((relX / currentPlotW) * currentViewBars);
-      const clickedBar = rollStartBar + clickedViewBar;
+      const hitRuler = lastRenderedRulerBoxes.find(b => mouseX >= b.x && mouseX < b.x + b.w);
+      if (!hitRuler) return;
+      const clickedBar = hitRuler.barNum;
       selectedRulerBar = clickedBar;
 
       const srcSelect = document.getElementById('select-copy-src-bar') as HTMLSelectElement | null;
@@ -2860,6 +2872,8 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
       const firstBoxInBar = lastRenderedNoteBoxes.find(b => b.startTick >= barStartTick && b.startTick < barEndTick);
       if (firstBoxInBar) {
         selectNote(firstBoxInBar);
+      } else {
+        deselectNote();
       }
 
       if (currentCanvasRedraw) currentCanvasRedraw();
