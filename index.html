@@ -99,11 +99,12 @@
 
           <!-- 音符視覺化 Canvas (Interactive Piano Roll) -->
           <div class="canvas-wrapper" style="margin-top: 14px; background: #15171c; border-radius: 8px; border: 1px solid var(--border-color); padding: 12px; position: relative;">
-            <div class="canvas-header-bar" style="margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; color: var(--text-muted);">
+            <div class="canvas-header-bar" style="margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; color: var(--text-muted); flex-wrap: wrap; gap: 8px;">
               <span>🎼 鋼琴卷軸 (橫軸: 小節/拍數尺規 ｜ 縱軸: 音名 ｜ 垂直線: 小節線)</span>
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <button type="button" id="btn-toggle-velocity-lane" class="toggle-btn active-rp" style="padding: 1px 8px; font-size: 0.72rem;" title="展開或收合下方力度軌道">📊 力度軌道 ▾</button>
-                <span style="font-size: 0.72rem; color: #64748b;">高力度(亮色) ➔ 低力度(暗色) ｜ 💡 雙擊畫布空白處可新增音符</span>
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <button type="button" id="btn-add-note-action" class="toggle-btn" style="padding: 2px 10px; font-size: 0.74rem; background: #059669; color: #ffffff; border-color: #10b981; font-weight: 700;" title="在當前視野新增一顆音符">➕ 新增音符</button>
+                <button type="button" id="btn-draw-mode" class="toggle-btn inactive" style="padding: 2px 8px; font-size: 0.74rem;" title="切換畫筆模式：開啟後點擊畫布空白處直接建立音符">✏️ 畫筆模式</button>
+                <button type="button" id="btn-toggle-velocity-lane" class="toggle-btn active-rp" style="padding: 2px 8px; font-size: 0.72rem;" title="展開或收合下方力度軌道">📊 力度軌道 ▾</button>
               </div>
             </div>
             <!-- 固定高度資訊列，徹底消除滑鼠懸停時的畫面抖動 -->

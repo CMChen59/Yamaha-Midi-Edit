@@ -1243,6 +1243,11 @@ let currentWindowTotalTicks = 384;
 let currentWindowStartTick = 0;
 let currentDisplayMaxNote = 72;
 let currentSemitoneH = 15;
+let isDrawMode = false;
+let isCreationControlsBound = false;
+let lastBlankClickTime = 0;
+let lastBlankClickX = 0;
+let lastBlankClickY = 0;
 
 // 音符平移調整狀態 (Note Position Moving State)
 let isMovingNote = false;
@@ -1740,6 +1745,7 @@ function drawNoteRoll(
   // 註冊滑鼠懸停檢視事件
   setupCanvasHoverEvents(canvas);
   setupVelocityToggle();
+  setupNoteCreationControls();
 
   // 更新小節滑動條與縮放控制項
   updateTimelineNavigationUI(totalBars);
@@ -2128,6 +2134,112 @@ function setupVelocityToggle() {
         btnToggle.className = 'toggle-btn inactive';
         btnToggle.textContent = '📊 力度軌道 ▸';
         if (noteCanvas) noteCanvas.style.borderRadius = '6px';
+      }
+    });
+  }
+}
+
+function createNoteAtCanvasPos(mouseX: number, mouseY: number) {
+  if (!currentParsed) return;
+  const canvas = document.getElementById('pad-note-canvas') as HTMLCanvasElement | null;
+  const scaleW = 54;
+  const rulerH = 26;
+
+  if (mouseX < scaleW || mouseY < rulerH || mouseY > (canvas ? canvas.height : 460)) return;
+
+  // 依 Y 座標計算音高
+  const effectiveSemitoneH = currentSemitoneH > 0 ? currentSemitoneH : 15;
+  const row = Math.floor((mouseY - rulerH) / effectiveSemitoneH);
+  const noteNum = Math.max(0, Math.min(127, currentDisplayMaxNote - row));
+
+  // 依 X 座標計算起始拍點 (吸附 1/16 音符網格)
+  const effectivePlotW = currentPlotW > 0 ? currentPlotW : 1000;
+  const effectiveWindowTotalTicks = currentWindowTotalTicks > 0 ? currentWindowTotalTicks : (currentTicksPerBeat * currentBeatsPerBar * 4);
+  const relTick = ((mouseX - scaleW) / effectivePlotW) * effectiveWindowTotalTicks;
+  const rawTick = currentWindowStartTick + relTick;
+  const snapStep = Math.max(12, Math.round(currentTicksPerBeat / 4)); // 預設 1/16 音符 (24 ticks)
+  const snappedStartTick = Math.max(0, Math.round(rawTick / snapStep) * snapStep);
+
+  // 預設長度：若當前選取的音符有音長，繼承該音長；否則預設為 1 拍 (currentTicksPerBeat)
+  const durTick = selectedNoteBox ? selectedNoteBox.durationTick : currentTicksPerBeat;
+  const vel = selectedNoteBox ? selectedNoteBox.velocity : 100;
+
+  const success = YamahaPadModifier.addNoteEvent(currentParsed, currentCanvasPadNum, {
+    note: noteNum,
+    startTick: snappedStartTick,
+    durationTick: durTick,
+    velocity: vel,
+  });
+
+  if (success) {
+    markModified(`已在 Pad ${currentCanvasPadNum} 新增音符 ${midiNoteToName(noteNum)} (${noteNum})`);
+    refreshCurrentPadDetail();
+
+    const newBox = lastRenderedNoteBoxes.find(b => b.startTick === snappedStartTick && b.note === noteNum);
+    if (newBox) {
+      selectNote(newBox);
+    } else {
+      auditionSelectedNote(noteNum, durTick, vel);
+    }
+  }
+}
+
+function setupNoteCreationControls() {
+  if (isCreationControlsBound) return;
+  isCreationControlsBound = true;
+
+  const btnAddNote = document.getElementById('btn-add-note-action');
+  const btnDrawMode = document.getElementById('btn-draw-mode');
+  const canvas = document.getElementById('pad-note-canvas') as HTMLCanvasElement | null;
+
+  if (btnAddNote) {
+    btnAddNote.addEventListener('click', () => {
+      if (!currentParsed) return;
+      let targetTick = currentWindowStartTick;
+      if (selectedNoteBox) {
+        targetTick = selectedNoteBox.startTick + selectedNoteBox.durationTick;
+      }
+      const pitch = selectedNoteBox ? selectedNoteBox.note : Math.max(36, Math.min(84, currentDisplayMaxNote - 6));
+      const durTick = selectedNoteBox ? selectedNoteBox.durationTick : currentTicksPerBeat;
+      const vel = selectedNoteBox ? selectedNoteBox.velocity : 100;
+
+      const success = YamahaPadModifier.addNoteEvent(currentParsed, currentCanvasPadNum, {
+        note: pitch,
+        startTick: targetTick,
+        durationTick: durTick,
+        velocity: vel,
+      });
+
+      if (success) {
+        markModified(`已在 Pad ${currentCanvasPadNum} 新增音符 ${midiNoteToName(pitch)} (${pitch})`);
+        refreshCurrentPadDetail();
+        const newBox = lastRenderedNoteBoxes.find(b => b.startTick === targetTick && b.note === pitch);
+        if (newBox) {
+          selectNote(newBox);
+        } else {
+          auditionSelectedNote(pitch, durTick, vel);
+        }
+      }
+    });
+  }
+
+  if (btnDrawMode) {
+    btnDrawMode.addEventListener('click', () => {
+      isDrawMode = !isDrawMode;
+      if (isDrawMode) {
+        btnDrawMode.className = 'toggle-btn active-rp';
+        btnDrawMode.textContent = '✏️ 畫筆模式 (開)';
+        if (canvas) canvas.style.cursor = 'crosshair';
+        const hoverInfoEl = document.getElementById('canvas-hover-info');
+        if (hoverInfoEl) {
+          hoverInfoEl.innerHTML = `✏️ <span style="color:#10b981;font-weight:700;">畫筆模式已開啟</span>：在畫布空白處「按一下（單擊）」即可直接建立新音符！`;
+          hoverInfoEl.style.backgroundColor = 'rgba(16, 185, 129, 0.16)';
+        }
+      } else {
+        btnDrawMode.className = 'toggle-btn inactive';
+        btnDrawMode.textContent = '✏️ 畫筆模式';
+        if (canvas) canvas.style.cursor = 'default';
+        resetHoverInfo();
       }
     });
   }
@@ -2539,18 +2651,13 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
     }
   });
 
-  // 音符點選事件 (Note Selection)
-  canvas.addEventListener('click', () => {
+  // 音符點選事件與空白處點擊新增 (Click & Double-Click Note Creation)
+  canvas.addEventListener('click', (e) => {
     if (hasJustDragged) {
       hasJustDragged = false;
       return;
     }
-    // 選取與取消選取已由 mousedown 精準執行，避免任何點擊抖動或二次發聲
-  });
 
-  // 雙擊畫布空白處新增音符 (Double-Click Canvas to Create Note)
-  canvas.addEventListener('dblclick', (e) => {
-    if (!currentParsed) return;
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
@@ -2559,11 +2666,9 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
 
     const scaleW = 54;
     const rulerH = 26;
-
-    // 必須在鋼琴卷軸音符區域內
     if (mouseX < scaleW || mouseY < rulerH || mouseY > canvas.height) return;
 
-    // 檢查是否點在既有音符上方 (若有點在音符上則不重複建立)
+    // 檢查是否點在既有音符上方 (若點在音符上方，由 mousedown 負責選取)
     const reversedBoxes = [...lastRenderedNoteBoxes].reverse();
     const hit = reversedBoxes.find(b =>
       mouseX >= b.x && mouseX <= b.x + b.w &&
@@ -2571,42 +2676,44 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
     );
     if (hit) return;
 
-    // 依 Y 座標計算音高
-    const effectiveSemitoneH = currentSemitoneH > 0 ? currentSemitoneH : 15;
-    const row = Math.floor((mouseY - rulerH) / effectiveSemitoneH);
-    const noteNum = Math.max(0, Math.min(127, currentDisplayMaxNote - row));
+    // 點擊在空白處：軟體雙擊檢測 (500ms 內在 30px 範圍內連續點擊) 或 畫筆模式
+    const now = performance.now();
+    const isQuickSecondClick = (now - lastBlankClickTime < 500) && (Math.hypot(mouseX - lastBlankClickX, mouseY - lastBlankClickY) < 30);
 
-    // 依 X 座標計算起始拍點 (吸附 1/16 音符網格)
-    const effectivePlotW = currentPlotW > 0 ? currentPlotW : (canvas.width - scaleW);
-    const effectiveWindowTotalTicks = currentWindowTotalTicks > 0 ? currentWindowTotalTicks : (currentTicksPerBeat * currentBeatsPerBar * 4);
-    const relTick = ((mouseX - scaleW) / effectivePlotW) * effectiveWindowTotalTicks;
-    const rawTick = currentWindowStartTick + relTick;
-    const snapStep = Math.max(12, Math.round(currentTicksPerBeat / 4)); // 預設 1/16 音符 (24 ticks)
-    const snappedStartTick = Math.max(0, Math.round(rawTick / snapStep) * snapStep);
-
-    // 預設長度：若當前選取的音符有音長，繼承該音長；否則預設為 1 拍 (currentTicksPerBeat)
-    const durTick = selectedNoteBox ? selectedNoteBox.durationTick : currentTicksPerBeat;
-    const vel = selectedNoteBox ? selectedNoteBox.velocity : 100;
-
-    const success = YamahaPadModifier.addNoteEvent(currentParsed, currentCanvasPadNum, {
-      note: noteNum,
-      startTick: snappedStartTick,
-      durationTick: durTick,
-      velocity: vel,
-    });
-
-    if (success) {
-      markModified(`已在 Pad ${currentCanvasPadNum} 新增音符 ${midiNoteToName(noteNum)} (${noteNum})`);
-      refreshCurrentPadDetail();
-
-      // 在重新渲染的方塊中尋找剛建立的音符並選取它
-      const newBox = lastRenderedNoteBoxes.find(b => b.startTick === snappedStartTick && b.note === noteNum);
-      if (newBox) {
-        selectNote(newBox);
-      } else {
-        auditionSelectedNote(noteNum, durTick, vel);
+    if (isDrawMode || isQuickSecondClick) {
+      createNoteAtCanvasPos(mouseX, mouseY);
+      lastBlankClickTime = 0;
+    } else {
+      lastBlankClickTime = now;
+      lastBlankClickX = mouseX;
+      lastBlankClickY = mouseY;
+      if (hoverInfoEl) {
+        hoverInfoEl.innerHTML = `💡 <span style="color:#fbbf24;font-weight:700;">點擊了空白處</span>：再按一下 (連點兩下) 即可在此處建立音符，或點上方 <strong>[➕ 新增音符]</strong> / <strong>[✏️ 畫筆模式]</strong>！`;
+        hoverInfoEl.style.backgroundColor = 'rgba(245, 158, 11, 0.2)';
       }
     }
+  });
+
+  // 原生雙擊事件備用 (Native Double-Click Fallback)
+  canvas.addEventListener('dblclick', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const mouseX = (e.clientX - rect.left) * scaleX;
+    const mouseY = (e.clientY - rect.top) * scaleY;
+
+    const scaleW = 54;
+    const rulerH = 26;
+    if (mouseX < scaleW || mouseY < rulerH || mouseY > canvas.height) return;
+
+    const reversedBoxes = [...lastRenderedNoteBoxes].reverse();
+    const hit = reversedBoxes.find(b =>
+      mouseX >= b.x && mouseX <= b.x + b.w &&
+      mouseY >= b.y && mouseY <= b.y + b.h
+    );
+    if (hit) return;
+
+    createNoteAtCanvasPos(mouseX, mouseY);
   });
 
   initNoteInspectorEvents();
