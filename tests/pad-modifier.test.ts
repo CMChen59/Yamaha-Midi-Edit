@@ -355,6 +355,26 @@ describe('步驟 2.1: Pad 屬性與混音編輯雙向同步驗證 (PadModifier V
       expect(newBar4Notes[i].note).toBe(origBar3Notes[i].note);
       expect(newBar4Notes[i].startTick - origBar3Notes[i].startTick).toBe(384);
     }
+
+    // 關鍵防護驗證：第 2 小節末尾的音符 (Note 76 / E5) 音長維持 48 ticks，絕不因插入小節而向後延伸誤拉長
+    curTick = 0;
+    let note76Dur = 0;
+    const activeMap = new Map<number, number>();
+    for (const ev of reParsed.tracks[1].events) {
+      curTick += ev.delta;
+      if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
+        activeMap.set(ev.noteNumber!, curTick);
+      } else if ((ev.type === 'noteOff' || (ev.type === 'noteOn' && ev.velocity === 0)) && ev.noteNumber !== undefined) {
+        const onT = activeMap.get(ev.noteNumber);
+        if (onT !== undefined) {
+          if (ev.noteNumber === 76 && onT >= gridStart + 384 && onT < gridStart + 768) {
+            note76Dur = curTick - onT;
+          }
+          activeMap.delete(ev.noteNumber);
+        }
+      }
+    }
+    expect(note76Dur).toBe(48);
   });
 
   it('能精確執行小節剪除順移 (deletePadMeasure with ripple) 並驗證後續音符時序自動前移與總小節縮減', () => {

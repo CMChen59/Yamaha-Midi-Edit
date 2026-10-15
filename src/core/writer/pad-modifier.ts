@@ -696,8 +696,41 @@ export class YamahaPadModifier {
 
         const endMeta = annotated.find((item) => item.ev.type === 'meta' && item.ev.metaType === 0x2f);
 
+        // 嚴謹配對 Note-On 與 Note-Off，防止先前小節在邊界處結束之音符其 Note-Off 被誤推移
+        const activeNotes = new Map<number, { onIndex: number; absTick: number }>();
+        const noteItemsToShift = new Set<any>();
+
         for (const item of annotated) {
-          if (item.absTick >= targetStartTick) {
+          if (item.ev.type === 'noteOn' && (item.ev.velocity ?? 0) > 0) {
+            activeNotes.set(item.ev.noteNumber!, { onIndex: item.index, absTick: item.absTick });
+          } else if (
+            (item.ev.type === 'noteOff' || (item.ev.type === 'noteOn' && item.ev.velocity === 0)) &&
+            item.ev.noteNumber !== undefined
+          ) {
+            const st = activeNotes.get(item.ev.noteNumber);
+            if (st !== undefined) {
+              if (st.absTick >= targetStartTick) {
+                // 音符起奏於 targetStartTick 之後，Note-On 與 Note-Off 皆向後順移
+                const onEntry = annotated.find((x) => x.index === st.onIndex);
+                if (onEntry) noteItemsToShift.add(onEntry);
+                noteItemsToShift.add(item);
+              } else if (item.absTick > targetStartTick) {
+                // 音符起奏於先前小節，但在 targetStartTick 之後才結束（跨小節），截斷於邊界處
+                item.absTick = targetStartTick;
+              }
+              activeNotes.delete(item.ev.noteNumber);
+            }
+          }
+        }
+
+        // 對已標記的音符事件與非音符事件執行順移
+        for (const item of annotated) {
+          const isNote = item.ev.type === 'noteOn' || item.ev.type === 'noteOff';
+          if (isNote) {
+            if (noteItemsToShift.has(item)) {
+              item.absTick += ticksPerBar;
+            }
+          } else if (item.absTick >= targetStartTick && item.absTick > 0 && !(item.ev.type === 'meta' && item.ev.metaType === 0x2f)) {
             item.absTick += ticksPerBar;
           }
         }
