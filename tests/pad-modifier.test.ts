@@ -552,5 +552,40 @@ describe('步驟 2.1: Pad 屬性與混音編輯雙向同步驗證 (PadModifier V
     const secondSanitize = YamahaPadModifier.sanitizeTrackDuplicateNotes(track);
     expect(secondSanitize).toBe(false);
   });
+
+  it('在包含多個中途音色切換事件的 Pad 音軌中 (如 4006-1 Track 3)，setPadMixing 能全面更新所有 ProgramChange 與 Bank 事件', () => {
+    const pad1Path = path.resolve(__dirname, '../samples/4006-1_PAD.PAD');
+    const rawBuffer = new Uint8Array(fs.readFileSync(pad1Path));
+    const parsed = YamahaParser.parse(rawBuffer, 'PAD');
+
+    // Track 3 原有 tick 2, tick 5 (PC 45) 與 tick 3073 (PC 75, LSB 113)
+    const originalTrack3 = parsed.tracks[3];
+    const initialPcs = originalTrack3.events.filter((e) => e.type === 'programChange');
+    expect(initialPcs.length).toBeGreaterThan(1);
+    expect(initialPcs.some((e) => e.program === 75)).toBe(true);
+
+    // 修改 Pad 3 音色為 Live! Strings (MSB 8, LSB 33, PC 49)
+    YamahaPadModifier.setPadMixing(parsed, 3, {
+      bankMsb: 8,
+      bankLsb: 33,
+      programChange: 49,
+    });
+
+    // 驗證 Track 3 內部所有的 Program Change 均已同步更新為 49
+    const updatedPcs = originalTrack3.events.filter((e) => e.type === 'programChange');
+    expect(updatedPcs.every((e) => e.program === 49)).toBe(true);
+
+    // 驗證所有的 Bank MSB (CC 0) 與 LSB (CC 32) 均已更新為 8 與 33
+    const updatedMsbs = originalTrack3.events.filter((e) => e.type === 'controlChange' && e.controller === 0);
+    const updatedLsbs = originalTrack3.events.filter((e) => e.type === 'controlChange' && e.controller === 32);
+    expect(updatedMsbs.every((e) => e.value === 8)).toBe(true);
+    expect(updatedLsbs.every((e) => e.value === 33)).toBe(true);
+
+    // 驗證無損重構與再次解析一致性
+    const reBytes = YamahaWriter.write(parsed);
+    const reParsed = YamahaParser.parse(reBytes, 'PAD');
+    const rePcs = reParsed.tracks[3].events.filter((e) => e.type === 'programChange');
+    expect(rePcs.every((e) => e.program === 49)).toBe(true);
+  });
 });
 

@@ -1723,14 +1723,21 @@ function renderSections(parsed: YamahaFileParsed) {
           programChange: selected.pc,
         });
 
-        // C. 連動更新下方「聲部混音與音色配置」表格中的對應欄位
+        // C. 實體琴即時同步音色
+        midiManager.sendVoiceChange(padNum - 1, {
+          msb: selected.msb,
+          lsb: selected.lsb,
+          pc: selected.pc,
+        });
+
+        // D. 連動更新下方「聲部混音與音色配置」表格中的對應欄位
         updatePartsTableRowVoice(padNum, selected.msb, selected.lsb, selected.pc);
 
         markModified(`Pad ${padNum} 演奏樂器已更換為: ${selected.label} (Bank ${selected.msb}-${selected.lsb}, PC ${selected.pc})`);
 
-        // D. 若當前畫面正在檢視此 Pad，立即刷新詳細資訊面板
+        // E. 若當前畫面正在檢視此 Pad，立即刷新詳細資訊面板
         if (currentActivePadNum === padNum) {
-          if (sec) showPadNotesDetail(parsed, sec, nameInput.value, padNum);
+          showPadNotesDetail(parsed, sec || null, nameInput.value, padNum);
         }
       });
 

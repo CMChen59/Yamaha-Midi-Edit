@@ -179,12 +179,14 @@ export class YamahaPadModifier {
   }
 
   private static updateOrInsertCC(track: MidiTrack, channel: number, controller: number, value: number): void {
-    const existing = track.events.find(
-      (e) => e.type === 'controlChange' && e.controller === controller && (e.channel === undefined || e.channel === channel)
+    const matching = track.events.filter(
+      (e) => e.type === 'controlChange' && e.controller === controller
     );
-    if (existing) {
-      existing.value = value;
-      existing.channel = channel;
+    if (matching.length > 0) {
+      for (const ev of matching) {
+        ev.value = value;
+        ev.channel = channel;
+      }
     } else {
       // 插入在第一個 NoteOn 之前
       const firstNoteIdx = track.events.findIndex((e) => e.type === 'noteOn');
@@ -200,12 +202,14 @@ export class YamahaPadModifier {
   }
 
   private static updateOrInsertPC(track: MidiTrack, channel: number, program: number): void {
-    const existing = track.events.find(
-      (e) => e.type === 'programChange' && (e.channel === undefined || e.channel === channel)
+    const matching = track.events.filter(
+      (e) => e.type === 'programChange'
     );
-    if (existing) {
-      existing.program = program;
-      existing.channel = channel;
+    if (matching.length > 0) {
+      for (const ev of matching) {
+        ev.program = program;
+        ev.channel = channel;
+      }
     } else {
       const firstNoteIdx = track.events.findIndex((e) => e.type === 'noteOn');
       const insertIdx = firstNoteIdx >= 0 ? firstNoteIdx : 0;
