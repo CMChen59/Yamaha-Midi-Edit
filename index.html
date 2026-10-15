@@ -82,7 +82,10 @@
               <h3 id="pad-detail-title" style="font-size: 1.1rem; color: #fff;">Pad 1 詳細音符內容</h3>
               <p id="pad-detail-summary" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 2px;">共 16 顆音符 | 音域: C3 ~ G4</p>
             </div>
-            <span class="badge" id="pad-detail-badge">Tick 0 ~ 2688</span>
+            <div id="pad-detail-badges-group" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              <span class="badge" id="pad-detail-start-badge" style="background-color: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); font-weight: 600;">📍 全曲起點: 第 1 小節 第 1 拍</span>
+              <span class="badge" id="pad-detail-badge">⏱️ 音符範圍 Tick: 0 ~ 2688</span>
+            </div>
           </div>
 
           <!-- 即時試聽走帶控制器 (Audition Transport Bar) -->

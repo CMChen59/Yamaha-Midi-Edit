@@ -762,11 +762,18 @@ function renderSections(parsed: YamahaFileParsed) {
       }
 
       let barsText = '無音符';
+      let startTagHtml = '';
       if (padNoteCount > 0) {
-        const ticksPerBar = parsed.division * 4;
+        const ticksPerBeat = parsed.division || 96;
+        const beatsPerBar = parsed.timeSignature?.numerator || 4;
+        const ticksPerBar = ticksPerBeat * beatsPerBar;
         const gridStart = Math.floor(minT / ticksPerBar) * ticksPerBar;
         const bars = Math.max(1, Math.ceil((maxT - gridStart) / ticksPerBar));
         barsText = `${padNoteCount} 顆音符 (${bars} 小節)`;
+
+        const startBar = Math.floor(minT / ticksPerBar) + 1;
+        const endBar = maxT % ticksPerBar === 0 ? (maxT / ticksPerBar) : (Math.floor(maxT / ticksPerBar) + 1);
+        startTagHtml = `<span style="font-size: 0.72rem; color: #34d399; font-weight: 600; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 4px; padding: 1px 6px;" title="全曲時間軸絕對位置: 第 ${startBar} 小節起">📍 M${startBar} 起 (${startBar}~${endBar}節)</span>`;
       } else if (sec) {
         barsText = sec.measureCount ? `${sec.measureCount} 小節` : '連續片段';
       }
@@ -824,7 +831,10 @@ function renderSections(parsed: YamahaFileParsed) {
           </div>
         </div>
         <div class="pad-body">
-          <div class="pad-bars-text">${barsText}</div>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; gap: 6px;">
+            <div class="pad-bars-text" style="margin-bottom: 0;">${barsText}</div>
+            ${startTagHtml}
+          </div>
           <div class="section-details" style="display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; align-items: center;">
             <button type="button" class="toggle-btn btn-cm ${isChordMatch ? 'active-cm' : 'inactive'}" title="點擊切換和弦跟隨">
               ${isChordMatch ? '🎼 和弦跟隨: 開' : '🔒 固定音高: 關'}
@@ -987,12 +997,17 @@ function showEmptyPadDetail(customName: string, padNum: number) {
   const titleEl = document.getElementById('pad-detail-title');
   const summaryEl = document.getElementById('pad-detail-summary');
   const badgeEl = document.getElementById('pad-detail-badge');
+  const startBadgeEl = document.getElementById('pad-detail-start-badge');
   const canvas = document.getElementById('pad-note-canvas') as HTMLCanvasElement | null;
 
   if (!container || !titleEl || !summaryEl || !badgeEl || !canvas) return;
   container.style.display = 'block';
 
   titleEl.textContent = `${customName} (Pad ${padNum}) - 空白打擊墊`;
+  if (startBadgeEl) {
+    startBadgeEl.textContent = '📍 全曲起點: 無音符';
+    startBadgeEl.title = '';
+  }
   badgeEl.textContent = '未分配音樂區段';
   summaryEl.textContent = '此打擊墊在當前檔案中未包含任何音樂音符或觸發標記';
   drawEmptyCanvas(canvas);
@@ -1005,12 +1020,56 @@ function midiNoteToName(note: number): string {
   return `${noteNames[note % 12]}${octave}`;
 }
 
+// 格式化全曲絕對音樂位置 (小節、拍、細分)
+function formatAbsolutePosition(
+  absTick: number,
+  ticksPerBeat: number = 96,
+  beatsPerBar: number = 4
+): {
+  bar: number;
+  beat: number;
+  tickInBeat: number;
+  fractionOfBeat: number;
+  beatText: string;
+  summary: string;
+  standard: string;
+} {
+  const ticksPerBar = ticksPerBeat * beatsPerBar;
+  const bar = Math.floor(absTick / ticksPerBar) + 1;
+  const tickInBar = absTick % ticksPerBar;
+  const beat = Math.floor(tickInBar / ticksPerBeat) + 1;
+  const tickInBeat = tickInBar % ticksPerBeat;
+  const fractionOfBeat = tickInBeat / ticksPerBeat;
+
+  let beatText = `第 ${beat} 拍`;
+  if (tickInBeat === 0 || fractionOfBeat < 0.04) {
+    beatText = `第 ${beat} 拍`;
+  } else if (Math.abs(fractionOfBeat - 0.5) < 0.06) {
+    beatText = `第 ${beat}.5 拍`;
+  } else if (Math.abs(fractionOfBeat - 0.25) < 0.05) {
+    beatText = `第 ${beat} 拍 1/4 處`;
+  } else if (Math.abs(fractionOfBeat - 0.75) < 0.05) {
+    beatText = `第 ${beat} 拍 3/4 處`;
+  } else {
+    beatText = `第 ${beat} 拍 (+${tickInBeat}T)`;
+  }
+
+  const ticksPer16th = ticksPerBeat / 4;
+  const sub16th = Math.floor(tickInBeat / ticksPer16th) + 1;
+  const tickRemainder = Math.round(tickInBeat % ticksPer16th);
+  const standard = `${bar}.${beat}.${sub16th}.${tickRemainder.toString().padStart(2, '0')}`;
+  const summary = `第 ${bar} 小節 ${beatText}`;
+
+  return { bar, beat, tickInBeat, fractionOfBeat, beatText, summary, standard };
+}
+
 // 展開並繪製指定 Pad 的詳細音符
 function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLabel: string, padNum: number) {
   const container = document.getElementById('pad-detail-container');
   const titleEl = document.getElementById('pad-detail-title');
   const summaryEl = document.getElementById('pad-detail-summary');
   const badgeEl = document.getElementById('pad-detail-badge');
+  const startBadgeEl = document.getElementById('pad-detail-start-badge');
   const canvas = document.getElementById('pad-note-canvas') as HTMLCanvasElement | null;
 
   if (!container || !titleEl || !summaryEl || !badgeEl || !canvas) return;
@@ -1037,6 +1096,10 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLab
   if (notes.length === 0) {
     const explicitBars = YamahaPadModifier.getPadBarLength(parsed, padNum);
     summaryEl.textContent = '此 Pad 無音符事件或使用特殊控制通道';
+    if (startBadgeEl) {
+      startBadgeEl.textContent = '📍 全曲起點: 無音符 (空白 Pad)';
+      startBadgeEl.title = '';
+    }
     badgeEl.textContent = `共 ${explicitBars} 小節 (空白)`;
     setupMeasureControls();
     updateMeasureControlsUI(explicitBars);
@@ -1050,7 +1113,9 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLab
 
   const firstNoteTick = Math.min(...notes.map(n => n.startTick));
   const lastNoteTick = Math.max(...notes.map(n => n.startTick + n.durationTick));
-  const ticksPerBar = (parsed.division || 96) * 4;
+  const ticksPerBeat = parsed.division || 96;
+  const beatsPerBar = parsed.timeSignature?.numerator || 4;
+  const ticksPerBar = ticksPerBeat * beatsPerBar;
   const gridStartTick = Math.floor(firstNoteTick / ticksPerBar) * ticksPerBar;
   const explicitBars = YamahaPadModifier.getPadBarLength(parsed, padNum);
   const actualBars = Math.max(1, Math.ceil((lastNoteTick - gridStartTick) / ticksPerBar), explicitBars);
@@ -1093,7 +1158,14 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection, padLab
     isDrum: (currentPc >= 120 || (yVoice && (yVoice.category === 'Drums' || yVoice.category === 'Percussion'))),
   };
 
-  badgeEl.textContent = `音符範圍 Tick: ${firstNoteTick} ~ ${lastNoteTick} (共 ${actualBars} 小節)`;
+  const absStart = formatAbsolutePosition(firstNoteTick, ticksPerBeat, beatsPerBar);
+  const absEndBar = lastNoteTick % ticksPerBar === 0 ? (lastNoteTick / ticksPerBar) : (Math.floor(lastNoteTick / ticksPerBar) + 1);
+
+  if (startBadgeEl) {
+    startBadgeEl.textContent = `📍 全曲起點: ${absStart.summary} (全曲第 ${absStart.bar} ~ ${absEndBar} 小節)`;
+    startBadgeEl.title = `絕對音符起始位置: DAW標記 ${absStart.standard}，相對於全曲時間軸第 ${absStart.bar} 小節 ${absStart.beatText}`;
+  }
+  badgeEl.textContent = `⏱️ 音符範圍 Tick: ${firstNoteTick} ~ ${lastNoteTick} (共 ${actualBars} 小節)`;
   summaryEl.innerHTML = `<span style="display: inline-block; padding: 2px 8px; border-radius: 4px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-weight: 600; margin-right: 8px;">演奏音色: ${voiceName}</span> <span>共 ${notes.length} 顆音符</span> | <span>音域: ${midiNoteToName(minNote)} (${minNote}) ~ ${midiNoteToName(maxNote)} (${maxNote})</span> | <span>平均力度: ${avgVel}</span>`;
 
   drawNoteRoll(canvas, notes, padNum, parsed.division || 96, parsed.timeSignature?.numerator || 4);
@@ -1547,7 +1619,9 @@ function drawNoteRoll(
       ctx.fillStyle = selectedRulerBar === currentBarNum ? '#fbbf24' : (isPastLoop ? '#64748b' : '#f8fafc');
       ctx.font = 'bold 11px sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText(`第 ${currentBarNum} 小節${isPastLoop ? ' (未啟用)' : ''}`, barX + 8, rulerH - 8);
+      const absBarNum = Math.floor(gridStartTick / ticksPerBar) + currentBarNum;
+      const absSuffix = (gridStartTick > 0) ? ` [M${absBarNum}]` : '';
+      ctx.fillText(`第 ${currentBarNum} 小節${absSuffix}${isPastLoop ? ' (未啟用)' : ''}`, barX + 8, rulerH - 8);
 
       // 小節內的拍數刻度 (.2, .3, .4) 與半拍次刻度 (+)
       for (let beat = 0; beat < beatsPerBar; beat++) {
@@ -3076,7 +3150,14 @@ function updateInspectorFields(box: RenderedNoteBox) {
 
   if (inspectorBar) inspectorBar.style.display = 'flex';
   if (pitchEl) pitchEl.textContent = `${midiNoteToName(box.note)} (${box.note})`;
-  if (posEl) posEl.textContent = box.posChinese;
+  if (posEl) {
+    if (currentGridStartTick > 0) {
+      const absPos = formatAbsolutePosition(box.startTick, currentTicksPerBeat, currentBeatsPerBar);
+      posEl.textContent = `${box.posChinese} [全曲: ${absPos.summary} / ${absPos.standard}]`;
+    } else {
+      posEl.textContent = box.posChinese;
+    }
+  }
   if (durInput) durInput.value = `${box.durationTick}`;
   if (durDescEl) durDescEl.textContent = `(${formatShortDuration(box.durationTick, currentTicksPerBeat, currentBeatsPerBar)})`;
   if (velInput) velInput.value = `${box.velocity}`;
