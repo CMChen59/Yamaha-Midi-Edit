@@ -167,15 +167,15 @@
               <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                 <button type="button" id="btn-add-note-action" class="toggle-btn" style="padding: 2px 10px; font-size: 0.74rem; background: #059669; color: #ffffff; border-color: #10b981; font-weight: 700;" title="在當前視野新增一顆音符">➕ 新增音符</button>
                 <button type="button" id="btn-draw-mode" class="toggle-btn inactive" style="padding: 2px 8px; font-size: 0.74rem;" title="切換畫筆模式：開啟後點擊畫布空白處直接建立音符">✏️ 畫筆模式</button>
-                <button type="button" id="btn-toggle-velocity-lane" class="toggle-btn active-rp" style="padding: 2px 8px; font-size: 0.72rem;" title="展開或收合下方力度軌道">📊 力度軌道 ▾</button>
+                <button type="button" id="btn-toggle-velocity-lane" class="toggle-btn inactive" style="padding: 2px 8px; font-size: 0.72rem;" title="展開或收合下方力度軌道">📊 力度軌道 ▸</button>
               </div>
             </div>
             <!-- 固定高度資訊列，徹底消除滑鼠懸停時的畫面抖動 -->
             <div id="canvas-hover-info" style="min-height: 28px; height: 28px; line-height: 28px; margin-bottom: 8px; font-size: 0.8rem; color: #38bdf8; background: rgba(56, 189, 248, 0.08); padding: 0 12px; border-radius: 4px; border: 1px solid rgba(56, 189, 248, 0.18); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box;">💡 點選任意音符可開啟屬性檢查器，拖曳音符可平移位置，右邊緣 ↔ 縮放音長</div>
-            <canvas id="pad-note-canvas" width="1120" height="220" style="width: 100%; height: 220px; display: block; border-radius: 6px 6px 0 0; cursor: pointer;"></canvas>
+            <canvas id="pad-note-canvas" width="1120" height="220" style="width: 100%; height: 220px; display: block; border-radius: 6px; cursor: pointer;"></canvas>
 
-            <!-- DAW 力度軌道 (Velocity Lane Canvas) - 與上方鋼琴卷軸垂直對齊，支援直接上下拖曳微調力度 -->
-            <div id="velocity-lane-wrapper" style="position: relative; margin-top: 1px; background: #0c0e14; border-radius: 0 0 6px 6px; border: 1px solid #1f2330; border-top: none; overflow: hidden;">
+            <!-- DAW 力度軌道 (Velocity Lane Canvas) - 與上方鋼琴卷軸垂直對齊，支援直接上下拖曳微調力度 (預設關閉) -->
+            <div id="velocity-lane-wrapper" style="display: none; position: relative; margin-top: 1px; background: #0c0e14; border-radius: 0 0 6px 6px; border: 1px solid #1f2330; border-top: none; overflow: hidden;">
               <canvas id="pad-velocity-canvas" width="1120" height="68" style="width: 100%; height: 68px; display: block; cursor: ns-resize;"></canvas>
             </div>
 

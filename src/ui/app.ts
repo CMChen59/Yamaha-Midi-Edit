@@ -2125,7 +2125,7 @@ interface RenderedVelocityStalk {
   durationTick: number;
 }
 
-let isVelocityLaneVisible = true;
+let isVelocityLaneVisible = false;
 let isDraggingVelocity = false;
 let velocityDragTarget: RenderedVelocityStalk | null = null;
 let velocityStartMouseY = 0;
@@ -3031,6 +3031,19 @@ function setupVelocityToggle() {
   const noteCanvas = document.getElementById('pad-note-canvas');
 
   if (btnToggle && wrapper) {
+    // 初始化同步狀態 (預設關閉)
+    if (isVelocityLaneVisible) {
+      wrapper.style.display = 'block';
+      btnToggle.className = 'toggle-btn active-rp';
+      btnToggle.textContent = '📊 力度軌道 ▾';
+      if (noteCanvas) noteCanvas.style.borderRadius = '6px 6px 0 0';
+    } else {
+      wrapper.style.display = 'none';
+      btnToggle.className = 'toggle-btn inactive';
+      btnToggle.textContent = '📊 力度軌道 ▸';
+      if (noteCanvas) noteCanvas.style.borderRadius = '6px';
+    }
+
     btnToggle.addEventListener('click', () => {
       isVelocityLaneVisible = !isVelocityLaneVisible;
       if (isVelocityLaneVisible) {
