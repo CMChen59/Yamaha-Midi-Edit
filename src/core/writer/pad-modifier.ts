@@ -431,6 +431,18 @@ export class YamahaPadModifier {
     const durTick = Math.max(1, Math.round(newNote.durationTick));
     const endTick = startTick + durTick;
 
+    // 核心防護：避免在同一個時間點 (absTick) 與相同音高 (noteNumber) 重複插入 Note-On 事件
+    const alreadyExists = annotated.some(
+      (item) =>
+        item.ev.type === 'noteOn' &&
+        item.ev.noteNumber === noteNum &&
+        item.absTick === startTick &&
+        (item.ev.velocity ?? 0) > 0
+    );
+    if (alreadyExists) {
+      return false;
+    }
+
     // 建立 Note-On 事件
     const onEv: MidiEvent = {
       delta: 0,
@@ -477,6 +489,78 @@ export class YamahaPadModifier {
 
     let prevTick = 0;
     track.events = annotated.map((item) => {
+      const delta = item.absTick - prevTick;
+      prevTick = item.absTick;
+      item.ev.delta = Math.max(0, delta);
+      return item.ev;
+    });
+
+    this.rebuildTrackRawChunk(track);
+    return true;
+  }
+
+  /**
+   * 清理並消除音軌中重複堆疊的 Note-On 與多餘的 Note-Off 事件，防止重疊幽靈音符
+   * @returns boolean 是否進行了實質清理與重新計算
+   */
+  public static sanitizeTrackDuplicateNotes(track: MidiTrack): boolean {
+    if (!track || !track.events || track.events.length === 0) return false;
+
+    let curTick = 0;
+    const annotated = track.events.map((ev, index) => {
+      curTick += ev.delta;
+      return { ev, absTick: curTick, index };
+    });
+
+    const activeCounts = new Map<number, number>();
+    const seenNoteOnTicks = new Set<string>();
+    const kept: typeof annotated = [];
+    let modified = false;
+
+    for (const item of annotated) {
+      const ev = item.ev;
+      if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0 && ev.noteNumber !== undefined) {
+        const key = `${ev.noteNumber}_${item.absTick}`;
+        if (seenNoteOnTicks.has(key)) {
+          // 同一音高且完全同一個起始 Tick，視為重複 Note-On，予以剃除
+          modified = true;
+          continue;
+        }
+        seenNoteOnTicks.add(key);
+        activeCounts.set(ev.noteNumber, (activeCounts.get(ev.noteNumber) || 0) + 1);
+        kept.push(item);
+      } else if ((ev.type === 'noteOff' || (ev.type === 'noteOn' && ev.velocity === 0)) && ev.noteNumber !== undefined) {
+        const count = activeCounts.get(ev.noteNumber) || 0;
+        if (count <= 0) {
+          // 沒有對應進行中的 Note-On，此為孤立/重複 Note-Off，予以剃除
+          modified = true;
+          continue;
+        }
+        activeCounts.set(ev.noteNumber, count - 1);
+        kept.push(item);
+      } else {
+        kept.push(item);
+      }
+    }
+
+    if (!modified) return false;
+
+    // 重新排序並維持 Meta 0x2F 在最後
+    kept.sort((a, b) => {
+      if (a.absTick !== b.absTick) return a.absTick - b.absTick;
+      if (a.ev.type === 'meta' && a.ev.metaType === 0x2f) return 1;
+      if (b.ev.type === 'meta' && b.ev.metaType === 0x2f) return -1;
+      if ((a.ev.type === 'noteOff' || (a.ev.type === 'noteOn' && a.ev.velocity === 0)) && (b.ev.type === 'noteOn' && (b.ev.velocity ?? 0) > 0)) {
+        return -1;
+      }
+      if ((b.ev.type === 'noteOff' || (b.ev.type === 'noteOn' && b.ev.velocity === 0)) && (a.ev.type === 'noteOn' && (a.ev.velocity ?? 0) > 0)) {
+        return 1;
+      }
+      return a.index - b.index;
+    });
+
+    let prevTick = 0;
+    track.events = kept.map((item) => {
       const delta = item.absTick - prevTick;
       prevTick = item.absTick;
       item.ev.delta = Math.max(0, delta);

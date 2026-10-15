@@ -735,7 +735,19 @@ function extractTrackNotes(track: MidiTrack | undefined): NoteEvent[] {
       }
     }
   }
-  return notes;
+
+  // 防禦性去重：若同一音高且同一起始 Tick 出現多次，僅保留第一個
+  const deduplicated: NoteEvent[] = [];
+  const seen = new Set<string>();
+  for (const n of notes) {
+    const key = `${n.note}_${n.startTick}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduplicated.push(n);
+    }
+  }
+
+  return deduplicated;
 }
 
 /**
@@ -1211,6 +1223,9 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection | null 
   // 搜尋對應 Track 提取音符 (在 Yamaha PAD 中，Track 1~4 分別代表 Pad 1~4 的專屬音軌)
   const trackIdx = padNum; // Track 1~4
   const targetTrack = parsed.tracks[trackIdx];
+  if (targetTrack) {
+    YamahaPadModifier.sanitizeTrackDuplicateNotes(targetTrack);
+  }
   const notes = extractTrackNotes(targetTrack);
 
   // 同步試聽走帶控制器狀態
@@ -1446,9 +1461,7 @@ interface RenderedRulerBox {
 let lastRenderedRulerBoxes: RenderedRulerBox[] = [];
 let selectedRulerBar: number | null = null;
 let clipboardCopiedBar: number | null = null;
-let lastBlankClickTime = 0;
-let lastBlankClickX = 0;
-let lastBlankClickY = 0;
+let lastNoteCreationTimestamp = 0;
 
 // 音符平移調整狀態 (Note Position Moving State)
 let isMovingNote = false;
@@ -2397,6 +2410,11 @@ function setupVelocityToggle() {
 
 function createNoteAtCanvasPos(mouseX: number, mouseY: number) {
   if (!currentParsed) return;
+  const now = performance.now();
+  if (now - lastNoteCreationTimestamp < 250) {
+    return;
+  }
+
   const canvas = document.getElementById('pad-note-canvas') as HTMLCanvasElement | null;
   const scaleW = 54;
   const rulerH = 26;
@@ -2416,9 +2434,22 @@ function createNoteAtCanvasPos(mouseX: number, mouseY: number) {
   const snapStep = Math.max(12, Math.round(currentTicksPerBeat / 4)); // 預設 1/16 音符 (24 ticks)
   const snappedStartTick = Math.max(0, Math.round(rawTick / snapStep) * snapStep);
 
+  // 預先檢查當前軌道是否已存在同音高同拍點之音符，若存在則直接選取並試聽，避免重複堆疊
+  const existingNotes = extractTrackNotes(currentParsed.tracks[currentCanvasPadNum]);
+  const duplicate = existingNotes.find(n => n.note === noteNum && n.startTick === snappedStartTick);
+  if (duplicate) {
+    const existingBox = lastRenderedNoteBoxes.find(b => b.startTick === snappedStartTick && b.note === noteNum);
+    if (existingBox) {
+      selectNote(existingBox);
+    }
+    return;
+  }
+
   // 預設長度：若當前選取的音符有音長，繼承該音長；否則預設為 1 拍 (currentTicksPerBeat)
   const durTick = selectedNoteBox ? selectedNoteBox.durationTick : currentTicksPerBeat;
   const vel = selectedNoteBox ? selectedNoteBox.velocity : 100;
+
+  lastNoteCreationTimestamp = now;
 
   const success = YamahaPadModifier.addNoteEvent(currentParsed, currentCanvasPadNum, {
     note: noteNum,
@@ -3212,26 +3243,21 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
     );
     if (hit) return;
 
-    // 點擊在空白處：軟體雙擊檢測 (500ms 內在 30px 範圍內連續點擊) 或 畫筆模式
-    const now = performance.now();
-    const isQuickSecondClick = (now - lastBlankClickTime < 500) && (Math.hypot(mouseX - lastBlankClickX, mouseY - lastBlankClickY) < 30);
-
-    if (isDrawMode || isQuickSecondClick) {
+    // 點擊在空白處：若開啟畫筆模式 (isDrawMode)，單擊即可建立音符；否則顯示雙擊新增提示
+    if (isDrawMode) {
       createNoteAtCanvasPos(mouseX, mouseY);
-      lastBlankClickTime = 0;
     } else {
-      lastBlankClickTime = now;
-      lastBlankClickX = mouseX;
-      lastBlankClickY = mouseY;
       if (hoverInfoEl) {
-        hoverInfoEl.innerHTML = `💡 <span style="color:#fbbf24;font-weight:700;">點擊了空白處</span>：再按一下 (連點兩下) 即可在此處建立音符，或點上方 <strong>[➕ 新增音符]</strong> / <strong>[✏️ 畫筆模式]</strong>！`;
+        hoverInfoEl.innerHTML = `💡 <span style="color:#fbbf24;font-weight:700;">點擊了空白處</span>：連點兩下 (雙擊) 即可在此處建立音符，或開啟上方 <strong>[✏️ 畫筆模式]</strong> 單擊新增！`;
         hoverInfoEl.style.backgroundColor = 'rgba(245, 158, 11, 0.2)';
       }
     }
   });
 
-  // 原生雙擊事件備用 (Native Double-Click Fallback)
+  // 原生雙擊事件：雙擊建立音符的唯一主管 (Native Double-Click)
   canvas.addEventListener('dblclick', (e) => {
+    if (isDrawMode) return; // 畫筆模式下已由單擊建立
+
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
@@ -3242,12 +3268,16 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
     const rulerH = 26;
     if (mouseX < scaleW || mouseY < rulerH || mouseY > canvas.height) return;
 
+    // 檢查是否點在既有音符附近（給予容錯邊距避免誤觸發新增）
     const reversedBoxes = [...lastRenderedNoteBoxes].reverse();
     const hit = reversedBoxes.find(b =>
-      mouseX >= b.x && mouseX <= b.x + b.w &&
-      mouseY >= b.y && mouseY <= b.y + b.h
+      mouseX >= b.x - 2 && mouseX <= b.x + b.w + 2 &&
+      mouseY >= b.y - 1 && mouseY <= b.y + b.h + 1
     );
-    if (hit) return;
+    if (hit) {
+      selectNote(hit);
+      return;
+    }
 
     createNoteAtCanvasPos(mouseX, mouseY);
   });

@@ -481,5 +481,76 @@ describe('步驟 2.1: Pad 屬性與混音編輯雙向同步驗證 (PadModifier V
       expect(newBar3Notes[i].startTick).toBe(origBar3Notes[i].startTick);
     }
   });
+
+  it('能有效阻擋在相同起始時間與音高重複插入 Note-On 事件 (Duplicate Note Prevention)', () => {
+    const rawBuffer = new Uint8Array(fs.readFileSync(samplePath));
+    const parsed = YamahaParser.parse(rawBuffer, 'PAD');
+
+    // 第一次插入 C4 (60) 在 Tick 2000
+    const firstAdd = YamahaPadModifier.addNoteEvent(parsed, 1, {
+      note: 60,
+      startTick: 2000,
+      durationTick: 96,
+      velocity: 100,
+    });
+    expect(firstAdd).toBe(true);
+
+    // 第二次在同一個 Tick 2000 與相同音高 60 插入，應被防禦機制拒絕
+    const duplicateAdd = YamahaPadModifier.addNoteEvent(parsed, 1, {
+      note: 60,
+      startTick: 2000,
+      durationTick: 96,
+      velocity: 100,
+    });
+    expect(duplicateAdd).toBe(false);
+
+    // 不同音高 (D4: 62) 在相同 Tick 應允許 (和弦/多音)
+    const diffPitchAdd = YamahaPadModifier.addNoteEvent(parsed, 1, {
+      note: 62,
+      startTick: 2000,
+      durationTick: 96,
+      velocity: 100,
+    });
+    expect(diffPitchAdd).toBe(true);
+
+    // 相同音高 (60) 在不同 Tick (2100) 應允許 (連續音)
+    const diffTickAdd = YamahaPadModifier.addNoteEvent(parsed, 1, {
+      note: 60,
+      startTick: 2100,
+      durationTick: 96,
+      velocity: 100,
+    });
+    expect(diffTickAdd).toBe(true);
+  });
+
+  it('能正確淨化音軌中重複堆疊的 Note-On 與多餘的 Note-Off 事件 (sanitizeTrackDuplicateNotes)', () => {
+    const track = {
+      header: 'MTrk',
+      length: 0,
+      events: [
+        { delta: 0, type: 'noteOn', noteNumber: 60, velocity: 100 },
+        { delta: 0, type: 'noteOn', noteNumber: 60, velocity: 100 }, // 重複 Note-On
+        { delta: 96, type: 'noteOff', noteNumber: 60, velocity: 0 },
+        { delta: 0, type: 'noteOff', noteNumber: 60, velocity: 0 }, // 多餘 Note-Off
+        { delta: 96, type: 'noteOn', noteNumber: 64, velocity: 90 },
+        { delta: 96, type: 'noteOff', noteNumber: 64, velocity: 0 },
+        { delta: 0, type: 'meta', metaType: 0x2f, data: new Uint8Array(0) },
+      ] as any[],
+    };
+
+    const sanitized = YamahaPadModifier.sanitizeTrackDuplicateNotes(track);
+    expect(sanitized).toBe(true);
+
+    // 驗證重複的 Note-On 與多餘的 Note-Off 被移除
+    const noteOns = track.events.filter((e) => e.type === 'noteOn' && (e.velocity ?? 0) > 0);
+    const noteOffs = track.events.filter((e) => e.type === 'noteOff' || (e.type === 'noteOn' && e.velocity === 0));
+
+    expect(noteOns.length).toBe(2); // 60 與 64 各一顆
+    expect(noteOffs.length).toBe(2);
+
+    // 再次執行淨化應回傳 false (已無需修改)
+    const secondSanitize = YamahaPadModifier.sanitizeTrackDuplicateNotes(track);
+    expect(secondSanitize).toBe(false);
+  });
 });
 
