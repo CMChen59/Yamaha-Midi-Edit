@@ -325,16 +325,16 @@ describe('步驟 2.1: Pad 屬性與混音編輯雙向同步驗證 (PadModifier V
     // 原始第 3 小節與第 4 小節音符
     const origBar3Notes = origNotes.filter((n) => n.startTick >= gridStart + 768 && n.startTick < gridStart + 1152);
 
-    // 執行 Ripple Delete 刪除第 2 小節 (模式 A)
+    // 執行 Ripple Delete 刪除第 2 小節 (模式 A，預設保持標準 4 小節結構)
     const res = YamahaPadModifier.deletePadMeasure(parsed, 1, 2, 'ripple');
     expect(res.success).toBe(true);
-    expect(res.newTotalBars).toBe(3);
+    expect(res.newTotalBars).toBe(4);
 
-    // 驗證寫出後重新解析
+    // 驗證寫出後重新解析，小節數維持標準 4 小節，第 4 小節成為休止空白
     const modifiedBytes = YamahaWriter.write(parsed);
     const reParsed = YamahaParser.parse(modifiedBytes, 'PAD');
 
-    expect(YamahaPadModifier.getPadBarLength(reParsed, 1)).toBe(3);
+    expect(YamahaPadModifier.getPadBarLength(reParsed, 1)).toBe(4);
 
     // 檢查重構後的音符時序
     curTick = 0;

@@ -743,7 +743,8 @@ export class YamahaPadModifier {
     parsed: YamahaFileParsed,
     padNum: number,
     targetBar: number, // 1-indexed, 例如 2
-    mode: 'ripple' | 'clear' = 'ripple'
+    mode: 'ripple' | 'clear' = 'ripple',
+    minBars: number = 4
   ): { success: boolean; deletedCount: number; newTotalBars: number } {
     const track = parsed.tracks[padNum];
     if (!track || !track.events) {
@@ -839,10 +840,13 @@ export class YamahaPadModifier {
     // 模式 A：小節剪除順移 (Ripple Delete)
     // 若總小節數為 1，無法縮減至 0 小節，轉為清空該小節
     if (curPadLen <= 1) {
-      return this.deletePadMeasure(parsed, padNum, 1, 'clear');
+      return this.deletePadMeasure(parsed, padNum, 1, 'clear', minBars);
     }
 
-    const newTotalBars = curPadLen - 1;
+    // 若當前小節數大於 minBars (例如 8 小節)，刪除時正常縮減 1 小節；
+    // 若在標準小節數內 (例如 4 小節)，後續音符往前順移，並於末端保持空白小節維持標準結構
+    const effectiveMinBars = Math.min(minBars, curPadLen);
+    const newTotalBars = Math.max(effectiveMinBars, curPadLen - 1);
     const newEndTick = gridStartTick + newTotalBars * ticksPerBar;
 
     // 標記要刪除的音符

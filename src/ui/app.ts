@@ -1390,17 +1390,23 @@ function drawNoteRoll(
 
     // 每次繪製時依據當前 rollViewMode 與 rollStartBar 動態計算可見小節範圍 (View Window)
     let viewStartBar = 1;
-    let viewBars = totalBars;
+    let viewBars = 4;
 
-    if (rollViewMode === '4bars' && totalBars > 4) {
+    if (rollViewMode === '4bars') {
       const visibleBars = 4;
-      const maxStartBar = Math.max(1, totalBars - visibleBars + 1);
-      rollStartBar = Math.max(1, Math.min(rollStartBar, maxStartBar));
-      viewStartBar = rollStartBar;
-      viewBars = visibleBars;
+      if (totalBars > 4) {
+        const maxStartBar = Math.max(1, totalBars - visibleBars + 1);
+        rollStartBar = Math.max(1, Math.min(rollStartBar, maxStartBar));
+        viewStartBar = rollStartBar;
+        viewBars = visibleBars;
+      } else {
+        viewStartBar = 1;
+        viewBars = 4;
+      }
     } else {
+      // rollViewMode === 'all'
       viewStartBar = 1;
-      viewBars = totalBars;
+      viewBars = Math.max(4, totalBars);
     }
 
     const windowStartTick = gridStartTick + (viewStartBar - 1) * ticksPerBar;
@@ -1478,6 +1484,33 @@ function drawNoteRoll(
       ctx.stroke();
     }
 
+    // 4.1 若總小節數小於當前視野所涵蓋小節 (例如手動設定為 2 小節，但在 4 小節標準視野下)，繪製循環終點標線與非循環區遮罩
+    if (totalBars < viewStartBar + viewBars) {
+      const activeEndBar = Math.max(0, totalBars - viewStartBar + 1);
+      if (activeEndBar > 0 && activeEndBar < viewBars) {
+        const activeEndX = scaleW + (activeEndBar / viewBars) * plotW;
+        // 非循環區背景遮罩 (暗化休止/非循環區)
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+        ctx.fillRect(activeEndX, rulerH, plotW - (activeEndX - scaleW), plotH);
+
+        // 循環終點標記線 (Pad Loop End)
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.moveTo(activeEndX, rulerH);
+        ctx.lineTo(activeEndX, h);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // 提示標籤
+        ctx.fillStyle = '#fbbf24';
+        ctx.font = 'bold 10px sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText(`⮜ Pad 循環結尾 (共 ${totalBars} 小節)`, activeEndX - 6, rulerH + 16);
+      }
+    }
+
     // 5. 頂部小節時間軸尺規 (Timeline Measure Ruler)
     ctx.fillStyle = '#1c1f2a';
     ctx.fillRect(0, 0, w, rulerH);
@@ -1510,10 +1543,11 @@ function drawNoteRoll(
       }
 
       // 小節標籤 (第 X 小節)
-      ctx.fillStyle = selectedRulerBar === currentBarNum ? '#fbbf24' : '#f8fafc';
+      const isPastLoop = currentBarNum > totalBars;
+      ctx.fillStyle = selectedRulerBar === currentBarNum ? '#fbbf24' : (isPastLoop ? '#64748b' : '#f8fafc');
       ctx.font = 'bold 11px sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText(`第 ${currentBarNum} 小節`, barX + 8, rulerH - 8);
+      ctx.fillText(`第 ${currentBarNum} 小節${isPastLoop ? ' (未啟用)' : ''}`, barX + 8, rulerH - 8);
 
       // 小節內的拍數刻度 (.2, .3, .4) 與半拍次刻度 (+)
       for (let beat = 0; beat < beatsPerBar; beat++) {
@@ -2459,18 +2493,25 @@ function setupMeasureControls() {
         return;
       }
 
-      const ok = window.confirm(`確定要剪除 Pad ${currentCanvasPadNum} 的【第 ${targetBar} 小節】嗎？\n\n• 該小節內所有音符將自動清除 (無需手動預先清空)\n• 後方小節音符將自動往前順移 1 個小節\n• Pad 總長度將由 ${curLen} 縮減為 ${curLen - 1} 小節`);
+      const ok = window.confirm(
+        `確定要剪除 Pad ${currentCanvasPadNum} 的【第 ${targetBar} 小節】嗎？\n\n` +
+        `• 該小節內所有音符將自動清除 (無需手動預先清空)\n` +
+        `• 後方小節音符將自動往前順移 1 個小節\n` +
+        (curLen <= 4
+          ? `• Pad 總長度將維持標準 4 小節 (末端保留空白小節，保持標準伴奏對齊)`
+          : `• Pad 總長度將由 ${curLen} 縮減為 ${curLen - 1} 小節`)
+      );
       if (!ok) return;
 
       const result = YamahaPadModifier.deletePadMeasure(currentParsed, currentCanvasPadNum, targetBar, 'ripple');
       if (result.success) {
         selectedRulerBar = null;
-        selectedNoteBox = null;
+        deselectNote();
         markModified(`已剪除 Pad ${currentCanvasPadNum} 第 ${targetBar} 小節 (共移除 ${result.deletedCount} 顆音符，總長度: ${result.newTotalBars} 小節)`);
         refreshCurrentPadDetail();
         const hoverInfoEl = document.getElementById('canvas-hover-info');
         if (hoverInfoEl) {
-          hoverInfoEl.innerHTML = `✂️ <span style="color:#f87171;font-weight:700;">小節剪除成功</span>：已剪除第 ${targetBar} 小節 (共移除 ${result.deletedCount} 顆音符)，後續音符已自動順移遞補，總長度變為 <strong>${result.newTotalBars} 小節</strong>！`;
+          hoverInfoEl.innerHTML = `✂️ <span style="color:#f87171;font-weight:700;">小節剪除成功</span>：已剪除第 ${targetBar} 小節 (共移除 ${result.deletedCount} 顆音符)，後續音符已自動順移遞補，總長度為 <strong>${result.newTotalBars} 小節</strong>！`;
           hoverInfoEl.style.backgroundColor = 'rgba(239, 68, 68, 0.16)';
         }
       }
@@ -2489,7 +2530,8 @@ function setupMeasureControls() {
 
       const result = YamahaPadModifier.deletePadMeasure(currentParsed, currentCanvasPadNum, targetBar, 'clear');
       if (result.success) {
-        selectedNoteBox = null;
+        selectedRulerBar = null;
+        deselectNote();
         markModified(`已清空 Pad ${currentCanvasPadNum} 第 ${targetBar} 小節音符 (共清空 ${result.deletedCount} 顆音符)`);
         refreshCurrentPadDetail();
         const hoverInfoEl = document.getElementById('canvas-hover-info');
@@ -2933,11 +2975,11 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
       selectedRulerBar = clickedBar;
 
       const srcSelect = document.getElementById('select-copy-src-bar') as HTMLSelectElement | null;
-      if (srcSelect) {
+      if (srcSelect && srcSelect.querySelector(`option[value="${clickedBar}"]`)) {
         srcSelect.value = String(clickedBar);
       }
       const delSelect = document.getElementById('select-delete-target-bar') as HTMLSelectElement | null;
-      if (delSelect) {
+      if (delSelect && delSelect.querySelector(`option[value="${clickedBar}"]`)) {
         delSelect.value = String(clickedBar);
       }
 
@@ -3039,7 +3081,6 @@ function updateInspectorFields(box: RenderedNoteBox) {
 }
 
 function deselectNote() {
-  if (!selectedNoteBox) return;
   selectedNoteBox = null;
   if (currentCanvasRedraw) currentCanvasRedraw();
 
