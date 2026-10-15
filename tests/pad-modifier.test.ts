@@ -301,4 +301,110 @@ describe('步驟 2.1: Pad 屬性與混音編輯雙向同步驗證 (PadModifier V
       expect(bar3Notes[i].startTick - bar1Notes[i].startTick).toBe(768);
     }
   });
+
+  it('能精確執行小節剪除順移 (deletePadMeasure with ripple) 並驗證後續音符時序自動前移與總小節縮減', () => {
+    const sample1Path = path.resolve(__dirname, '../samples/4006-1_PAD.PAD');
+    const rawBuffer = new Uint8Array(fs.readFileSync(sample1Path));
+    const parsed = YamahaParser.parse(rawBuffer, 'PAD');
+
+    // 先設定 Pad 1 為 4 小節
+    YamahaPadModifier.setPadBarLength(parsed, 1, 4);
+    const initialLen = YamahaPadModifier.getPadBarLength(parsed, 1);
+    expect(initialLen).toBe(4);
+
+    // 取得原始音符清單
+    let curTick = 0;
+    const origNotes: { note: number; startTick: number }[] = [];
+    for (const ev of parsed.tracks[1].events) {
+      curTick += ev.delta;
+      if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
+        origNotes.push({ note: ev.noteNumber!, startTick: curTick });
+      }
+    }
+    const gridStart = Math.floor(Math.min(...origNotes.map((n) => n.startTick)) / 384) * 384;
+    // 原始第 3 小節與第 4 小節音符
+    const origBar3Notes = origNotes.filter((n) => n.startTick >= gridStart + 768 && n.startTick < gridStart + 1152);
+
+    // 執行 Ripple Delete 刪除第 2 小節 (模式 A)
+    const res = YamahaPadModifier.deletePadMeasure(parsed, 1, 2, 'ripple');
+    expect(res.success).toBe(true);
+    expect(res.newTotalBars).toBe(3);
+
+    // 驗證寫出後重新解析
+    const modifiedBytes = YamahaWriter.write(parsed);
+    const reParsed = YamahaParser.parse(modifiedBytes, 'PAD');
+
+    expect(YamahaPadModifier.getPadBarLength(reParsed, 1)).toBe(3);
+
+    // 檢查重構後的音符時序
+    curTick = 0;
+    const newNotes: { note: number; startTick: number }[] = [];
+    for (const ev of reParsed.tracks[1].events) {
+      curTick += ev.delta;
+      if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
+        newNotes.push({ note: ev.noteNumber!, startTick: curTick });
+      }
+    }
+
+    // 原第 3 小節音符應該自動平移 384 Ticks，成為新的第 2 小節 (gridStart + 384 ~ gridStart + 768)
+    const newBar2Notes = newNotes.filter((n) => n.startTick >= gridStart + 384 && n.startTick < gridStart + 768);
+    expect(newBar2Notes.length).toBe(origBar3Notes.length);
+    for (let i = 0; i < origBar3Notes.length; i++) {
+      expect(newBar2Notes[i].note).toBe(origBar3Notes[i].note);
+      expect(origBar3Notes[i].startTick - newBar2Notes[i].startTick).toBe(384);
+    }
+  });
+
+  it('能精確執行小節內容清空 (deletePadMeasure with clear) 並驗證後續音符位置與總小節數保持不變', () => {
+    const sample1Path = path.resolve(__dirname, '../samples/4006-1_PAD.PAD');
+    const rawBuffer = new Uint8Array(fs.readFileSync(sample1Path));
+    const parsed = YamahaParser.parse(rawBuffer, 'PAD');
+
+    YamahaPadModifier.setPadBarLength(parsed, 1, 4);
+
+    // 取得原始音符
+    let curTick = 0;
+    const origNotes: { note: number; startTick: number }[] = [];
+    for (const ev of parsed.tracks[1].events) {
+      curTick += ev.delta;
+      if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
+        origNotes.push({ note: ev.noteNumber!, startTick: curTick });
+      }
+    }
+    const gridStart = Math.floor(Math.min(...origNotes.map((n) => n.startTick)) / 384) * 384;
+    const origBar3Notes = origNotes.filter((n) => n.startTick >= gridStart + 768 && n.startTick < gridStart + 1152);
+
+    // 執行 Clear Measure 清空第 2 小節 (模式 B)
+    const res = YamahaPadModifier.deletePadMeasure(parsed, 1, 2, 'clear');
+    expect(res.success).toBe(true);
+    expect(res.newTotalBars).toBe(4);
+
+    // 驗證寫出後重新解析
+    const modifiedBytes = YamahaWriter.write(parsed);
+    const reParsed = YamahaParser.parse(modifiedBytes, 'PAD');
+    expect(YamahaPadModifier.getPadBarLength(reParsed, 1)).toBe(4);
+
+    // 檢查重構後的音符時序
+    curTick = 0;
+    const newNotes: { note: number; startTick: number }[] = [];
+    for (const ev of reParsed.tracks[1].events) {
+      curTick += ev.delta;
+      if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
+        newNotes.push({ note: ev.noteNumber!, startTick: curTick });
+      }
+    }
+
+    // 第 2 小節應該變成 0 顆音符
+    const newBar2Notes = newNotes.filter((n) => n.startTick >= gridStart + 384 && n.startTick < gridStart + 768);
+    expect(newBar2Notes.length).toBe(0);
+
+    // 第 3 小節音符位置應該完全不受影響 (保持在原本的 Tick)
+    const newBar3Notes = newNotes.filter((n) => n.startTick >= gridStart + 768 && n.startTick < gridStart + 1152);
+    expect(newBar3Notes.length).toBe(origBar3Notes.length);
+    for (let i = 0; i < origBar3Notes.length; i++) {
+      expect(newBar3Notes[i].note).toBe(origBar3Notes[i].note);
+      expect(newBar3Notes[i].startTick).toBe(origBar3Notes[i].startTick);
+    }
+  });
 });
+

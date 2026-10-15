@@ -534,10 +534,14 @@ export class YamahaPadModifier {
       ? Math.max(1, Math.round((endOfTrackTick - gridStartTick) / ticksPerBar))
       : 1;
 
+    if (endOfTrackTick > gridStartTick) {
+      return Math.max(notesBars, endMetaBars);
+    }
+
     const sec = parsed.sections ? parsed.sections[padNum - 1] : undefined;
     const secBars = sec && sec.measureCount ? sec.measureCount : 1;
 
-    return Math.max(notesBars, endMetaBars, secBars);
+    return Math.max(notesBars, secBars);
   }
 
   /**
@@ -728,6 +732,229 @@ export class YamahaPadModifier {
     const target = src + 1;
     const res = this.copyPadMeasure(parsed, padNum, src, target, 'replace');
     return { success: res.success, copiedCount: res.copiedCount, newTargetBar: target };
+  }
+
+  /**
+   * 刪除或清空指定 Pad 的特定小節
+   * - mode: 'ripple' (剪除順移)：刪除目標小節內所有音符，後方小節音符自動向前平移 1 個小節，總小節長度 -1
+   * - mode: 'clear' (清空音符)：清空目標小節內所有音符為靜音空白，後方音符與總小節數保持不變
+   */
+  public static deletePadMeasure(
+    parsed: YamahaFileParsed,
+    padNum: number,
+    targetBar: number, // 1-indexed, 例如 2
+    mode: 'ripple' | 'clear' = 'ripple'
+  ): { success: boolean; deletedCount: number; newTotalBars: number } {
+    const track = parsed.tracks[padNum];
+    if (!track || !track.events) {
+      return { success: false, deletedCount: 0, newTotalBars: 1 };
+    }
+
+    const curPadLen = this.getPadBarLength(parsed, padNum);
+    if (targetBar < 1 || targetBar > curPadLen) {
+      return { success: false, deletedCount: 0, newTotalBars: curPadLen };
+    }
+
+    const division = parsed.division || 96;
+    const beatsPerBar = parsed.timeSignature?.numerator || 4;
+    const ticksPerBar = division * beatsPerBar;
+
+    // 1. 提取所有事件並標記絕對 Tick
+    let curTick = 0;
+    const annotated = track.events.map((ev, index) => {
+      curTick += ev.delta;
+      return { ev, absTick: curTick, index };
+    });
+
+    // 計算基準對齊網格起點
+    const noteStarts = annotated
+      .filter((i) => i.ev.type === 'noteOn' && (i.ev.velocity ?? 0) > 0)
+      .map((i) => i.absTick);
+    const firstNoteTick = noteStarts.length > 0 ? Math.min(...noteStarts) : 0;
+    const gridStartTick = Math.floor(firstNoteTick / ticksPerBar) * ticksPerBar;
+
+    const targetStartTick = gridStartTick + (targetBar - 1) * ticksPerBar;
+    const targetEndTick = targetStartTick + ticksPerBar;
+
+    // 統計目標小節內起奏的音符數量
+    const targetNoteOns = annotated.filter(
+      (i) =>
+        i.ev.type === 'noteOn' &&
+        (i.ev.velocity ?? 0) > 0 &&
+        i.absTick >= targetStartTick &&
+        i.absTick < targetEndTick
+    );
+    const deletedCount = targetNoteOns.length;
+
+    if (mode === 'clear') {
+      // 模式 B：小節音符清空 (Clear Measure)
+      const activeNotes = new Map<number, { onIndex: number; absTick: number }>();
+      const itemsToDelete = new Set<any>();
+
+      for (const item of annotated) {
+        if (item.ev.type === 'noteOn' && (item.ev.velocity ?? 0) > 0) {
+          activeNotes.set(item.ev.noteNumber!, { onIndex: item.index, absTick: item.absTick });
+        } else if (
+          (item.ev.type === 'noteOff' || (item.ev.type === 'noteOn' && item.ev.velocity === 0)) &&
+          item.ev.noteNumber !== undefined
+        ) {
+          const st = activeNotes.get(item.ev.noteNumber);
+          if (st !== undefined) {
+            if (st.absTick >= targetStartTick && st.absTick < targetEndTick) {
+              const onEntry = annotated.find((x) => x.index === st.onIndex);
+              if (onEntry) itemsToDelete.add(onEntry);
+              itemsToDelete.add(item);
+            }
+            activeNotes.delete(item.ev.noteNumber);
+          }
+        }
+      }
+
+      for (const tOn of targetNoteOns) {
+        itemsToDelete.add(tOn);
+      }
+
+      const remaining = annotated.filter((item) => !itemsToDelete.has(item));
+
+      // 依 absTick 排序並重算 delta-time
+      remaining.sort((a, b) => {
+        if (a.absTick !== b.absTick) return a.absTick - b.absTick;
+        if (a.ev.type === 'meta' && a.ev.metaType === 0x2f) return 1;
+        if (b.ev.type === 'meta' && b.ev.metaType === 0x2f) return -1;
+        return a.index - b.index;
+      });
+
+      let prevTick = 0;
+      track.events = remaining.map((item) => {
+        const delta = item.absTick - prevTick;
+        prevTick = item.absTick;
+        item.ev.delta = Math.max(0, delta);
+        return item.ev;
+      });
+
+      this.rebuildTrackRawChunk(track);
+      return { success: true, deletedCount, newTotalBars: curPadLen };
+    }
+
+    // 模式 A：小節剪除順移 (Ripple Delete)
+    // 若總小節數為 1，無法縮減至 0 小節，轉為清空該小節
+    if (curPadLen <= 1) {
+      return this.deletePadMeasure(parsed, padNum, 1, 'clear');
+    }
+
+    const newTotalBars = curPadLen - 1;
+    const newEndTick = gridStartTick + newTotalBars * ticksPerBar;
+
+    // 標記要刪除的音符
+    const activeNotes = new Map<number, { onIndex: number; absTick: number }>();
+    const itemsToDelete = new Set<any>();
+
+    for (const item of annotated) {
+      if (item.ev.type === 'noteOn' && (item.ev.velocity ?? 0) > 0) {
+        activeNotes.set(item.ev.noteNumber!, { onIndex: item.index, absTick: item.absTick });
+      } else if (
+        (item.ev.type === 'noteOff' || (item.ev.type === 'noteOn' && item.ev.velocity === 0)) &&
+        item.ev.noteNumber !== undefined
+      ) {
+        const st = activeNotes.get(item.ev.noteNumber);
+        if (st !== undefined) {
+          if (st.absTick >= targetStartTick && st.absTick < targetEndTick) {
+            const onEntry = annotated.find((x) => x.index === st.onIndex);
+            if (onEntry) itemsToDelete.add(onEntry);
+            itemsToDelete.add(item);
+          } else if (st.absTick < targetStartTick && item.absTick >= targetStartTick && item.absTick < targetEndTick) {
+            item.absTick = targetStartTick;
+          }
+          activeNotes.delete(item.ev.noteNumber);
+        }
+      }
+    }
+
+    for (const tOn of targetNoteOns) {
+      itemsToDelete.add(tOn);
+    }
+
+    // 處理在 targetBar 內的其他非音符控制器事件 (保留 0 Tick 標頭設定，且不可誤刪先前音符的 NoteOff)
+    for (const item of annotated) {
+      const isNote = item.ev.type === 'noteOn' || item.ev.type === 'noteOff';
+      if (!isNote && !itemsToDelete.has(item) && item.absTick >= targetStartTick && item.absTick < targetEndTick) {
+        if (item.absTick > 0 && !(item.ev.type === 'meta' && item.ev.metaType === 0x2f)) {
+          itemsToDelete.add(item);
+        }
+      }
+    }
+
+    // 過濾並將 targetEndTick 之後的事件向前平移 ticksPerBar
+    const remaining: typeof annotated = [];
+    let endMeta = annotated.find((item) => item.ev.type === 'meta' && item.ev.metaType === 0x2f);
+
+    for (const item of annotated) {
+      if (itemsToDelete.has(item)) continue;
+      if (item.ev.type === 'meta' && item.ev.metaType === 0x2f) continue;
+
+      if (item.absTick >= targetEndTick) {
+        item.absTick -= ticksPerBar;
+      }
+      remaining.push(item);
+    }
+
+    // 重設 End of Track (Meta 0x2F)
+    if (!endMeta) {
+      const eotEv: MidiEvent = {
+        delta: 0,
+        type: 'meta',
+        metaType: 0x2f,
+        metaData: new Uint8Array(0),
+      };
+      endMeta = { ev: eotEv, absTick: newEndTick, index: annotated.length + 999 };
+    } else {
+      endMeta.absTick = newEndTick;
+    }
+
+    // 確保 End of Track 不早於任何現存事件
+    for (const item of remaining) {
+      if (item.absTick > endMeta.absTick) {
+        endMeta.absTick = item.absTick;
+      }
+    }
+    remaining.push(endMeta);
+
+    // 重新排序
+    remaining.sort((a, b) => {
+      if (a.absTick !== b.absTick) return a.absTick - b.absTick;
+      if (a.ev.type === 'meta' && a.ev.metaType === 0x2f) return 1;
+      if (b.ev.type === 'meta' && b.ev.metaType === 0x2f) return -1;
+      if (
+        (a.ev.type === 'noteOff' || (a.ev.type === 'noteOn' && a.ev.velocity === 0)) &&
+        (b.ev.type === 'noteOn' && (b.ev.velocity ?? 0) > 0)
+      ) {
+        return -1;
+      }
+      if (
+        (b.ev.type === 'noteOff' || (b.ev.type === 'noteOn' && b.ev.velocity === 0)) &&
+        (a.ev.type === 'noteOn' && (a.ev.velocity ?? 0) > 0)
+      ) {
+        return 1;
+      }
+      return a.index - b.index;
+    });
+
+    let prevTick = 0;
+    track.events = remaining.map((item) => {
+      const delta = item.absTick - prevTick;
+      prevTick = item.absTick;
+      item.ev.delta = Math.max(0, delta);
+      return item.ev;
+    });
+
+    // 同步更新 parsed.sections
+    if (parsed.sections && parsed.sections[padNum - 1]) {
+      parsed.sections[padNum - 1].measureCount = newTotalBars;
+      parsed.sections[padNum - 1].endTick = endMeta.absTick;
+    }
+
+    this.rebuildTrackRawChunk(track);
+    return { success: true, deletedCount, newTotalBars };
   }
 
   /**

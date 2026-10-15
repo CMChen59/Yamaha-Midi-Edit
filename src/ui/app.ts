@@ -2316,6 +2316,21 @@ function updateMeasureControlsUI(totalBars: number) {
       selectDest.appendChild(opt);
     }
   }
+
+  const selectDelete = document.getElementById('select-delete-target-bar') as HTMLSelectElement | null;
+  if (selectDelete) {
+    const curVal = selectDelete.value ? parseInt(selectDelete.value, 10) : (selectedRulerBar ?? 1);
+    selectDelete.innerHTML = '';
+    for (let b = 1; b <= totalBars; b++) {
+      const opt = document.createElement('option');
+      opt.value = `${b}`;
+      opt.textContent = `第 ${b} 小節`;
+      if (b === curVal || (curVal > totalBars && b === 1)) {
+        opt.selected = true;
+      }
+      selectDelete.appendChild(opt);
+    }
+  }
 }
 
 function setupMeasureControls() {
@@ -2326,8 +2341,11 @@ function setupMeasureControls() {
   const btnDec = document.getElementById('btn-pad-dec-bar');
   const btnCopy = document.getElementById('btn-execute-bar-copy');
   const btnDup = document.getElementById('btn-duplicate-bar');
+  const btnRipple = document.getElementById('btn-ripple-delete-bar');
+  const btnClear = document.getElementById('btn-clear-bar-notes');
   const selectSrc = document.getElementById('select-copy-src-bar') as HTMLSelectElement | null;
   const selectDest = document.getElementById('select-copy-dest-bar') as HTMLSelectElement | null;
+  const selectDel = document.getElementById('select-delete-target-bar') as HTMLSelectElement | null;
 
   if (btnInc) {
     btnInc.addEventListener('click', () => {
@@ -2425,6 +2443,60 @@ function setupMeasureControls() {
         }
       } else {
         alert(`第 ${srcBar} 小節沒有音符可供倍增！`);
+      }
+    });
+  }
+
+  if (btnRipple) {
+    btnRipple.addEventListener('click', () => {
+      if (!currentParsed || !selectDel) return;
+      const curLen = YamahaPadModifier.getPadBarLength(currentParsed, currentCanvasPadNum);
+      const targetBar = parseInt(selectDel.value, 10);
+      if (isNaN(targetBar) || targetBar < 1 || targetBar > curLen) return;
+
+      if (curLen <= 1) {
+        alert('Pad 最少需保留 1 個小節，無法再剪除結構！若欲清空內容請使用「清空音符」。');
+        return;
+      }
+
+      const ok = window.confirm(`確定要剪除 Pad ${currentCanvasPadNum} 的【第 ${targetBar} 小節】嗎？\n\n• 該小節內所有音符將自動清除 (無需手動預先清空)\n• 後方小節音符將自動往前順移 1 個小節\n• Pad 總長度將由 ${curLen} 縮減為 ${curLen - 1} 小節`);
+      if (!ok) return;
+
+      const result = YamahaPadModifier.deletePadMeasure(currentParsed, currentCanvasPadNum, targetBar, 'ripple');
+      if (result.success) {
+        selectedRulerBar = null;
+        selectedNoteBox = null;
+        markModified(`已剪除 Pad ${currentCanvasPadNum} 第 ${targetBar} 小節 (共移除 ${result.deletedCount} 顆音符，總長度: ${result.newTotalBars} 小節)`);
+        refreshCurrentPadDetail();
+        const hoverInfoEl = document.getElementById('canvas-hover-info');
+        if (hoverInfoEl) {
+          hoverInfoEl.innerHTML = `✂️ <span style="color:#f87171;font-weight:700;">小節剪除成功</span>：已剪除第 ${targetBar} 小節 (共移除 ${result.deletedCount} 顆音符)，後續音符已自動順移遞補，總長度變為 <strong>${result.newTotalBars} 小節</strong>！`;
+          hoverInfoEl.style.backgroundColor = 'rgba(239, 68, 68, 0.16)';
+        }
+      }
+    });
+  }
+
+  if (btnClear) {
+    btnClear.addEventListener('click', () => {
+      if (!currentParsed || !selectDel) return;
+      const curLen = YamahaPadModifier.getPadBarLength(currentParsed, currentCanvasPadNum);
+      const targetBar = parseInt(selectDel.value, 10);
+      if (isNaN(targetBar) || targetBar < 1 || targetBar > curLen) return;
+
+      const ok = window.confirm(`確定要清空 Pad ${currentCanvasPadNum} 的【第 ${targetBar} 小節】所有音符嗎？\n\n• 該小節將變為完全靜音的空白小節\n• 後方小節音符位置與總長度 (${curLen} 小節) 將維持不變`);
+      if (!ok) return;
+
+      const result = YamahaPadModifier.deletePadMeasure(currentParsed, currentCanvasPadNum, targetBar, 'clear');
+      if (result.success) {
+        selectedNoteBox = null;
+        markModified(`已清空 Pad ${currentCanvasPadNum} 第 ${targetBar} 小節音符 (共清空 ${result.deletedCount} 顆音符)`);
+        refreshCurrentPadDetail();
+        const hoverInfoEl = document.getElementById('canvas-hover-info');
+        if (hoverInfoEl) {
+          hoverInfoEl.innerHTML = `🧹 <span style="color:#fbbf24;font-weight:700;">音符清空成功</span>：已清空第 ${targetBar} 小節所有音符 (共清空 ${result.deletedCount} 顆音符)，後方音符與總小節數 (${result.newTotalBars} 小節) 保持不變。`;
+          hoverInfoEl.style.backgroundColor = 'rgba(245, 158, 11, 0.16)';
+        }
       }
     });
   }
@@ -2864,6 +2936,10 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
       if (srcSelect) {
         srcSelect.value = String(clickedBar);
       }
+      const delSelect = document.getElementById('select-delete-target-bar') as HTMLSelectElement | null;
+      if (delSelect) {
+        delSelect.value = String(clickedBar);
+      }
 
       // 嘗試選取該小節的第一顆音符 (若有)
       const ticksPerBar = currentTicksPerBeat * currentBeatsPerBar;
@@ -2879,7 +2955,7 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
       if (currentCanvasRedraw) currentCanvasRedraw();
 
       if (hoverInfoEl) {
-        hoverInfoEl.innerHTML = `📋 <span style="color:#fbbf24;font-weight:700;">已點選第 ${clickedBar} 小節</span>：按 <kbd>Ctrl+C</kbd> 複製、點選目標小節按 <kbd>Ctrl+V</kbd> 貼上，或按 <kbd>Ctrl+D</kbd> 一鍵倍增！`;
+        hoverInfoEl.innerHTML = `📋 <span style="color:#fbbf24;font-weight:700;">已點選第 ${clickedBar} 小節</span>：<kbd>Ctrl+C</kbd> 複製、<kbd>Ctrl+V</kbd> 貼上、<kbd>Ctrl+D</kbd> 倍增 ｜ <kbd>Shift+Del</kbd> 剪除順移、<kbd>Del</kbd> 清空音符`;
         hoverInfoEl.style.backgroundColor = 'rgba(245, 158, 11, 0.2)';
       }
       return;
@@ -3230,6 +3306,32 @@ function initNoteInspectorEvents() {
       }
     }
 
+    // 快捷鍵：Shift + Delete 觸發小節剪除順移 (Ripple Delete)
+    if (e.shiftKey && (e.key === 'Delete' || e.key === 'Backspace')) {
+      const btnRipple = document.getElementById('btn-ripple-delete-bar');
+      if (btnRipple) {
+        e.preventDefault();
+        btnRipple.click();
+        return;
+      }
+    }
+
+    // 快捷鍵：Delete / Backspace
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (selectedNoteBox) {
+        e.preventDefault();
+        deleteSelectedNote();
+        return;
+      } else if (selectedRulerBar !== null) {
+        const btnClear = document.getElementById('btn-clear-bar-notes');
+        if (btnClear) {
+          e.preventDefault();
+          btnClear.click();
+          return;
+        }
+      }
+    }
+
     if (!selectedNoteBox) return;
 
     if (e.key === 'ArrowUp') {
@@ -3251,9 +3353,6 @@ function initNoteInspectorEvents() {
     } else if (e.key === 'Escape') {
       e.preventDefault();
       deselectNote();
-    } else if (e.key === 'Delete' || e.key === 'Backspace') {
-      e.preventDefault();
-      deleteSelectedNote();
     }
   });
 }
