@@ -2379,6 +2379,7 @@ function setupMeasureControls() {
   const btnClear = document.getElementById('btn-clear-bar-notes');
   const selectSrc = document.getElementById('select-copy-src-bar') as HTMLSelectElement | null;
   const selectDest = document.getElementById('select-copy-dest-bar') as HTMLSelectElement | null;
+  const selectCopyMode = document.getElementById('select-copy-mode') as HTMLSelectElement | null;
   const selectDel = document.getElementById('select-delete-target-bar') as HTMLSelectElement | null;
 
   if (btnInc) {
@@ -2433,19 +2434,25 @@ function setupMeasureControls() {
       if (!currentParsed || !selectSrc || !selectDest) return;
       const srcBar = parseInt(selectSrc.value, 10);
       const destBar = parseInt(selectDest.value, 10);
+      const mode = (selectCopyMode?.value as 'replace' | 'insert') || 'replace';
 
-      if (srcBar === destBar) {
+      if (srcBar === destBar && mode !== 'insert') {
         alert('來源小節與目標小節相同，請在右側選擇不同的小節！');
         return;
       }
 
-      const result = YamahaPadModifier.copyPadMeasure(currentParsed, currentCanvasPadNum, srcBar, destBar, 'replace');
+      const result = YamahaPadModifier.copyPadMeasure(currentParsed, currentCanvasPadNum, srcBar, destBar, mode);
       if (result.success) {
-        markModified(`已將 Pad ${currentCanvasPadNum} 第 ${srcBar} 小節複製至第 ${destBar} 小節 (共複製 ${result.copiedCount} 顆音符)`);
+        deselectNote();
+        const modeText = mode === 'insert' ? '插入順移' : '覆蓋替換';
+        markModified(`已將 Pad ${currentCanvasPadNum} 第 ${srcBar} 小節以【${modeText}】至第 ${destBar} 小節 (共複製 ${result.copiedCount} 顆音符，總長度: ${result.newTotalBars} 小節)`);
         refreshCurrentPadDetail();
         const hoverInfoEl = document.getElementById('canvas-hover-info');
         if (hoverInfoEl) {
-          hoverInfoEl.innerHTML = `🎉 <span style="color:#10b981;font-weight:700;">複製成功</span>：已將第 ${srcBar} 小節複製至第 ${destBar} 小節 (共複製 ${result.copiedCount} 顆音符，總長度: ${result.newTotalBars} 小節)！`;
+          const actionMsg = mode === 'insert'
+            ? `已將第 ${srcBar} 小節【插入】至第 ${destBar} 小節，原目標及後續小節已自動向後順移 (+1 小節)`
+            : `已將第 ${srcBar} 小節【覆蓋替換】至第 ${destBar} 小節`;
+          hoverInfoEl.innerHTML = `🎉 <span style="color:#10b981;font-weight:700;">複製成功 (${modeText})</span>：${actionMsg} (共複製 ${result.copiedCount} 顆音符，總長度: ${result.newTotalBars} 小節)！`;
           hoverInfoEl.style.backgroundColor = 'rgba(16, 185, 129, 0.16)';
         }
       } else {
@@ -2997,7 +3004,7 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
       if (currentCanvasRedraw) currentCanvasRedraw();
 
       if (hoverInfoEl) {
-        hoverInfoEl.innerHTML = `📋 <span style="color:#fbbf24;font-weight:700;">已點選第 ${clickedBar} 小節</span>：<kbd>Ctrl+C</kbd> 複製、<kbd>Ctrl+V</kbd> 貼上、<kbd>Ctrl+D</kbd> 倍增 ｜ <kbd>Shift+Del</kbd> 剪除順移、<kbd>Del</kbd> 清空音符`;
+        hoverInfoEl.innerHTML = `📋 <span style="color:#fbbf24;font-weight:700;">已點選第 ${clickedBar} 小節</span>：<kbd>Ctrl+C</kbd> 複製、<kbd>Ctrl+V</kbd> 貼上、<kbd>Ctrl+Shift+V</kbd> 插入順移、<kbd>Ctrl+D</kbd> 倍增 ｜ <kbd>Shift+Del</kbd> 剪除順移、<kbd>Del</kbd> 清空音符`;
         hoverInfoEl.style.backgroundColor = 'rgba(245, 158, 11, 0.2)';
       }
       return;
@@ -3312,16 +3319,23 @@ function initNoteInspectorEvents() {
       } else if (e.key === 'v' || e.key === 'V') {
         if (clipboardCopiedBar) {
           const destSelect = document.getElementById('select-copy-dest-bar') as HTMLSelectElement | null;
+          const copyModeSelect = document.getElementById('select-copy-mode') as HTMLSelectElement | null;
           let targetBar = selectedRulerBar;
           if (!targetBar || targetBar === clipboardCopiedBar) {
             targetBar = destSelect ? parseInt(destSelect.value, 10) : (clipboardCopiedBar + 1);
           }
-          const res = YamahaPadModifier.copyPadMeasure(currentParsed, currentCanvasPadNum, clipboardCopiedBar, targetBar, 'replace');
+          const mode = e.shiftKey ? 'insert' : ((copyModeSelect?.value as 'replace' | 'insert') || 'replace');
+          const res = YamahaPadModifier.copyPadMeasure(currentParsed, currentCanvasPadNum, clipboardCopiedBar, targetBar, mode);
           if (res.success) {
-            markModified(`已將 Pad ${currentCanvasPadNum} 第 ${clipboardCopiedBar} 小節複製至第 ${targetBar} 小節 (共複製 ${res.copiedCount} 顆音符)`);
+            deselectNote();
+            const modeText = mode === 'insert' ? '插入順移' : '覆蓋替換';
+            markModified(`已將 Pad ${currentCanvasPadNum} 第 ${clipboardCopiedBar} 小節以【${modeText}】至第 ${targetBar} 小節 (共複製 ${res.copiedCount} 顆音符)`);
             refreshCurrentPadDetail();
             if (hoverInfoEl) {
-              hoverInfoEl.innerHTML = `🎉 <span style="color:#10b981;font-weight:700;">已貼上</span>：第 ${clipboardCopiedBar} 小節 ➔ 第 ${targetBar} 小節 (共 ${res.copiedCount} 顆音符)！`;
+              const actionMsg = mode === 'insert'
+                ? `已【插入順移】至第 ${targetBar} 小節，後續小節自動往後推移 (+1 小節)`
+                : `已【覆蓋替換】至第 ${targetBar} 小節`;
+              hoverInfoEl.innerHTML = `🎉 <span style="color:#10b981;font-weight:700;">已貼上 (${modeText})</span>：第 ${clipboardCopiedBar} 小節 ➔ ${actionMsg} (共 ${res.copiedCount} 顆音符，總長度: ${res.newTotalBars} 小節)！`;
               hoverInfoEl.style.backgroundColor = 'rgba(16, 185, 129, 0.16)';
             }
           }

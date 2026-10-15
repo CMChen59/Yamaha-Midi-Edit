@@ -122,7 +122,11 @@
                     <option value="4">第 4 小節</option>
                     <option value="5">第 5 小節</option>
                   </select>
-                  <button type="button" id="btn-execute-bar-copy" class="toggle-btn active-rp" style="padding: 2px 8px; font-size: 0.72rem; background: #2563eb; color: #fff; border-color: #3b82f6;" title="將來源小節音符複製貼到目標小節 (支援跳小節與自動延伸)">執行複製</button>
+                  <select id="select-copy-mode" style="background: #11131a; color: #38bdf8; border: 1px solid #0284c7; border-radius: 3px; font-size: 0.72rem; padding: 1px 4px; font-weight: 600;" title="複製模式：覆蓋（替換目標小節內容）或 插入順移（向後推開後方小節）">
+                    <option value="replace" selected>覆蓋 (Replace)</option>
+                    <option value="insert">插入順移 (Insert)</option>
+                  </select>
+                  <button type="button" id="btn-execute-bar-copy" class="toggle-btn active-rp" style="padding: 2px 8px; font-size: 0.72rem; background: #2563eb; color: #fff; border-color: #3b82f6;" title="將來源小節音符複製貼到目標小節 (支援跳小節、覆蓋與插入順移)">執行複製</button>
                   <button type="button" id="btn-duplicate-bar" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem;" title="一鍵倍增接續小節 (Ctrl + D)">🔁 倍增</button>
                 </div>
                 <!-- 小節刪除與清空控制項 (Phase 2.2-E) -->

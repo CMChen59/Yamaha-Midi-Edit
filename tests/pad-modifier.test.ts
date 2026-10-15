@@ -302,6 +302,61 @@ describe('步驟 2.1: Pad 屬性與混音編輯雙向同步驗證 (PadModifier V
     }
   });
 
+  it('能精確執行小節插入順移 (copyPadMeasure with insert) 並驗證後續音符向後推移 1 小節且總長度 +1', () => {
+    const sample1Path = path.resolve(__dirname, '../samples/4006-1_PAD.PAD');
+    const rawBuffer = new Uint8Array(fs.readFileSync(sample1Path));
+    const parsed = YamahaParser.parse(rawBuffer, 'PAD');
+
+    YamahaPadModifier.setPadBarLength(parsed, 1, 4);
+
+    // 取得原始音符
+    let curTick = 0;
+    const origNotes: { note: number; startTick: number }[] = [];
+    for (const ev of parsed.tracks[1].events) {
+      curTick += ev.delta;
+      if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
+        origNotes.push({ note: ev.noteNumber!, startTick: curTick });
+      }
+    }
+    const gridStart = Math.floor(Math.min(...origNotes.map((n) => n.startTick)) / 384) * 384;
+    const origBar1Notes = origNotes.filter((n) => n.startTick >= gridStart && n.startTick < gridStart + 384);
+    const origBar3Notes = origNotes.filter((n) => n.startTick >= gridStart + 768 && n.startTick < gridStart + 1152);
+
+    // 將第 1 小節插入至第 3 小節 (模式 C: insert)
+    const res = YamahaPadModifier.copyPadMeasure(parsed, 1, 1, 3, 'insert');
+    expect(res.success).toBe(true);
+    expect(res.newTotalBars).toBe(5);
+
+    // 驗證寫出後重新解析
+    const modifiedBytes = YamahaWriter.write(parsed);
+    const reParsed = YamahaParser.parse(modifiedBytes, 'PAD');
+    expect(YamahaPadModifier.getPadBarLength(reParsed, 1)).toBe(5);
+
+    curTick = 0;
+    const newNotes: { note: number; startTick: number }[] = [];
+    for (const ev of reParsed.tracks[1].events) {
+      curTick += ev.delta;
+      if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
+        newNotes.push({ note: ev.noteNumber!, startTick: curTick });
+      }
+    }
+
+    // 新的第 3 小節應為複製進來的第 1 小節音符
+    const newBar3Notes = newNotes.filter((n) => n.startTick >= gridStart + 768 && n.startTick < gridStart + 1152);
+    expect(newBar3Notes.length).toBe(origBar1Notes.length);
+    for (let i = 0; i < origBar1Notes.length; i++) {
+      expect(newBar3Notes[i].note).toBe(origBar1Notes[i].note);
+    }
+
+    // 原第 3 小節音符應被順移推後 384 Ticks 成為第 4 小節 (gridStart + 1152 ~ gridStart + 1536)
+    const newBar4Notes = newNotes.filter((n) => n.startTick >= gridStart + 1152 && n.startTick < gridStart + 1536);
+    expect(newBar4Notes.length).toBe(origBar3Notes.length);
+    for (let i = 0; i < origBar3Notes.length; i++) {
+      expect(newBar4Notes[i].note).toBe(origBar3Notes[i].note);
+      expect(newBar4Notes[i].startTick - origBar3Notes[i].startTick).toBe(384);
+    }
+  });
+
   it('能精確執行小節剪除順移 (deletePadMeasure with ripple) 並驗證後續音符時序自動前移與總小節縮減', () => {
     const sample1Path = path.resolve(__dirname, '../samples/4006-1_PAD.PAD');
     const rawBuffer = new Uint8Array(fs.readFileSync(sample1Path));

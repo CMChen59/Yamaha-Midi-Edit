@@ -626,11 +626,11 @@ export class YamahaPadModifier {
     padNum: number,
     sourceBar: number, // 1-indexed, 例如 1
     targetBar: number, // 1-indexed, 例如 3 或 5
-    mode: 'replace' | 'merge' = 'replace'
+    mode: 'replace' | 'insert' | 'merge' = 'replace'
   ): { success: boolean; copiedCount: number; newTotalBars: number } {
     const track = parsed.tracks[padNum];
     if (!track || !track.events) return { success: false, copiedCount: 0, newTotalBars: 1 };
-    if (sourceBar <= 0 || targetBar <= 0 || sourceBar === targetBar) {
+    if (sourceBar <= 0 || targetBar <= 0 || (sourceBar === targetBar && mode !== 'insert')) {
       return { success: false, copiedCount: 0, newTotalBars: this.getPadBarLength(parsed, padNum) };
     }
 
@@ -682,6 +682,87 @@ export class YamahaPadModifier {
 
     const targetStartTick = gridStartTick + (targetBar - 1) * ticksPerBar;
     const targetEndTick = targetStartTick + ticksPerBar;
+    const curPadLen = this.getPadBarLength(parsed, padNum);
+
+    // 模式 C：插入順移模式 (Insert / Ripple Paste)
+    if (mode === 'insert') {
+      if (targetBar <= curPadLen) {
+        // 將 targetStartTick 及之後的所有事件向後順移 ticksPerBar (+1 小節)
+        let evTick = 0;
+        const annotated = track.events.map((ev, index) => {
+          evTick += ev.delta;
+          return { ev, absTick: evTick, index };
+        });
+
+        const endMeta = annotated.find((item) => item.ev.type === 'meta' && item.ev.metaType === 0x2f);
+
+        for (const item of annotated) {
+          if (item.absTick >= targetStartTick) {
+            item.absTick += ticksPerBar;
+          }
+        }
+
+        const newTotalBars = curPadLen + 1;
+        const newEndTick = gridStartTick + newTotalBars * ticksPerBar;
+        if (endMeta && endMeta.absTick < newEndTick) {
+          endMeta.absTick = newEndTick;
+        }
+
+        // 重新排序並寫回 delta-time
+        annotated.sort((a, b) => {
+          if (a.absTick !== b.absTick) return a.absTick - b.absTick;
+          if (a.ev.type === 'meta' && a.ev.metaType === 0x2f) return 1;
+          if (b.ev.type === 'meta' && b.ev.metaType === 0x2f) return -1;
+          return a.index - b.index;
+        });
+
+        let prev = 0;
+        track.events = annotated.map((item) => {
+          const delta = item.absTick - prev;
+          prev = item.absTick;
+          item.ev.delta = Math.max(0, delta);
+          return item.ev;
+        });
+
+        this.rebuildTrackRawChunk(track);
+
+        // 將 sourceNotes 寫入已空出來的 targetBar
+        for (const sNote of sourceNotes) {
+          const relTick = sNote.startTick - sourceStartTick;
+          const newStart = targetStartTick + relTick;
+          this.addNoteEvent(parsed, padNum, {
+            note: sNote.note,
+            startTick: newStart,
+            durationTick: sNote.durationTick,
+            velocity: sNote.velocity,
+          });
+        }
+
+        // 同步更新 parsed.sections 與總長度
+        if (parsed.sections && parsed.sections[padNum - 1]) {
+          parsed.sections[padNum - 1].measureCount = newTotalBars;
+          parsed.sections[padNum - 1].endTick = endMeta ? endMeta.absTick : newEndTick;
+        }
+
+        return { success: true, copiedCount: sourceNotes.length, newTotalBars };
+      } else {
+        // 目標小節超出目前長度，等同於向後延伸追加
+        for (const sNote of sourceNotes) {
+          const relTick = sNote.startTick - sourceStartTick;
+          const newStart = targetStartTick + relTick;
+          this.addNoteEvent(parsed, padNum, {
+            note: sNote.note,
+            startTick: newStart,
+            durationTick: sNote.durationTick,
+            velocity: sNote.velocity,
+          });
+        }
+        const newTotalBars = targetBar;
+        this.setPadBarLength(parsed, padNum, targetBar);
+        return { success: true, copiedCount: sourceNotes.length, newTotalBars };
+      }
+    }
+
     const tickOffset = targetStartTick - sourceStartTick;
 
     // 若 mode === 'replace'，刪除 targetBar 內已有的音符
@@ -710,7 +791,6 @@ export class YamahaPadModifier {
     }
 
     // 若目標小節超出原本 Pad 長度，自動擴展長度
-    const curPadLen = this.getPadBarLength(parsed, padNum);
     const newTotalBars = Math.max(curPadLen, targetBar);
     if (targetBar > curPadLen) {
       this.setPadBarLength(parsed, padNum, targetBar);
