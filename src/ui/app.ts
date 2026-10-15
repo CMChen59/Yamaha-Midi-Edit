@@ -1,6 +1,7 @@
 import { YamahaParser } from '../core/parser/yamaha-parser';
 import { YamahaWriter } from '../core/writer/yamaha-writer';
 import { YamahaPadModifier } from '../core/writer/pad-modifier';
+import { YamahaPadSynthesizer } from '../core/writer/pad-synthesizer';
 import { audioEngine, ticksToSeconds } from '../core/audio/audio-engine';
 import type { NoteEvent, PlaybackState } from '../core/audio/audio-engine';
 import type { YamahaFileParsed, YamahaSection, MidiTrack } from '../core/models/types';
@@ -233,6 +234,20 @@ function closeVoiceModal() {
   if (modal) modal.style.display = 'none';
 }
 
+function openNewPadModal() {
+  const modal = document.getElementById('new-pad-modal');
+  if (modal) {
+    modal.style.display = 'flex';
+    const nameInput = document.getElementById('new-pad-name') as HTMLInputElement | null;
+    if (nameInput) setTimeout(() => nameInput.focus(), 60);
+  }
+}
+
+function closeNewPadModal() {
+  const modal = document.getElementById('new-pad-modal');
+  if (modal) modal.style.display = 'none';
+}
+
 function auditionSingleVoice(voice: YamahaVoice) {
   let pitch = 60; // C4
   let isDrum = false;
@@ -420,6 +435,91 @@ function initEvents() {
       if (fileInput.files && fileInput.files.length > 0) {
         handleFile(fileInput.files[0]);
       }
+    });
+  }
+
+  // Phase 2.4: 新建空白 Multi Pad 專案按鈕與彈窗監聽
+  const btnNewPad = document.getElementById('btn-new-pad');
+  if (btnNewPad) {
+    btnNewPad.addEventListener('click', openNewPadModal);
+  }
+
+  const btnCloseNewPadModal = document.getElementById('btn-close-new-pad-modal');
+  if (btnCloseNewPadModal) {
+    btnCloseNewPadModal.addEventListener('click', closeNewPadModal);
+  }
+
+  const btnCancelNewPad = document.getElementById('btn-cancel-new-pad');
+  if (btnCancelNewPad) {
+    btnCancelNewPad.addEventListener('click', closeNewPadModal);
+  }
+
+  const newPadModal = document.getElementById('new-pad-modal');
+  if (newPadModal) {
+    newPadModal.addEventListener('click', (e) => {
+      if (e.target === newPadModal) closeNewPadModal();
+    });
+  }
+
+  const btnConfirmNewPad = document.getElementById('btn-confirm-new-pad');
+  if (btnConfirmNewPad) {
+    btnConfirmNewPad.addEventListener('click', () => {
+      const nameInput = document.getElementById('new-pad-name') as HTMLInputElement | null;
+      const bpmInput = document.getElementById('new-pad-bpm') as HTMLInputElement | null;
+      const timeSigSelect = document.getElementById('new-pad-timesig') as HTMLSelectElement | null;
+      const barsSelect = document.getElementById('new-pad-bars') as HTMLSelectElement | null;
+      const divisionSelect = document.getElementById('new-pad-division') as HTMLSelectElement | null;
+      const casmCheckbox = document.getElementById('new-pad-inject-casm') as HTMLInputElement | null;
+
+      const projectName = nameInput?.value.trim() || 'New Multi Pad';
+      const bpm = parseInt(bpmInput?.value || '120', 10) || 120;
+      const timeSigVal = timeSigSelect?.value || '4/4';
+      const [numStr, denStr] = timeSigVal.split('/');
+      const numerator = parseInt(numStr, 10) || 4;
+      const denominator = parseInt(denStr, 10) || 4;
+      const bars = parseInt(barsSelect?.value || '4', 10) || 4;
+      const division = parseInt(divisionSelect?.value || '480', 10) || 480;
+      const injectCasm = casmCheckbox?.checked ?? true;
+
+      const newParsed = YamahaPadSynthesizer.createBlankProject({
+        projectName,
+        bpm,
+        timeSignature: { numerator, denominator },
+        bars,
+        division,
+        injectCasm,
+      });
+
+      currentParsed = newParsed;
+      currentFileName = `${projectName.replace(/[\/\\?%*:|"<>]/g, '_')}.PAD`;
+      isModified = true;
+
+      if (elFilename) elFilename.textContent = currentFileName;
+      if (elFormat) elFormat.textContent = 'PAD';
+      if (elBpm) elBpm.textContent = `${bpm}`;
+      if (elTimesig) elTimesig.textContent = `${numerator}/${denominator}`;
+      if (elCasm) elCasm.textContent = newParsed.hasCasm ? '已包含 (SFF2 轉調表)' : '無 (原生純淨)';
+
+      if (btnExport) {
+        btnExport.textContent = '💾 導出 PAD 檔案';
+      }
+
+      if (viewerContainer) viewerContainer.style.display = 'block';
+
+      renderSections(newParsed);
+      renderParts(newParsed);
+
+      // 自動展開並聚焦 Pad 1
+      currentActivePadNum = 1;
+      showPadNotesDetail(newParsed, newParsed.sections[0], 'Pad 1', 1);
+      const pad1Card = document.querySelector('.pad-card-1') as HTMLElement | null;
+      if (pad1Card) {
+        document.querySelectorAll('.pad-button-card').forEach(el => el.classList.remove('active'));
+        pad1Card.classList.add('active');
+      }
+
+      closeNewPadModal();
+      showStatus(`🎉 已成功建立全新空白 PAD 專案「${projectName}」（共 ${bars} 小節），可直接於鋼琴卷軸畫布創作並導出！`);
     });
   }
 

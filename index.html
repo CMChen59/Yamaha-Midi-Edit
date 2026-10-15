@@ -16,6 +16,7 @@
         <h1>STY & PAD 透視編輯工具 <small>v0.1 Preview</small></h1>
       </div>
       <div class="header-actions">
+        <button id="btn-new-pad" class="btn btn-primary" style="background: linear-gradient(135deg, #10b981, #059669); border: none; font-weight: 600;">➕ 新建空白 PAD</button>
         <button id="btn-load-sample-sty" class="btn btn-secondary">載入範例 STY</button>
         <button id="btn-load-sample-pad" class="btn btn-secondary">載入範例 PAD</button>
       </div>
@@ -302,6 +303,86 @@
       <div class="modal-footer">
         <span id="voice-count-label" style="font-size: 0.8rem; color: #94a3b8;">共 0 種音色符合</span>
         <button type="button" id="btn-close-modal-footer" class="btn btn-secondary" style="padding: 4px 14px; font-size: 0.8rem;">關閉</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Phase 2.4: 新建空白 Multi Pad 專案對話框 (New Pad Project Modal) -->
+  <div id="new-pad-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-dialog" style="max-width: 600px;">
+      <div class="modal-header">
+        <div>
+          <h3 class="modal-title">🎹 新建 Yamaha Multi Pad 專案</h3>
+          <p class="modal-subtitle">從零建立符合 Yamaha 原廠規範的空白 4-Pad 專案，即時編輯並輸出 PSR-SX920 相容二進位檔</p>
+        </div>
+        <button type="button" id="btn-close-new-pad-modal" class="modal-close-btn" title="關閉視窗">&times;</button>
+      </div>
+
+      <div style="padding: 16px 20px; display: flex; flex-direction: column; gap: 16px;">
+        <!-- 專案名稱 -->
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <label style="font-size: 0.85rem; font-weight: 600; color: #e2e8f0;">專案名稱 (Project Name)：</label>
+          <input type="text" id="new-pad-name" value="New Multi Pad" placeholder="請輸入專案名稱..." style="background: #16181f; border: 1px solid #333846; border-radius: 6px; color: #fff; padding: 8px 12px; font-size: 0.9rem;" />
+        </div>
+
+        <!-- 速度、拍號與小節長度網格 -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <label style="font-size: 0.82rem; font-weight: 600; color: #cbd5e1;">預設速度 (BPM)：</label>
+            <input type="number" id="new-pad-bpm" min="40" max="260" value="120" style="background: #16181f; border: 1px solid #333846; border-radius: 6px; color: #fff; padding: 6px 10px; font-size: 0.85rem;" />
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <label style="font-size: 0.82rem; font-weight: 600; color: #cbd5e1;">拍號 (Time Sig)：</label>
+            <select id="new-pad-timesig" style="background: #16181f; border: 1px solid #333846; border-radius: 6px; color: #fff; padding: 6px 10px; font-size: 0.85rem;">
+              <option value="4/4" selected>4/4 拍 (標準流行/舞曲)</option>
+              <option value="3/4">3/4 拍 (華爾滋/三拍子)</option>
+              <option value="2/4">2/4 拍 (進行曲/快板)</option>
+              <option value="6/8">6/8 拍 (抒情慢三搖擺)</option>
+            </select>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <label style="font-size: 0.82rem; font-weight: 600; color: #cbd5e1;">初始長度：</label>
+            <select id="new-pad-bars" style="background: #16181f; border: 1px solid #333846; border-radius: 6px; color: #fff; padding: 6px 10px; font-size: 0.85rem;">
+              <option value="1">1 小節</option>
+              <option value="2">2 小節</option>
+              <option value="4" selected>4 小節 (標準)</option>
+              <option value="8">8 小節</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 進階選項：解析度與 CASM 轉調支援 -->
+        <div style="background: #161822; border: 1px solid #2a2e3b; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 10px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <label style="font-size: 0.82rem; color: #cbd5e1; font-weight: 600;">時間解析度 (PPQ)：</label>
+            <select id="new-pad-division" style="background: #12131a; border: 1px solid #333846; border-radius: 4px; color: #fff; padding: 4px 8px; font-size: 0.8rem;">
+              <option value="480" selected>480 Ticks/Beat (現代 Yamaha 高精度標準)</option>
+              <option value="96">96 Ticks/Beat (經典傳統相容格式)</option>
+            </select>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; border-top: 1px solid #232734; padding-top: 8px;">
+            <input type="checkbox" id="new-pad-inject-casm" checked style="accent-color: #10b981; width: 16px; height: 16px; cursor: pointer;" />
+            <label for="new-pad-inject-casm" style="font-size: 0.82rem; color: #e2e8f0; cursor: pointer;">
+              注入 CASM (Chord Match 轉調規則) 區塊 <small style="color: #94a3b8;">(自動配置 SFF2 轉調表，完美支援琴端彈奏和弦轉調)</small>
+            </label>
+          </div>
+        </div>
+
+        <!-- 4 個 Pad 初始音色預設 -->
+        <div>
+          <label style="font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 6px; display: block;">打擊墊預設音色配置：</label>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.8rem; color: #94a3b8;">
+            <div style="background: #181a20; padding: 6px 10px; border-radius: 6px; border-left: 3px solid #3b82f6;">Pad 1: 🎹 Concert Grand (鋼琴)</div>
+            <div style="background: #181a20; padding: 6px 10px; border-radius: 6px; border-left: 3px solid #10b981;">Pad 2: 🎻 Live! Strings (弦樂)</div>
+            <div style="background: #181a20; padding: 6px 10px; border-radius: 6px; border-left: 3px solid #f59e0b;">Pad 3: 🎸 Steel Guitar (木吉他)</div>
+            <div style="background: #181a20; padding: 6px 10px; border-radius: 6px; border-left: 3px solid #ec4899;">Pad 4: 🎸 Finger Bass (電貝斯)</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px;">
+        <button type="button" id="btn-cancel-new-pad" class="btn btn-secondary" style="padding: 6px 16px; font-size: 0.85rem;">取消</button>
+        <button type="button" id="btn-confirm-new-pad" class="btn btn-primary" style="background: linear-gradient(135deg, #10b981, #059669); border: none; padding: 6px 18px; font-size: 0.85rem; font-weight: 600;">🚀 建立專案</button>
       </div>
     </div>
   </div>
