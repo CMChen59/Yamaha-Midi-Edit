@@ -26,6 +26,8 @@
           <button type="button" id="btn-midi-connect" class="toggle-btn" style="padding: 1px 8px; font-size: 0.72rem; border-radius: 12px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3);">連接實體琴</button>
         </div>
         <button id="btn-new-pad" class="btn btn-primary" style="background: linear-gradient(135deg, #10b981, #059669); border: none; font-weight: 600;">➕ 新建空白 PAD</button>
+        <button id="btn-import-midi" class="btn btn-secondary" style="background: linear-gradient(135deg, #6366f1, #4f46e5); color: #fff; border: none; font-weight: 600;">📂 匯入 MIDI 切片</button>
+        <button id="btn-load-sample-mid" class="btn btn-secondary">載入範例 MIDI</button>
         <button id="btn-load-sample-sty" class="btn btn-secondary">載入範例 STY</button>
         <button id="btn-load-sample-pad" class="btn btn-secondary">載入範例 PAD</button>
       </div>
@@ -38,9 +40,9 @@
     <section class="upload-container" id="drop-zone">
       <div class="upload-box">
         <div class="upload-icon">📂</div>
-        <h3>將 .STY 或 .PAD 檔案拖曳至此處</h3>
-        <p>或點擊此區域選擇本地檔案（完全在瀏覽器本地安全解析，不需上傳伺服器）</p>
-        <input type="file" id="file-input" accept=".sty,.pad,.STY,.PAD,.mid,.MID" style="display: none;">
+        <h3>將 .STY、.PAD 或 .MID 檔案拖曳至此處</h3>
+        <p>支援 Yamaha 伴奏 (.sty)、打擊墊 (.pad) 與外部標準 MIDI (.mid / .midi) 檔案切片轉換</p>
+        <input type="file" id="file-input" accept=".sty,.pad,.STY,.PAD,.mid,.midi,.MID,.MIDI" style="display: none;">
         <button type="button" id="btn-select-file" class="btn btn-primary">選擇本地檔案</button>
       </div>
     </section>
@@ -402,6 +404,83 @@
       <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px;">
         <button type="button" id="btn-cancel-new-pad" class="btn btn-secondary" style="padding: 6px 16px; font-size: 0.85rem;">取消</button>
         <button type="button" id="btn-confirm-new-pad" class="btn btn-primary" style="background: linear-gradient(135deg, #10b981, #059669); border: none; padding: 6px 18px; font-size: 0.85rem; font-weight: 600;">🚀 建立專案</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 外部 MIDI 匯入與切片分配精靈視窗 (Phase 2.3) -->
+  <div id="midi-import-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-dialog" style="max-width: 980px; max-height: 90vh;">
+      <div class="modal-header">
+        <div>
+          <h3 class="modal-title">🎹 外部 MIDI 切片分配精靈 (SMF Slicer & Multi Pad Wizard)</h3>
+          <p class="modal-subtitle" id="midi-import-subtitle">來源檔案: 未載入 | 480 PPQ | 120 BPM | 4/4 拍 | 8 小節</p>
+        </div>
+        <button type="button" id="btn-close-midi-import-modal" class="modal-close-btn" title="關閉視窗">&times;</button>
+      </div>
+
+      <div style="padding: 16px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px;">
+        <!-- 專案全域設定條 -->
+        <div style="background: #151822; border: 1px solid #2a2e3d; border-radius: 8px; padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 16px; align-items: center;">
+          <div style="display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 200px;">
+            <label for="midi-import-proj-name" style="font-size: 0.8rem; font-weight: 600; color: #cbd5e1;">目標專案名稱：</label>
+            <input type="text" id="midi-import-proj-name" value="Imported Multi Pad" style="background: #11131a; border: 1px solid #333846; border-radius: 4px; color: #fff; padding: 6px 10px; font-size: 0.85rem;" />
+          </div>
+          <div style="display: flex; gap: 14px; align-items: center; flex-wrap: wrap;">
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <label for="midi-import-bpm" style="font-size: 0.8rem; font-weight: 600; color: #cbd5e1;">專案速度 (BPM)：</label>
+              <input type="number" id="midi-import-bpm" min="40" max="260" value="120" style="width: 75px; background: #11131a; border: 1px solid #333846; border-radius: 4px; color: #fff; padding: 6px 8px; font-size: 0.85rem; text-align: center;" />
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <label style="font-size: 0.8rem; font-weight: 600; color: #cbd5e1;">和弦跟隨 (CASM)：</label>
+              <label style="display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: #34d399; margin-top: 4px; cursor: pointer;">
+                <input type="checkbox" id="midi-import-inject-casm" checked style="accent-color: #10b981; width: 16px; height: 16px;" />
+                注入 SFF2 轉調表
+              </label>
+            </div>
+          </div>
+          <!-- 快速動作列 -->
+          <div style="display: flex; gap: 8px; margin-left: auto; align-items: flex-end; flex-wrap: wrap;">
+            <button type="button" id="btn-wizard-preset-1to1" class="toggle-btn active-rp" style="padding: 4px 10px; font-size: 0.74rem;">⚡ 1~4軌自動對應</button>
+            <button type="button" id="btn-wizard-preset-first4bars" class="toggle-btn" style="padding: 4px 10px; font-size: 0.74rem;">⚡ 前 4 小節切片</button>
+            <button type="button" id="btn-wizard-preset-allcm" class="toggle-btn" style="padding: 4px 10px; font-size: 0.74rem;">⚡ 全部和弦跟隨</button>
+          </div>
+        </div>
+
+        <!-- 兩欄佈局：左側來源音軌列表與試聽，右側 Pad 1~4 切片分配設定 -->
+        <div style="display: grid; grid-template-columns: 1fr 1.25fr; gap: 16px;">
+          <!-- 左側：來源 MIDI 軌道清單 -->
+          <div style="background: #14161f; border: 1px solid #252936; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <h4 style="font-size: 0.88rem; color: #e2e8f0; font-weight: 600;">🎼 來源 MIDI 音軌清單</h4>
+              <span id="midi-tracks-summary-badge" class="badge" style="background: #1e293b; color: #94a3b8; font-size: 0.72rem;">0 軌</span>
+            </div>
+            <div id="midi-source-tracks-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 420px; overflow-y: auto;">
+              <!-- 動態生成來源軌道卡片 -->
+            </div>
+          </div>
+
+          <!-- 右側：Pad 1 ~ 4 分配卡片 -->
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <h4 style="font-size: 0.88rem; color: #e2e8f0; font-weight: 600;">🎛️ Pad 1 ~ 4 切片分配與屬性設定</h4>
+              <span style="font-size: 0.72rem; color: #94a3b8;">選擇來源軌道與切片小節區間</span>
+            </div>
+            <div id="pad-assignments-grid" style="display: flex; flex-direction: column; gap: 10px; max-height: 420px; overflow-y: auto;">
+              <!-- Pad 1 ~ 4 分配卡片由 JS 動態生成 -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer" style="padding: 12px 20px; background: #1a1d26; border-top: 1px solid #282c39; display: flex; justify-content: space-between; align-items: center;">
+        <div style="font-size: 0.78rem; color: #94a3b8;">
+          💡 提示：切片會自動將選定小節重定至第 1 拍 (Tick 0)，並自動適配時間解析度與 PSR-SX920 控制標籤。
+        </div>
+        <div style="display: flex; gap: 10px;">
+          <button type="button" id="btn-cancel-midi-import" class="btn btn-secondary" style="padding: 6px 16px; font-size: 0.85rem;">取消</button>
+          <button type="button" id="btn-confirm-midi-import" class="btn btn-primary" style="background: linear-gradient(135deg, #6366f1, #4f46e5); border: none; padding: 6px 20px; font-size: 0.85rem; font-weight: 600;">✨ 建立 Yamaha PAD 專案</button>
+        </div>
       </div>
     </div>
   </div>

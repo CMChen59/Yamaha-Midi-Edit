@@ -2,6 +2,11 @@ import { YamahaParser } from '../core/parser/yamaha-parser';
 import { YamahaWriter } from '../core/writer/yamaha-writer';
 import { YamahaPadModifier } from '../core/writer/pad-modifier';
 import { YamahaPadSynthesizer } from '../core/writer/pad-synthesizer';
+import {
+  MidiImporter,
+  type MidiSourceAnalysis,
+  type PadAssignmentOption,
+} from '../core/writer/midi-importer';
 import { audioEngine, ticksToSeconds } from '../core/audio/audio-engine';
 import { midiManager, MidiDeviceInfo } from '../core/audio/midi-manager';
 import type { NoteEvent, PlaybackState } from '../core/audio/audio-engine';
@@ -25,6 +30,8 @@ const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input') as HTMLInputElement | null;
 const btnSelectFile = document.getElementById('btn-select-file');
 const viewerContainer = document.getElementById('viewer-container');
+const btnImportMidi = document.getElementById('btn-import-midi');
+const btnLoadSampleMid = document.getElementById('btn-load-sample-mid');
 const btnLoadSampleSty = document.getElementById('btn-load-sample-sty');
 const btnLoadSamplePad = document.getElementById('btn-load-sample-pad');
 const btnExport = document.getElementById('btn-export');
@@ -257,6 +264,421 @@ function openNewPadModal() {
 function closeNewPadModal() {
   const modal = document.getElementById('new-pad-modal');
   if (modal) modal.style.display = 'none';
+}
+
+// ========================================================
+// Phase 2.3: 外部標準 MIDI 匯入與切片分配精靈 (MIDI Import Wizard)
+// ========================================================
+let currentMidiAnalysis: MidiSourceAnalysis | null = null;
+let currentAuditioningTrackIndex: number | null = null;
+
+function escapeHtml(str: string): string {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function openMidiImportModal(bytes: Uint8Array, fileName: string) {
+  const modal = document.getElementById('midi-import-modal');
+  if (!modal) return;
+
+  try {
+    currentMidiAnalysis = MidiImporter.analyzeMidi(bytes, fileName);
+  } catch (err: any) {
+    alert(`解析 MIDI 檔案失敗: ${err.message}`);
+    return;
+  }
+
+  // 1. 更新精靈標題資訊
+  const subtitle = document.getElementById('midi-import-subtitle');
+  if (subtitle) {
+    subtitle.textContent = `來源檔案: ${fileName} | ${currentMidiAnalysis.division} PPQ | ${currentMidiAnalysis.bpm} BPM | ${currentMidiAnalysis.timeSignature.numerator}/${currentMidiAnalysis.timeSignature.denominator} 拍 | 共 ${currentMidiAnalysis.totalMeasures} 小節 (${currentMidiAnalysis.tracks.length} 音軌)`;
+  }
+
+  // 2. 設定專案名稱與速度預設值
+  const projNameInput = document.getElementById('midi-import-proj-name') as HTMLInputElement | null;
+  const bpmInput = document.getElementById('midi-import-bpm') as HTMLInputElement | null;
+  if (projNameInput) {
+    const baseName = fileName.replace(/\.[^/.]+$/, '');
+    projNameInput.value = `${baseName} Pad`;
+  }
+  if (bpmInput) {
+    bpmInput.value = `${currentMidiAnalysis.bpm}`;
+  }
+
+  // 3. 渲染左側來源軌道清單
+  renderMidiSourceTracksList();
+
+  // 4. 渲染右側 Pad 1~4 切片分配卡片 (預設智慧分配)
+  renderPadAssignmentsGrid();
+
+  // 5. 顯示彈窗
+  modal.style.display = 'flex';
+}
+
+function closeMidiImportModal() {
+  const modal = document.getElementById('midi-import-modal');
+  if (modal) modal.style.display = 'none';
+
+  // 停止正在試聽的音軌
+  if (currentAuditioningTrackIndex !== null) {
+    audioEngine.stop();
+    currentAuditioningTrackIndex = null;
+  }
+}
+
+function renderMidiSourceTracksList() {
+  const container = document.getElementById('midi-source-tracks-list');
+  const badge = document.getElementById('midi-tracks-summary-badge');
+  if (!container || !currentMidiAnalysis) return;
+
+  if (badge) {
+    badge.textContent = `${currentMidiAnalysis.tracks.length} 軌`;
+  }
+
+  container.innerHTML = '';
+  currentMidiAnalysis.tracks.forEach((track) => {
+    const card = document.createElement('div');
+    card.className = 'midi-source-track-item';
+    card.style.cssText = 'background: #181b24; border: 1px solid #2d3240; border-radius: 6px; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; gap: 8px;';
+
+    const hasNotes = track.noteCount > 0;
+    const isAuditioning = currentAuditioningTrackIndex === track.trackIndex;
+
+    card.innerHTML = `
+      <div style="flex: 1; min-width: 0;">
+        <div style="font-size: 0.84rem; font-weight: 600; color: ${hasNotes ? '#f1f5f9' : '#64748b'}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+          <span style="color: #38bdf8;">[軌道 ${track.trackIndex + 1}]</span> ${escapeHtml(track.name)}
+        </div>
+        <div style="font-size: 0.72rem; color: #94a3b8; display: flex; gap: 8px; margin-top: 2px; flex-wrap: wrap;">
+          <span>Ch ${track.channel + 1}</span>
+          <span>音符: ${track.noteCount} 顆</span>
+          <span>長度: ${track.measureCount} 小節</span>
+          ${track.programChange !== undefined ? `<span style="color: #cbd5e1;">PC: ${track.programChange}</span>` : ''}
+        </div>
+      </div>
+      <div>
+        ${
+          hasNotes
+            ? `<button type="button" class="btn-audition btn-audition-track ${isAuditioning ? 'playing' : ''}" data-track="${track.trackIndex}" style="padding: 2px 8px; font-size: 0.74rem;">
+                ${isAuditioning ? '⏹ 停止' : '▶ 試聽'}
+              </button>`
+            : `<span style="font-size: 0.7rem; color: #64748b;">(無音符)</span>`
+        }
+      </div>
+    `;
+
+    const btnAudition = card.querySelector('.btn-audition-track') as HTMLButtonElement | null;
+    if (btnAudition) {
+      btnAudition.addEventListener('click', () => {
+        toggleTrackAudition(track.trackIndex);
+      });
+    }
+
+    container.appendChild(card);
+  });
+}
+
+function toggleTrackAudition(trackIndex: number) {
+  if (!currentMidiAnalysis) return;
+  const track = currentMidiAnalysis.tracks.find((t) => t.trackIndex === trackIndex);
+  if (!track || track.noteCount === 0) return;
+
+  if (currentAuditioningTrackIndex === trackIndex) {
+    audioEngine.stop();
+    currentAuditioningTrackIndex = null;
+    renderMidiSourceTracksList();
+    return;
+  }
+
+  audioEngine.stop();
+  currentAuditioningTrackIndex = trackIndex;
+  renderMidiSourceTracksList();
+
+  audioEngine.playSequence(track.trackIndex + 1, track.notes, {
+    bpm: currentMidiAnalysis.bpm,
+    division: currentMidiAnalysis.division,
+    loop: false,
+    gridStartTick: 0,
+    totalTicks: track.totalTicks,
+    channelParams: {
+      msb: track.bankMsb ?? 0,
+      lsb: track.bankLsb ?? 112,
+      pc: track.programChange ?? 0,
+      channel: track.channel,
+    },
+    onEnded: () => {
+      currentAuditioningTrackIndex = null;
+      renderMidiSourceTracksList();
+    },
+  });
+}
+
+const PAD_THEME_COLORS = [
+  { border: '#3b82f6', bg: 'rgba(59, 130, 246, 0.08)', text: '#60a5fa', title: 'Pad 1 (主旋律/和弦)' },
+  { border: '#10b981', bg: 'rgba(16, 185, 129, 0.08)', text: '#34d399', title: 'Pad 2 (副奏/弦樂)' },
+  { border: '#f59e0b', bg: 'rgba(245, 158, 11, 0.08)', text: '#fbbf24', title: 'Pad 3 (節奏/吉他)' },
+  { border: '#ec4899', bg: 'rgba(236, 72, 153, 0.08)', text: '#f472b6', title: 'Pad 4 (貝斯/打擊)' },
+];
+
+function renderPadAssignmentsGrid() {
+  const container = document.getElementById('pad-assignments-grid');
+  if (!container || !currentMidiAnalysis) return;
+
+  const noteTracks = currentMidiAnalysis.tracks.filter((t) => t.noteCount > 0);
+  const totalMeasures = currentMidiAnalysis.totalMeasures;
+  const defaultBars = Math.min(4, totalMeasures);
+
+  container.innerHTML = '';
+
+  for (let i = 0; i < 4; i++) {
+    const padNum = i + 1;
+    const theme = PAD_THEME_COLORS[i];
+    // 預設來源軌：若有足夠音符音軌則 1:1 分配，否則使用 null
+    const initialTrack = noteTracks[i] ?? null;
+    const initialTrackIdx = initialTrack ? initialTrack.trackIndex : -1;
+    const initialName = initialTrack ? initialTrack.name : `Pad ${padNum}`;
+
+    const card = document.createElement('div');
+    card.className = `wizard-pad-card wizard-pad-card-${padNum}`;
+    card.style.cssText = `background: #181b24; border: 1px solid ${theme.border}; border-radius: 8px; padding: 10px 14px; display: flex; flex-direction: column; gap: 8px;`;
+
+    // 建立下拉選單 options
+    let trackOptionsHtml = `<option value="-1">-- 不使用此 Pad (空白) --</option>`;
+    currentMidiAnalysis.tracks.forEach((t) => {
+      const isSelected = t.trackIndex === initialTrackIdx ? 'selected' : '';
+      trackOptionsHtml += `<option value="${t.trackIndex}" ${isSelected}>[軌道 ${t.trackIndex + 1}] ${escapeHtml(t.name)} (${t.noteCount} 音符, ${t.measureCount} 小節)</option>`;
+    });
+
+    card.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-weight: 700; font-size: 0.88rem; color: ${theme.text};">${theme.title}</span>
+          <span class="badge wizard-pad-bars-badge" data-pad="${i}" style="background: rgba(255, 255, 255, 0.08); font-size: 0.72rem; color: #cbd5e1;">共 ${defaultBars} 小節</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; font-size: 0.78rem;">
+          <label style="display: flex; align-items: center; gap: 4px; color: #e2e8f0; cursor: pointer;">
+            <input type="checkbox" class="wizard-pad-repeat" data-pad="${i}" checked style="accent-color: #3b82f6;" /> 循環播放 (RP)
+          </label>
+          <label style="display: flex; align-items: center; gap: 4px; color: #e2e8f0; cursor: pointer;">
+            <input type="checkbox" class="wizard-pad-cm" data-pad="${i}" checked style="accent-color: #10b981;" /> 和弦跟隨 (CM)
+          </label>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1.4fr 1fr; gap: 10px; align-items: center;">
+        <div>
+          <label style="font-size: 0.74rem; color: #94a3b8; display: block; margin-bottom: 2px;">來源音軌：</label>
+          <select class="wizard-pad-track" data-pad="${i}" style="width: 100%; background: #11131a; border: 1px solid #333846; border-radius: 4px; color: #fff; padding: 4px 6px; font-size: 0.8rem;">
+            ${trackOptionsHtml}
+          </select>
+        </div>
+        <div>
+          <label style="font-size: 0.74rem; color: #94a3b8; display: block; margin-bottom: 2px;">Pad 名稱：</label>
+          <input type="text" class="wizard-pad-name" data-pad="${i}" value="${escapeHtml(initialName)}" style="width: 100%; background: #11131a; border: 1px solid #333846; border-radius: 4px; color: #fff; padding: 4px 8px; font-size: 0.8rem;" />
+        </div>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 8px; font-size: 0.78rem;">
+        <span style="color: #94a3b8;">切片區間：</span>
+        <div style="display: inline-flex; align-items: center; gap: 4px;">
+          <span>第</span>
+          <input type="number" class="wizard-pad-start" data-pad="${i}" min="1" max="${totalMeasures}" value="1" style="width: 50px; background: #11131a; border: 1px solid #333846; border-radius: 4px; color: #fff; text-align: center; padding: 2px 4px; font-size: 0.78rem;" />
+          <span>小節</span>
+        </div>
+        <span style="color: #64748b;">至</span>
+        <div style="display: inline-flex; align-items: center; gap: 4px;">
+          <span>第</span>
+          <input type="number" class="wizard-pad-end" data-pad="${i}" min="1" max="${totalMeasures}" value="${defaultBars}" style="width: 50px; background: #11131a; border: 1px solid #333846; border-radius: 4px; color: #fff; text-align: center; padding: 2px 4px; font-size: 0.78rem;" />
+          <span>小節</span>
+        </div>
+      </div>
+    `;
+
+    // 綁定動態事件：修改軌道時自動帶入名稱
+    const selTrack = card.querySelector('.wizard-pad-track') as HTMLSelectElement | null;
+    const nameInput = card.querySelector('.wizard-pad-name') as HTMLInputElement | null;
+    const startInput = card.querySelector('.wizard-pad-start') as HTMLInputElement | null;
+    const endInput = card.querySelector('.wizard-pad-end') as HTMLInputElement | null;
+    const badgeBars = card.querySelector('.wizard-pad-bars-badge') as HTMLElement | null;
+
+    const updateBarsBadge = () => {
+      const s = parseInt(startInput?.value || '1', 10);
+      const e = parseInt(endInput?.value || '4', 10);
+      const bars = Math.max(1, e - s + 1);
+      if (badgeBars) {
+        badgeBars.textContent = `共 ${bars} 小節`;
+      }
+    };
+
+    if (selTrack && nameInput) {
+      selTrack.addEventListener('change', () => {
+        const val = parseInt(selTrack.value, 10);
+        if (val >= 0 && currentMidiAnalysis) {
+          const t = currentMidiAnalysis.tracks.find((trk) => trk.trackIndex === val);
+          if (t) {
+            nameInput.value = t.name;
+          }
+        }
+      });
+    }
+
+    if (startInput) startInput.addEventListener('input', updateBarsBadge);
+    if (endInput) endInput.addEventListener('input', updateBarsBadge);
+
+    container.appendChild(card);
+  }
+}
+
+function initMidiImportModal() {
+  const modal = document.getElementById('midi-import-modal');
+  if (!modal) return;
+
+  const btnClose = document.getElementById('btn-close-midi-import-modal');
+  const btnCancel = document.getElementById('btn-cancel-midi-import');
+  const btnConfirm = document.getElementById('btn-confirm-midi-import');
+
+  if (btnClose) btnClose.addEventListener('click', closeMidiImportModal);
+  if (btnCancel) btnCancel.addEventListener('click', closeMidiImportModal);
+
+  // 背景點擊關閉
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      closeMidiImportModal();
+    }
+  });
+
+  // 阻止 dialog 內部點擊穿透冒泡
+  const dialog = modal.querySelector('.modal-dialog');
+  if (dialog) {
+    dialog.addEventListener('click', (e) => e.stopPropagation());
+    dialog.addEventListener('mousedown', (e) => e.stopPropagation());
+  }
+
+  // 快捷預設按鈕 1: 1~4 軌自動對應
+  const btnPreset1to1 = document.getElementById('btn-wizard-preset-1to1');
+  if (btnPreset1to1) {
+    btnPreset1to1.addEventListener('click', () => {
+      if (!currentMidiAnalysis) return;
+      const noteTracks = currentMidiAnalysis.tracks.filter((t) => t.noteCount > 0);
+      for (let i = 0; i < 4; i++) {
+        const sel = document.querySelector(`.wizard-pad-track[data-pad="${i}"]`) as HTMLSelectElement | null;
+        const nameInput = document.querySelector(`.wizard-pad-name[data-pad="${i}"]`) as HTMLInputElement | null;
+        const t = noteTracks[i] ?? currentMidiAnalysis.tracks[i + 1];
+        if (sel && t) {
+          sel.value = `${t.trackIndex}`;
+          if (nameInput) nameInput.value = t.name;
+        }
+      }
+      showStatus('⚡ 已自動將音軌 1~4 對應分配至 Pad 1~4');
+    });
+  }
+
+  // 快捷預設按鈕 2: 前 4 小節切片
+  const btnPresetFirst4 = document.getElementById('btn-wizard-preset-first4bars');
+  if (btnPresetFirst4) {
+    btnPresetFirst4.addEventListener('click', () => {
+      if (!currentMidiAnalysis) return;
+      const totalMeasures = currentMidiAnalysis.totalMeasures;
+      const targetEnd = Math.min(4, totalMeasures);
+      for (let i = 0; i < 4; i++) {
+        const startInput = document.querySelector(`.wizard-pad-start[data-pad="${i}"]`) as HTMLInputElement | null;
+        const endInput = document.querySelector(`.wizard-pad-end[data-pad="${i}"]`) as HTMLInputElement | null;
+        const badgeBars = document.querySelector(`.wizard-pad-bars-badge[data-pad="${i}"]`) as HTMLElement | null;
+        if (startInput) startInput.value = '1';
+        if (endInput) endInput.value = `${targetEnd}`;
+        if (badgeBars) badgeBars.textContent = `共 ${targetEnd} 小節`;
+      }
+      showStatus(`⚡ 已設定所有 Pad 切片範圍為第 1 至第 ${targetEnd} 小節`);
+    });
+  }
+
+  // 快捷預設按鈕 3: 全部開啟和弦跟隨
+  const btnPresetAllCm = document.getElementById('btn-wizard-preset-allcm');
+  if (btnPresetAllCm) {
+    btnPresetAllCm.addEventListener('click', () => {
+      for (let i = 0; i < 4; i++) {
+        const cmBox = document.querySelector(`.wizard-pad-cm[data-pad="${i}"]`) as HTMLInputElement | null;
+        if (cmBox) cmBox.checked = true;
+      }
+      showStatus('⚡ 已啟用所有 Pad 和弦跟隨 (CM)');
+    });
+  }
+
+  // 確定匯入建立專案按鈕
+  if (btnConfirm) {
+    btnConfirm.addEventListener('click', () => {
+      if (!currentMidiAnalysis) return;
+
+      const projNameInput = document.getElementById('midi-import-proj-name') as HTMLInputElement | null;
+      const bpmInput = document.getElementById('midi-import-bpm') as HTMLInputElement | null;
+      const injectCasmBox = document.getElementById('midi-import-inject-casm') as HTMLInputElement | null;
+
+      const projectName = projNameInput?.value.trim() || 'Imported Pad';
+      const bpm = Math.max(30, Math.min(300, parseInt(bpmInput?.value || '120', 10)));
+      const injectCasm = injectCasmBox ? injectCasmBox.checked : true;
+
+      const padAssignments: PadAssignmentOption[] = [];
+      let assignedCount = 0;
+
+      for (let i = 0; i < 4; i++) {
+        const sel = document.querySelector(`.wizard-pad-track[data-pad="${i}"]`) as HTMLSelectElement | null;
+        const nameInput = document.querySelector(`.wizard-pad-name[data-pad="${i}"]`) as HTMLInputElement | null;
+        const startInput = document.querySelector(`.wizard-pad-start[data-pad="${i}"]`) as HTMLInputElement | null;
+        const endInput = document.querySelector(`.wizard-pad-end[data-pad="${i}"]`) as HTMLInputElement | null;
+        const rpBox = document.querySelector(`.wizard-pad-repeat[data-pad="${i}"]`) as HTMLInputElement | null;
+        const cmBox = document.querySelector(`.wizard-pad-cm[data-pad="${i}"]`) as HTMLInputElement | null;
+
+        const trackIdx = parseInt(sel?.value || '-1', 10);
+        const name = nameInput?.value.trim() || `Pad ${i + 1}`;
+        const startBar = Math.max(1, parseInt(startInput?.value || '1', 10));
+        const endBar = Math.max(startBar, parseInt(endInput?.value || '4', 10));
+        const repeat = rpBox ? rpBox.checked : false;
+        const chordMatch = cmBox ? cmBox.checked : false;
+
+        if (trackIdx >= 0) assignedCount++;
+
+        padAssignments.push({
+          padIndex: i,
+          sourceTrackIndex: trackIdx >= 0 ? trackIdx : null,
+          name,
+          startBar,
+          endBar,
+          repeat,
+          chordMatch,
+        });
+      }
+
+      if (assignedCount === 0) {
+        alert('請至少為一個 Pad 指派來源音軌！');
+        return;
+      }
+
+      showStatus(`正在將外部 MIDI 切片合成為 Yamaha Multi Pad: ${projectName}...`);
+
+      try {
+        const padProject = MidiImporter.convertMidiToPadProject(currentMidiAnalysis, {
+          projectName,
+          bpm,
+          timeSignature: currentMidiAnalysis.timeSignature,
+          targetDivision: 480,
+          padAssignments,
+          injectCasm,
+        });
+
+        // 停止試聽並關閉視窗
+        closeMidiImportModal();
+
+        // 寫入二進位並在主畫面完整載入渲染
+        const binaryBytes = YamahaWriter.write(padProject);
+        renderParsed(binaryBytes, `${projectName}.pad`, 'PAD');
+        markModified(`從外部 MIDI [${currentMidiAnalysis.fileName}] 成功匯入並合成 4-Pad 專案`);
+
+        showStatus(`✨ 成功將外部 MIDI 切片匯入為 Yamaha Multi Pad 專案: ${projectName}`);
+      } catch (err: any) {
+        alert(`合成 Multi Pad 專案失敗: ${err.message}`);
+        showStatus(`合成失敗: ${err.message}`, true);
+      }
+    });
+  }
 }
 
 function auditionSingleVoice(voice: YamahaVoice) {
@@ -585,6 +1007,27 @@ function initEvents() {
     });
   }
 
+  // Phase 2.3: MIDI 匯入與範例按鈕
+  if (btnImportMidi) {
+    btnImportMidi.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.mid,.midi,.MID,.MIDI';
+      input.onchange = () => {
+        if (input.files && input.files[0]) {
+          handleFile(input.files[0]);
+        }
+      };
+      input.click();
+    });
+  }
+
+  if (btnLoadSampleMid) {
+    btnLoadSampleMid.addEventListener('click', () => {
+      loadSampleMidi('/samples/demo_groove.mid', 'demo_groove.mid');
+    });
+  }
+
   // 範例載入按鈕
   if (btnLoadSampleSty) {
     btnLoadSampleSty.addEventListener('click', () => {
@@ -643,6 +1086,9 @@ function initEvents() {
 
   // 初始化 Yamaha PSR-SX920 原廠音色庫搜尋彈窗
   initVoiceSearchModal();
+
+  // Phase 2.3: 初始化 MIDI 匯入與切片分配精靈彈窗
+  initMidiImportModal();
 
   // Phase 2.2-F: 初始化 Web MIDI 實體琴直連控制
   setupWebMidiControls();
@@ -779,11 +1225,41 @@ async function handleFile(file: File) {
     const buffer = await file.arrayBuffer();
     const bytes = new Uint8Array(buffer);
     const ext = file.name.split('.').pop()?.toUpperCase();
+
+    // Phase 2.3: 偵測到 .mid / .midi 檔案時開啟切片分配精靈
+    if (ext === 'MID' || ext === 'MIDI') {
+      openMidiImportModal(bytes, file.name);
+      return;
+    }
+
     const format: 'STY' | 'PAD' = ext === 'PAD' ? 'PAD' : 'STY';
     renderParsed(bytes, file.name, format);
   } catch (err: any) {
     showStatus(`讀取檔案錯誤: ${err.message}`, true);
     alert(`讀取檔案錯誤: ${err.message}`);
+  }
+}
+
+// Phase 2.3: 載入伺服器端示範 MIDI 檔案
+async function loadSampleMidi(url: string, filename: string) {
+  showStatus(`正在載入示範 MIDI: ${filename}...`);
+  try {
+    let bytes: Uint8Array;
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const buffer = await res.arrayBuffer();
+        bytes = new Uint8Array(buffer);
+      } else {
+        bytes = MidiImporter.createDemoGrooveMidi();
+      }
+    } catch {
+      bytes = MidiImporter.createDemoGrooveMidi();
+    }
+    openMidiImportModal(bytes, filename);
+  } catch (err: any) {
+    showStatus(`無法載入示範 MIDI: ${err.message}`, true);
+    alert(`無法載入示範 MIDI: ${err.message}`);
   }
 }
 

@@ -1171,7 +1171,7 @@ export class YamahaPadModifier {
       if (ev.type === 'meta') {
         writer.writeUint8(0xff);
         writer.writeUint8(ev.metaType ?? 0);
-        const data = ev.metaData ?? new Uint8Array(0);
+        const data = ev.metaData ?? (ev.text !== undefined ? new TextEncoder().encode(ev.text) : new Uint8Array(0));
         writer.writeVarInt(data.length);
         writer.writeBytes(data);
       } else if (ev.type === 'sysex') {
