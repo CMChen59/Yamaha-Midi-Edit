@@ -3,6 +3,7 @@ import { YamahaWriter } from '../core/writer/yamaha-writer';
 import { YamahaPadModifier } from '../core/writer/pad-modifier';
 import { YamahaPadSynthesizer } from '../core/writer/pad-synthesizer';
 import { audioEngine, ticksToSeconds } from '../core/audio/audio-engine';
+import { midiManager, MidiDeviceInfo } from '../core/audio/midi-manager';
 import type { NoteEvent, PlaybackState } from '../core/audio/audio-engine';
 import type { YamahaFileParsed, YamahaSection, MidiTrack } from '../core/models/types';
 import {
@@ -286,6 +287,8 @@ function auditionSingleVoice(voice: YamahaVoice) {
 
   audioEngine.playAuditionNote(pitch, 0.7, {
     instrumentId,
+    msb: voice.msb,
+    lsb: voice.lsb,
     pc: voice.pc,
     isDrum,
   });
@@ -302,6 +305,13 @@ function applyVoiceToPad(padNum: number, voice: YamahaVoice) {
     bankMsb: voice.msb,
     bankLsb: voice.lsb,
     programChange: voice.pc,
+  });
+
+  // 實體琴即時同步原廠音色
+  midiManager.sendVoiceChange(padNum - 1, {
+    msb: voice.msb,
+    lsb: voice.lsb,
+    pc: voice.pc,
   });
 
   // 3. 同步下方表格與卡片輸入框
@@ -633,6 +643,133 @@ function initEvents() {
 
   // 初始化 Yamaha PSR-SX920 原廠音色庫搜尋彈窗
   initVoiceSearchModal();
+
+  // Phase 2.2-F: 初始化 Web MIDI 實體琴直連控制
+  setupWebMidiControls();
+}
+
+/**
+ * Phase 2.2-F: 初始化 Web MIDI 實體琴直連控制與狀態燈號
+ */
+function setupWebMidiControls() {
+  const statusLed = document.getElementById('midi-status-led');
+  const statusText = document.getElementById('midi-status-text');
+  const selectOutput = document.getElementById('select-midi-output') as HTMLSelectElement | null;
+  const btnConnect = document.getElementById('btn-midi-connect');
+  const selectRouting = document.getElementById('select-audio-routing') as HTMLSelectElement | null;
+  const btnTestChime = document.getElementById('btn-midi-test-chime');
+
+  const updateMidiUI = (devices: MidiDeviceInfo[]) => {
+    const selected = midiManager.getSelectedOutput();
+    if (!statusLed || !statusText || !selectOutput || !btnConnect) return;
+
+    if (devices.length === 0 || !selected) {
+      statusLed.style.background = '#94a3b8';
+      statusLed.style.boxShadow = 'none';
+      statusText.textContent = '實體琴: 未連線';
+      selectOutput.style.display = 'none';
+      btnConnect.style.display = 'inline-block';
+      btnConnect.textContent = '連接實體琴';
+    } else {
+      statusLed.style.background = '#22c55e';
+      statusLed.style.boxShadow = '0 0 8px #22c55e';
+      statusText.textContent = '實體琴:';
+      selectOutput.style.display = 'inline-block';
+      btnConnect.textContent = '🔄 重新整理';
+
+      // 填充下拉清單
+      selectOutput.innerHTML = '';
+      for (const d of devices) {
+        const opt = document.createElement('option');
+        opt.value = d.id;
+        opt.textContent = `${d.isRecommended ? '🎹 ' : ''}${d.name}`;
+        if (d.id === selected.id) opt.selected = true;
+        selectOutput.appendChild(opt);
+      }
+    }
+  };
+
+  if (btnConnect) {
+    btnConnect.addEventListener('click', async () => {
+      const res = await midiManager.requestAccess();
+      if (res.success) {
+        updateMidiUI(res.devices);
+        const sel = midiManager.getSelectedOutput();
+        if (sel) {
+          showStatus(`🎹 已成功連線至 Yamaha PSR-SX920: ${sel.name}！已自動啟用琴端發聲。`, false);
+          midiManager.playTestChime();
+        } else {
+          showStatus('已開啟 MIDI 權限，但未偵測到 MIDI 輸出設備。請確認 USB 線已連接電腦與 PSR-SX920。', true);
+        }
+      } else {
+        if (statusLed) statusLed.style.background = '#ef4444';
+        showStatus(`⚠️ MIDI 連線失敗: ${res.error}`, true);
+      }
+    });
+  }
+
+  if (selectOutput) {
+    selectOutput.addEventListener('change', () => {
+      midiManager.selectOutput(selectOutput.value);
+      const sel = midiManager.getSelectedOutput();
+      if (sel) {
+        showStatus(`🎹 已切換 MIDI 輸出埠: ${sel.name}`, false);
+        midiManager.playTestChime();
+      }
+    });
+  }
+
+  if (selectRouting) {
+    selectRouting.addEventListener('change', async () => {
+      const mode = selectRouting.value as 'audio' | 'midi' | 'both';
+      midiManager.setRoutingMode(mode);
+
+      // 若使用者主動切換至實體琴或雙出，且尚未取得 MIDI 權限，主動請求存取
+      if ((mode === 'midi' || mode === 'both') && !midiManager.getSelectedOutput()) {
+        const res = await midiManager.requestAccess();
+        if (res.success) {
+          updateMidiUI(res.devices);
+        }
+      }
+
+      const modeNames = {
+        audio: '🔊 僅電腦喇叭',
+        both: '🔊+🎹 雙出 (電腦+實體琴)',
+        midi: '🎹 僅實體琴 (原廠音源)',
+      };
+      showStatus(`已切換發聲路由為: ${modeNames[mode]}`, false);
+    });
+  }
+
+  if (btnTestChime) {
+    btnTestChime.addEventListener('click', () => {
+      if (!midiManager.getSelectedOutput()) {
+        showStatus('請先點選上方 [連接實體琴] 建立 USB 連線', true);
+        if (btnConnect) btnConnect.click();
+        return;
+      }
+      midiManager.playTestChime();
+      showStatus('🔔 正在向 PSR-SX920 傳送測試音階 (C4-E4-G4-C5)...', false);
+    });
+  }
+
+  // 監聽設備插拔熱插拔事件
+  midiManager.onDeviceChange((devices) => {
+    updateMidiUI(devices);
+    const sel = midiManager.getSelectedOutput();
+    if (sel) {
+      showStatus(`🔌 偵測到 MIDI 設備插拔: 目前使用 [${sel.name}]`, false);
+    }
+  });
+
+  // 如果瀏覽器支援且已有授權，嘗試無感初始化
+  if (midiManager.isSupported()) {
+    midiManager.requestAccess().then((res) => {
+      if (res.success && res.devices.length > 0) {
+        updateMidiUI(res.devices);
+      }
+    }).catch(() => {});
+  }
 }
 
 // 處理本機檔案
@@ -862,7 +999,10 @@ function togglePadAudition(padNum: number) {
       pan,
       reverb,
       instrumentId,
+      msb: currentMsb,
+      lsb: currentLsb,
       pc: currentPc,
+      channel: padNum - 1,
     },
     onProgress: (state: PlaybackState) => {
       const statusBadge = document.getElementById('transport-status-badge');
@@ -1291,6 +1431,9 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection | null 
   currentCanvasPadInstrument = {
     instrumentId: instId,
     pc: currentPc,
+    msb: currentMsb,
+    lsb: currentLsb,
+    channel: padNum - 1,
     isDrum: (currentPc >= 120 || (yVoice && (yVoice.category === 'Drums' || yVoice.category === 'Percussion'))),
   };
 
@@ -1420,7 +1563,14 @@ interface RenderedNoteBox {
 let lastRenderedNoteBoxes: RenderedNoteBox[] = [];
 let hoveredNoteBox: RenderedNoteBox | null = null;
 let selectedNoteBox: RenderedNoteBox | null = null;
-let currentCanvasPadInstrument: { instrumentId?: string; pc?: number; isDrum?: boolean } = {};
+let currentCanvasPadInstrument: {
+  instrumentId?: string;
+  pc?: number;
+  msb?: number;
+  lsb?: number;
+  channel?: number;
+  isDrum?: boolean;
+} = {};
 let isInspectorEventsBound = false;
 let currentCanvasRedraw: (() => void) | null = null;
 let currentCanvasRedrawWithPlayhead: ((relTick: number | null, activeNotes?: number[]) => void) | null = null;
@@ -3755,6 +3905,7 @@ function renderParts(parsed: YamahaFileParsed) {
         const val = parseInt(volRange.value, 10);
         volLabel.textContent = `${val}`;
         YamahaPadModifier.setPadMixing(parsed, padNum, { volume: val });
+        midiManager.sendMixerControllers(padNum - 1, { volume: val });
         markModified(`Pad ${padNum} 音量調整為: ${val}`);
       });
 
@@ -3765,6 +3916,7 @@ function renderParts(parsed: YamahaFileParsed) {
         const val = parseInt(panRange.value, 10);
         panLabel.textContent = formatPan(val);
         YamahaPadModifier.setPadMixing(parsed, padNum, { pan: val });
+        midiManager.sendMixerControllers(padNum - 1, { pan: val });
         markModified(`Pad ${padNum} 聲相調整為: ${formatPan(val)}`);
       });
 
@@ -3775,6 +3927,7 @@ function renderParts(parsed: YamahaFileParsed) {
         const val = parseInt(revRange.value, 10);
         revLabel.textContent = `${val}`;
         YamahaPadModifier.setPadMixing(parsed, padNum, { reverb: val });
+        midiManager.sendMixerControllers(padNum - 1, { reverb: val });
         markModified(`Pad ${padNum} 混響調整為: ${val}`);
       });
 
@@ -3792,6 +3945,9 @@ function renderParts(parsed: YamahaFileParsed) {
           bankLsb: lsb,
           programChange: program,
         });
+
+        // 實體琴即時同步音色
+        midiManager.sendVoiceChange(padNum - 1, { msb, lsb, pc: program });
 
         // 反向同步上方 Pad 卡片的樂器下拉選單
         updatePadCardInstrumentSelect(padNum, msb, lsb, program);

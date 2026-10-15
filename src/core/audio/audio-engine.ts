@@ -3,6 +3,8 @@
  * 提供瀏覽器端即時發聲、多軌合成器、音符排程與走帶監聽
  */
 
+import { midiManager } from './midi-manager';
+
 export interface NoteEvent {
   note: number;
   velocity: number;
@@ -15,7 +17,10 @@ export interface ChannelAudioParams {
   pan?: number;          // 0 ~ 127, 64 is center (CC 10)
   reverb?: number;       // 0 ~ 127 (CC 91)
   instrumentId?: string; // 預設樂器 ID (例如 'grand-piano', 'strings', 'pizzicato')
+  msb?: number;          // Bank MSB (CC 0)
+  lsb?: number;          // Bank LSB (CC 32)
   pc?: number;           // Program Change 0 ~ 127
+  channel?: number;      // MIDI 通道 0 ~ 15
   isDrum?: boolean;      // 是否為打擊樂軌道 (Channel 10)
 }
 
@@ -94,9 +99,7 @@ export class AudioEngine {
   private scheduledNotes: NoteEvent[] = [];
   private activeVoices: Array<{ stop: (time: number) => void }> = [];
 
-  // Web MIDI 支援
-  private midiAccess: any = null;
-  private selectedMidiOutput: any = null;
+
 
   constructor() {
     // 延遲在使用者第一次互動時初始化 Web Audio
@@ -181,14 +184,8 @@ export class AudioEngine {
     }
     this.activeVoices = [];
 
-    // 若有 Web MIDI 輸出，傳送 All Notes Off
-    if (this.selectedMidiOutput) {
-      try {
-        for (let ch = 0; ch < 16; ch++) {
-          this.selectedMidiOutput.send([0xB0 | ch, 123, 0]); // All Notes Off
-        }
-      } catch {}
-    }
+    // 若有 Web MIDI 輸出，傳送防掛音安全信號 (All Sound Off + All Notes Off + Damper Off)
+    midiManager.panicAllChannels();
 
     this.isCurrentlyPlaying = false;
     const oldPad = this.currentPadNum;
@@ -206,20 +203,32 @@ export class AudioEngine {
    */
   public playAuditionNote(note: number = 60, durationSec: number = 0.6, params: ChannelAudioParams = {}) {
     this.init();
-    if (!this.ctx) return;
-    const now = this.ctx.currentTime;
-    this.triggerVoice(note, 100, now, durationSec, params);
+    const ch = params.channel ?? ((this.currentPadNum ?? 1) - 1);
+    const vel = params.volume ?? 100;
 
-    if (this.selectedMidiOutput) {
-      const ch = (this.currentPadNum ?? 1) - 1;
-      try {
-        this.selectedMidiOutput.send([0x90 | ch, note, 100]);
-        setTimeout(() => {
-          try {
-            this.selectedMidiOutput?.send([0x80 | ch, note, 0]);
-          } catch {}
-        }, durationSec * 1000);
-      } catch {}
+    // 1. 若 Web Audio 路由啟用，發動瀏覽器諧波合成
+    if (midiManager.isAudioActive() && this.ctx) {
+      const now = this.ctx.currentTime;
+      this.triggerVoice(note, vel, now, durationSec, params);
+    }
+
+    // 2. 若 Web MIDI 路由啟用，向實體琴發送 Bank Select, PC, Volume, Note-On
+    if (midiManager.isMidiActive()) {
+      if (params.msb !== undefined || params.lsb !== undefined || params.pc !== undefined) {
+        midiManager.sendVoiceChange(ch, {
+          msb: params.msb ?? 0,
+          lsb: params.lsb ?? 0,
+          pc: params.pc ?? 0,
+        });
+      }
+      if (params.volume !== undefined || params.pan !== undefined) {
+        midiManager.sendMixerControllers(ch, { volume: params.volume, pan: params.pan });
+      }
+
+      midiManager.sendNoteOn(ch, note, vel);
+      setTimeout(() => {
+        midiManager.sendNoteOff(ch, note);
+      }, durationSec * 1000);
     }
   }
 
@@ -250,6 +259,25 @@ export class AudioEngine {
     const loopDurationSec = ticksToSeconds(totalTicks, bpm, division);
 
     this.playbackStartTime = this.ctx.currentTime;
+
+    // 若 Web MIDI 啟用，在序列開始前預先發送當前 Pad 的音色 (Bank/PC) 與混音 (CC7/CC10)
+    if (midiManager.isMidiActive()) {
+      const midiCh = options.channelParams?.channel ?? (padNum - 1);
+      const params = options.channelParams || {};
+      if (params.msb !== undefined || params.lsb !== undefined || params.pc !== undefined) {
+        midiManager.sendVoiceChange(midiCh, {
+          msb: params.msb ?? 0,
+          lsb: params.lsb ?? 0,
+          pc: params.pc ?? 0,
+        });
+      }
+      midiManager.sendMixerControllers(midiCh, {
+        volume: params.volume ?? 100,
+        pan: params.pan ?? 64,
+        reverb: params.reverb ?? 40,
+      });
+    }
+
     this.schedulePass(0, loopDurationSec);
 
     // 啟動走帶動畫迴圈
@@ -280,26 +308,25 @@ export class AudioEngine {
       const noteStartTime = passStartTime + noteOffsetSec;
       const noteStopTime = noteStartTime + noteDurSec;
 
-      // 觸發音符發聲
-      this.triggerVoice(n.note, n.velocity, noteStartTime, noteDurSec, params);
+      // 若 Web Audio 路由開啟：觸發音符發聲
+      if (midiManager.isAudioActive()) {
+        this.triggerVoice(n.note, n.velocity, noteStartTime, noteDurSec, params);
+      }
 
-      // Web MIDI 同步轉發
-      if (this.selectedMidiOutput) {
-        const midiCh = (this.currentPadNum ?? 1) - 1;
+      // 若 Web MIDI 路由開啟：轉發至實體琴
+      if (midiManager.isMidiActive()) {
+        const midiCh = params.channel ?? ((this.currentPadNum ?? 1) - 1);
         const now = this.ctx.currentTime;
         const delayMs = Math.max(0, (noteStartTime - now) * 1000);
+        const stopDelayMs = Math.max(0, (noteStopTime - now) * 1000);
+
         setTimeout(() => {
           if (!this.isCurrentlyPlaying) return;
-          try {
-            this.selectedMidiOutput.send([0x90 | midiCh, n.note, n.velocity]);
-          } catch {}
+          midiManager.sendNoteOn(midiCh, n.note, n.velocity);
         }, delayMs);
 
-        const stopDelayMs = Math.max(0, (noteStopTime - now) * 1000);
         setTimeout(() => {
-          try {
-            this.selectedMidiOutput.send([0x80 | midiCh, n.note, 0]);
-          } catch {}
+          midiManager.sendNoteOff(midiCh, n.note);
         }, stopDelayMs);
       }
     }
@@ -709,33 +736,19 @@ export class AudioEngine {
     this.animFrameId = requestAnimationFrame(updateLoop);
   }
 
-  // --- Web MIDI 支援 ---
+  // --- Web MIDI 支援 (委託至 midiManager) ---
 
-  public async requestMidiAccess(): Promise<string[]> {
-    if (typeof navigator === 'undefined' || !(navigator as any).requestMIDIAccess) {
-      return [];
-    }
-    try {
-      this.midiAccess = await (navigator as any).requestMIDIAccess();
-      const outputNames: string[] = [];
-      for (const entry of this.midiAccess.outputs.values()) {
-        outputNames.push(entry.name || 'MIDI Output');
-      }
-      return outputNames;
-    } catch {
-      return [];
-    }
+  public getMidiManager() {
+    return midiManager;
   }
 
-  public selectMidiOutput(name: string) {
-    if (!this.midiAccess) return;
-    for (const entry of this.midiAccess.outputs.values()) {
-      if (entry.name === name) {
-        this.selectedMidiOutput = entry;
-        return;
-      }
-    }
-    this.selectedMidiOutput = null;
+  public async requestMidiAccess(): Promise<string[]> {
+    const res = await midiManager.requestAccess();
+    return res.devices.map(d => d.name);
+  }
+
+  public selectMidiOutput(nameOrId: string) {
+    midiManager.selectOutput(nameOrId);
   }
 }
 
