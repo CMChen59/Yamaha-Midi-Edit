@@ -268,26 +268,43 @@ body {
 
 .pad-header {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 5px;
   margin-bottom: 8px;
 }
 
+.pad-header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+}
+
+.pad-badge-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .pad-number-badge {
-  font-size: 1.15rem;
-  font-weight: 700;
-  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 1px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+  line-height: 1.3;
+  white-space: nowrap;
 }
 
 .pad-raw-tag {
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   font-weight: 600;
   background-color: rgba(51, 65, 85, 0.75);
   border: 1px solid rgba(148, 163, 184, 0.25);
-  color: #e2e8f0;
-  padding: 3px 8px;
-  border-radius: 5px;
+  color: #cbd5e1;
+  padding: 1px 6px;
+  border-radius: 4px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   white-space: nowrap;
   flex-shrink: 0;
@@ -414,13 +431,15 @@ body {
   font-size: 1.05rem;
   font-weight: 700;
   border-radius: 4px;
-  padding: 2px 4px;
-  flex: 1 1 auto;
-  min-width: 60px;
-  max-width: 130px;
-  width: auto;
+  padding: 3px 6px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   outline: none;
   transition: all 0.2s ease;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .pad-name-input:hover, .pad-name-input:focus {

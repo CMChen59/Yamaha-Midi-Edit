@@ -1602,13 +1602,24 @@ function renderSections(parsed: YamahaFileParsed) {
         }
       }
 
+      const padThemes = [
+        { text: '#60a5fa', bg: 'rgba(59, 130, 246, 0.18)', border: 'rgba(59, 130, 246, 0.4)' },
+        { text: '#34d399', bg: 'rgba(16, 185, 129, 0.18)', border: 'rgba(16, 185, 129, 0.4)' },
+        { text: '#fbbf24', bg: 'rgba(245, 158, 11, 0.18)', border: 'rgba(245, 158, 11, 0.4)' },
+        { text: '#f472b6', bg: 'rgba(236, 72, 153, 0.18)', border: 'rgba(236, 72, 153, 0.4)' },
+      ];
+      const curTheme = padThemes[padIdx] || padThemes[0];
+
       item.innerHTML = `
         <div class="pad-header">
-          <input type="text" class="pad-name-input" value="${customName}" title="點擊修改名稱" />
-          <div style="display: flex; align-items: center; gap: 6px;">
+          <div class="pad-header-top">
+            <div class="pad-badge-group">
+              <span class="pad-number-badge" style="color: ${curTheme.text}; background: ${curTheme.bg}; border: 1px solid ${curTheme.border};">PAD ${padNum}</span>
+              <span class="pad-raw-tag" title="Yamaha 底層段落標記: ${sec ? sec.name : 'Track ' + padNum}">${sec ? sec.name : 'Track ' + padNum}</span>
+            </div>
             <button type="button" class="btn-audition btn-audition-${padNum}" data-pad="${padNum}" title="點擊試聽此打擊墊旋律">▶ 試聽</button>
-            <span class="pad-raw-tag" title="Yamaha 底層段落標記: ${sec ? sec.name : 'Track ' + padNum}">${sec ? sec.name : 'Track ' + padNum}</span>
           </div>
+          <input type="text" class="pad-name-input" value="${escapeHtml(customName)}" title="點擊修改名稱 (Enter 儲存)" />
         </div>
         <div class="pad-body">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; gap: 6px;">
@@ -1651,6 +1662,10 @@ function renderSections(parsed: YamahaFileParsed) {
       // 1. 名稱編輯事件
       const nameInput = item.querySelector('.pad-name-input') as HTMLInputElement;
       nameInput.addEventListener('click', (e) => e.stopPropagation());
+      nameInput.addEventListener('focus', () => nameInput.select());
+      nameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') nameInput.blur();
+      });
       nameInput.addEventListener('change', () => {
         YamahaPadModifier.setPadName(parsed, padNum, nameInput.value);
         markModified(`已更新 Pad ${padNum} 名稱為: ${nameInput.value}`);
