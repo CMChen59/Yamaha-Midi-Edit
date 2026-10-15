@@ -43,6 +43,7 @@ export class MidiManager {
   private routingMode: AudioRoutingMode = 'audio';
   private stateChangeListeners: Array<(devices: MidiDeviceInfo[]) => void> = [];
   private isRequesting = false;
+  private activeNotes: Set<string> = new Set(); // 格式: `${channel}:${note}`
 
   /**
    * 檢查瀏覽器是否支援 Web MIDI API
@@ -242,6 +243,7 @@ export class MidiManager {
     const ch = Math.max(0, Math.min(15, channel));
     const n = Math.max(0, Math.min(127, Math.round(note)));
     const v = Math.max(1, Math.min(127, Math.round(velocity)));
+    this.activeNotes.add(`${ch}:${n}`);
     return this.send([0x90 | ch, n, v], timestamp);
   }
 
@@ -251,6 +253,7 @@ export class MidiManager {
   public sendNoteOff(channel: number, note: number, timestamp?: number): boolean {
     const ch = Math.max(0, Math.min(15, channel));
     const n = Math.max(0, Math.min(127, Math.round(note)));
+    this.activeNotes.delete(`${ch}:${n}`);
     return this.send([0x80 | ch, n, 0], timestamp);
   }
 
@@ -259,6 +262,15 @@ export class MidiManager {
    */
   public panicAllChannels(): boolean {
     if (!this.selectedOutput) return false;
+
+    // 1. 先對所有主動追蹤中正在發聲的音符逐一發送實體 Note-Off，確保硬體琴音符立刻熄滅
+    for (const key of this.activeNotes) {
+      const [ch, n] = key.split(':').map(Number);
+      this.send([0x80 | ch, n, 0]);
+    }
+    this.activeNotes.clear();
+
+    // 2. 對全部 16 個通道廣播 All Sound Off (CC120), All Notes Off (CC123), Damper Off (CC64)
     for (let ch = 0; ch < 16; ch++) {
       this.send([0xB0 | ch, 120, 0]); // CC 120: All Sound Off (立即切斷發聲)
       this.send([0xB0 | ch, 123, 0]); // CC 123: All Notes Off

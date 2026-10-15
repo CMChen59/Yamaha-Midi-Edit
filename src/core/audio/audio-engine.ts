@@ -99,7 +99,25 @@ export class AudioEngine {
   private scheduledNotes: NoteEvent[] = [];
   private activeVoices: Array<{ stop: (time: number) => void }> = [];
 
+  // 防聲音重疊與排程隔離機制
+  private playbackSessionId = 0;
+  private scheduledTimerIds: any[] = [];
+  private currentPadGain: GainNode | null = null;
+  private activeOscillators: Array<OscillatorNode | AudioBufferSourceNode> = [];
 
+  private createOscillator(): OscillatorNode {
+    if (!this.ctx) throw new Error('AudioContext not initialized');
+    const osc = this.ctx.createOscillator();
+    this.activeOscillators.push(osc);
+    return osc;
+  }
+
+  private createBufferSource(): AudioBufferSourceNode {
+    if (!this.ctx) throw new Error('AudioContext not initialized');
+    const src = this.ctx.createBufferSource();
+    this.activeOscillators.push(src);
+    return src;
+  }
 
   constructor() {
     // 延遲在使用者第一次互動時初始化 Web Audio
@@ -169,22 +187,60 @@ export class AudioEngine {
    * 停止當前所有發聲與走帶
    */
   public stop() {
+    // 1. 作廢當前播放 Session Token，使所有尚未執行的非同步計時器即刻失效
+    this.playbackSessionId++;
+
+    // 2. 清除所有掛載中的 JavaScript 延遲排程 (Note-On / Note-Off)
+    for (const tid of this.scheduledTimerIds) {
+      clearTimeout(tid);
+    }
+    this.scheduledTimerIds = [];
+
+    // 3. 取消走帶動畫
     if (this.animFrameId !== null && typeof cancelAnimationFrame !== 'undefined') {
       cancelAnimationFrame(this.animFrameId);
       this.animFrameId = null;
     }
 
+    // 4. Web Audio 節點深度清理與子匯流排切斷
     if (this.ctx) {
       const now = this.ctx.currentTime;
+
+      // 4.1 立即切斷並淡出 Pad 子匯流排，徹底消音並斷開連接
+      if (this.currentPadGain) {
+        try {
+          this.currentPadGain.gain.cancelScheduledValues(now);
+          this.currentPadGain.gain.setValueAtTime(this.currentPadGain.gain.value, now);
+          this.currentPadGain.gain.linearRampToValueAtTime(0, now + 0.01);
+          const oldPadGain = this.currentPadGain;
+          setTimeout(() => {
+            try { oldPadGain.disconnect(); } catch {}
+          }, 25);
+        } catch {}
+        this.currentPadGain = null;
+      }
+
+      // 4.2 停止並斷開所有記錄中的震盪器與音源緩衝
+      for (const osc of this.activeOscillators) {
+        try {
+          (osc as any).stop(now);
+        } catch {}
+        try {
+          osc.disconnect();
+        } catch {}
+      }
+      this.activeOscillators = [];
+
+      // 4.3 執行所有聲音通道的自定義 stop
       for (const voice of this.activeVoices) {
         try {
           voice.stop(now);
         } catch {}
       }
+      this.activeVoices = [];
     }
-    this.activeVoices = [];
 
-    // 若有 Web MIDI 輸出，傳送防掛音安全信號 (All Sound Off + All Notes Off + Damper Off)
+    // 5. 若 Web MIDI 輸出啟用，對實體琴進行 Panic (熄滅正在發聲的音符 + 全通道斷音)
     midiManager.panicAllChannels();
 
     this.isCurrentlyPlaying = false;
@@ -226,9 +282,10 @@ export class AudioEngine {
       }
 
       midiManager.sendNoteOn(ch, note, vel);
-      setTimeout(() => {
+      const onTimer = setTimeout(() => {
         midiManager.sendNoteOff(ch, note);
       }, durationSec * 1000);
+      this.scheduledTimerIds.push(onTimer);
     }
   }
 
@@ -248,10 +305,18 @@ export class AudioEngine {
       this.ctx.resume();
     }
 
+    const sessionId = ++this.playbackSessionId;
     this.isCurrentlyPlaying = true;
     this.currentPadNum = padNum;
     this.playbackOptions = options;
     this.scheduledNotes = notes;
+
+    // 建立本次 Pad 專屬的子匯流排 (Pad Sub-bus Gain)，所有聲音走此節點匯入主混音
+    if (this.masterGain && this.ctx) {
+      this.currentPadGain = this.ctx.createGain();
+      this.currentPadGain.gain.setValueAtTime(1.0, this.ctx.currentTime);
+      this.currentPadGain.connect(this.masterGain);
+    }
 
     const bpm = options.bpm || 120;
     const division = options.division || 96;
@@ -278,17 +343,17 @@ export class AudioEngine {
       });
     }
 
-    this.schedulePass(0, loopDurationSec);
+    this.schedulePass(0, loopDurationSec, sessionId);
 
     // 啟動走帶動畫迴圈
-    this.startAnimationLoop();
+    this.startAnimationLoop(sessionId);
   }
 
   /**
    * 排程一個循環週期的所有音符
    */
-  private schedulePass(cycleIndex: number, loopDurationSec: number) {
-    if (!this.ctx || !this.playbackOptions) return;
+  private schedulePass(cycleIndex: number, loopDurationSec: number, sessionId: number) {
+    if (!this.ctx || !this.playbackOptions || this.playbackSessionId !== sessionId || !this.isCurrentlyPlaying) return;
 
     const bpm = this.playbackOptions.bpm;
     const division = this.playbackOptions.division;
@@ -299,6 +364,8 @@ export class AudioEngine {
     const passStartTime = this.playbackStartTime + cycleIndex * loopDurationSec;
 
     for (const n of this.scheduledNotes) {
+      if (this.playbackSessionId !== sessionId || !this.isCurrentlyPlaying) return;
+
       const relTick = n.startTick - gridStartTick;
       if (relTick < 0 || relTick >= totalTicks) continue;
 
@@ -320,14 +387,17 @@ export class AudioEngine {
         const delayMs = Math.max(0, (noteStartTime - now) * 1000);
         const stopDelayMs = Math.max(0, (noteStopTime - now) * 1000);
 
-        setTimeout(() => {
-          if (!this.isCurrentlyPlaying) return;
+        const onTimer = setTimeout(() => {
+          if (this.playbackSessionId !== sessionId || !this.isCurrentlyPlaying) return;
           midiManager.sendNoteOn(midiCh, n.note, n.velocity);
         }, delayMs);
+        this.scheduledTimerIds.push(onTimer);
 
-        setTimeout(() => {
+        const offTimer = setTimeout(() => {
+          if (this.playbackSessionId !== sessionId) return;
           midiManager.sendNoteOff(midiCh, n.note);
         }, stopDelayMs);
+        this.scheduledTimerIds.push(offTimer);
       }
     }
   }
@@ -351,7 +421,8 @@ export class AudioEngine {
     const inst = params.instrumentId || 'grand-piano';
     const isDrum = params.isDrum || (params.pc !== undefined && params.pc >= 120);
 
-    // 建立軌道聲道架構 (Gain -> Panner -> Master)
+    // 建立軌道聲道架構 (Gain -> Panner -> Sub-bus / Master)
+    const targetBus = this.currentPadGain || this.masterGain;
     const channelGain = ctx.createGain();
     channelGain.gain.setValueAtTime(gainFactor, startTime);
 
@@ -360,7 +431,7 @@ export class AudioEngine {
       const panner = ctx.createStereoPanner();
       panner.pan.setValueAtTime(Math.max(-1, Math.min(1, panVal)), startTime);
       channelGain.connect(panner);
-      panner.connect(this.masterGain);
+      panner.connect(targetBus);
       if (this.convolver && (params.reverb ?? 40) > 0) {
         const revSend = ctx.createGain();
         revSend.gain.setValueAtTime(((params.reverb ?? 40) / 127) * 0.5, startTime);
@@ -368,7 +439,7 @@ export class AudioEngine {
         revSend.connect(this.convolver);
       }
     } else {
-      channelGain.connect(this.masterGain);
+      channelGain.connect(targetBus);
     }
 
     const freq = midiToFreq(note);
@@ -395,8 +466,8 @@ export class AudioEngine {
       stop: (t: number) => {
         try {
           channelGain.gain.cancelScheduledValues(t);
-          channelGain.gain.setValueAtTime(channelGain.gain.value, t);
-          channelGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+          channelGain.gain.setValueAtTime(0, t);
+          channelGain.disconnect();
         } catch {}
       }
     });
@@ -407,8 +478,8 @@ export class AudioEngine {
   /** 鋼琴：雙諧波 (正弦基頻 + 三角泛音) 與指數衰減 */
   private synthesizePiano(freq: number, start: number, dur: number, target: AudioNode) {
     if (!this.ctx) return;
-    const osc1 = this.ctx.createOscillator();
-    const osc2 = this.ctx.createOscillator();
+    const osc1 = this.createOscillator();
+    const osc2 = this.createOscillator();
     const env = this.ctx.createGain();
 
     osc1.type = 'triangle';
@@ -436,8 +507,8 @@ export class AudioEngine {
   /** 弦樂：平滑 Attack、鋸齒波疊合低通濾波 */
   private synthesizeStrings(freq: number, start: number, dur: number, target: AudioNode) {
     if (!this.ctx) return;
-    const osc1 = this.ctx.createOscillator();
-    const osc2 = this.ctx.createOscillator();
+    const osc1 = this.createOscillator();
+    const osc2 = this.createOscillator();
     const filter = this.ctx.createBiquadFilter();
     const env = this.ctx.createGain();
 
@@ -469,7 +540,7 @@ export class AudioEngine {
   /** 撥弦 (Pizzicato)：極短 Pluck 擊發與快速休止 */
   private synthesizePizzicato(freq: number, start: number, dur: number, target: AudioNode) {
     if (!this.ctx) return;
-    const osc = this.ctx.createOscillator();
+    const osc = this.createOscillator();
     const env = this.ctx.createGain();
 
     osc.type = 'triangle';
@@ -490,7 +561,7 @@ export class AudioEngine {
   /** 吉他：撥弦三角波 + 微量亮部諧波 */
   private synthesizeGuitar(freq: number, start: number, dur: number, target: AudioNode) {
     if (!this.ctx) return;
-    const osc = this.ctx.createOscillator();
+    const osc = this.createOscillator();
     const filter = this.ctx.createBiquadFilter();
     const env = this.ctx.createGain();
 
@@ -517,7 +588,7 @@ export class AudioEngine {
   /** 貝斯：低頻 Sine/Triangle 重低音 */
   private synthesizeBass(freq: number, start: number, dur: number, target: AudioNode) {
     if (!this.ctx) return;
-    const osc = this.ctx.createOscillator();
+    const osc = this.createOscillator();
     const env = this.ctx.createGain();
 
     osc.type = 'triangle';
@@ -538,7 +609,7 @@ export class AudioEngine {
   /** 銅管/薩克斯風：方波與鋸齒諧波、動態開展濾波器 */
   private synthesizeBrass(freq: number, start: number, dur: number, target: AudioNode) {
     if (!this.ctx) return;
-    const osc = this.ctx.createOscillator();
+    const osc = this.createOscillator();
     const filter = this.ctx.createBiquadFilter();
     const env = this.ctx.createGain();
 
@@ -566,7 +637,7 @@ export class AudioEngine {
   /** 長笛/木管：純淨正弦波 + 輕微呼吸氣音 */
   private synthesizeFlute(freq: number, start: number, dur: number, target: AudioNode) {
     if (!this.ctx) return;
-    const osc = this.ctx.createOscillator();
+    const osc = this.createOscillator();
     const env = this.ctx.createGain();
 
     osc.type = 'sine';
@@ -591,7 +662,7 @@ export class AudioEngine {
 
     if (note === 35 || note === 36) {
       // 大鼓 (Bass Drum / Kick)
-      const osc = this.ctx.createOscillator();
+      const osc = this.createOscillator();
       const env = this.ctx.createGain();
       osc.frequency.setValueAtTime(130, start);
       osc.frequency.exponentialRampToValueAtTime(35, start + 0.09);
@@ -605,7 +676,7 @@ export class AudioEngine {
       osc.stop(start + 0.25);
     } else if (note === 38 || note === 40) {
       // 小鼓 (Snare)
-      const osc = this.ctx.createOscillator();
+      const osc = this.createOscillator();
       const oscEnv = this.ctx.createGain();
       osc.type = 'triangle';
       osc.frequency.setValueAtTime(180, start);
@@ -625,7 +696,7 @@ export class AudioEngine {
       this.playNoise(start, dur, 7000, target);
     } else {
       // 通鼓或其它金屬樂器
-      const osc = this.ctx.createOscillator();
+      const osc = this.createOscillator();
       const env = this.ctx.createGain();
       osc.type = 'sine';
       osc.frequency.setValueAtTime(midiToFreq(note), start);
@@ -649,7 +720,7 @@ export class AudioEngine {
       data[i] = Math.random() * 2 - 1;
     }
 
-    const noise = this.ctx.createBufferSource();
+    const noise = this.createBufferSource();
     noise.buffer = buffer;
 
     const filter = this.ctx.createBiquadFilter();
@@ -671,11 +742,11 @@ export class AudioEngine {
   /**
    * 走帶動畫與 Tick 追蹤
    */
-  private startAnimationLoop() {
+  private startAnimationLoop(sessionId: number) {
     let lastScheduledCycle = 0;
 
     const updateLoop = () => {
-      if (!this.isCurrentlyPlaying || !this.ctx || !this.playbackOptions) return;
+      if (this.playbackSessionId !== sessionId || !this.isCurrentlyPlaying || !this.ctx || !this.playbackOptions) return;
 
       const bpm = this.playbackOptions.bpm;
       const division = this.playbackOptions.division;
@@ -697,7 +768,7 @@ export class AudioEngine {
       // 如果有開循環，且即將邁入下一個循環，提前排程下一個週期的音符
       if (this.playbackOptions.loop && currentCycle > lastScheduledCycle) {
         lastScheduledCycle = currentCycle;
-        this.schedulePass(currentCycle, loopDurationSec);
+        this.schedulePass(currentCycle, loopDurationSec, sessionId);
       }
 
       const cycleElapsedSec = elapsedSec % loopDurationSec;
@@ -730,7 +801,9 @@ export class AudioEngine {
         });
       }
 
-      this.animFrameId = requestAnimationFrame(updateLoop);
+      if (this.playbackSessionId === sessionId && this.isCurrentlyPlaying) {
+        this.animFrameId = requestAnimationFrame(updateLoop);
+      }
     };
 
     this.animFrameId = requestAnimationFrame(updateLoop);

@@ -40,6 +40,8 @@ body {
   padding-bottom: 20px;
   border-bottom: 1px solid var(--border-color);
   margin-bottom: 24px;
+  flex-wrap: wrap;
+  gap: 14px;
 }
 
 .logo h1 {
@@ -67,7 +69,9 @@ body {
 
 .header-actions {
   display: flex;
-  gap: 10px;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 /* Buttons */

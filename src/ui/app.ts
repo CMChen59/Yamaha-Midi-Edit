@@ -1102,6 +1102,7 @@ function setupWebMidiControls() {
   const statusText = document.getElementById('midi-status-text');
   const selectOutput = document.getElementById('select-midi-output') as HTMLSelectElement | null;
   const btnConnect = document.getElementById('btn-midi-connect');
+  const btnHeaderTestChime = document.getElementById('btn-header-test-chime');
   const selectRouting = document.getElementById('select-audio-routing') as HTMLSelectElement | null;
   const btnTestChime = document.getElementById('btn-midi-test-chime');
 
@@ -1116,12 +1117,14 @@ function setupWebMidiControls() {
       selectOutput.style.display = 'none';
       btnConnect.style.display = 'inline-block';
       btnConnect.textContent = '連接實體琴';
+      if (btnHeaderTestChime) btnHeaderTestChime.style.display = 'none';
     } else {
       statusLed.style.background = '#22c55e';
       statusLed.style.boxShadow = '0 0 8px #22c55e';
       statusText.textContent = '實體琴:';
       selectOutput.style.display = 'inline-block';
       btnConnect.textContent = '🔄 重新整理';
+      if (btnHeaderTestChime) btnHeaderTestChime.style.display = 'inline-block';
 
       // 填充下拉清單
       selectOutput.innerHTML = '';
@@ -1187,16 +1190,22 @@ function setupWebMidiControls() {
     });
   }
 
+  const triggerTestChime = () => {
+    if (!midiManager.getSelectedOutput()) {
+      showStatus('請先點選上方 [連接實體琴] 建立 USB 連線', true);
+      if (btnConnect) btnConnect.click();
+      return;
+    }
+    midiManager.playTestChime();
+    showStatus('🔔 正在向 PSR-SX920 傳送測試音階 (C4-E4-G4-C5)...', false);
+  };
+
+  if (btnHeaderTestChime) {
+    btnHeaderTestChime.addEventListener('click', triggerTestChime);
+  }
+
   if (btnTestChime) {
-    btnTestChime.addEventListener('click', () => {
-      if (!midiManager.getSelectedOutput()) {
-        showStatus('請先點選上方 [連接實體琴] 建立 USB 連線', true);
-        if (btnConnect) btnConnect.click();
-        return;
-      }
-      midiManager.playTestChime();
-      showStatus('🔔 正在向 PSR-SX920 傳送測試音階 (C4-E4-G4-C5)...', false);
-    });
+    btnTestChime.addEventListener('click', triggerTestChime);
   }
 
   // 監聽設備插拔熱插拔事件

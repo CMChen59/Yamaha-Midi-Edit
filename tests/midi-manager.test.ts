@@ -132,6 +132,24 @@ describe('Phase 2.2-F: Web MIDI 實體琴硬體直連與發聲 (MidiManager Veri
     expect(ch9Msgs.some(m => (m.data as number[])[1] === 123)).toBe(true);
   });
 
+  it('當有音符正在發聲時，panicAllChannels 會優先對該音符發送實體 Note-Off 再廣播斷音信號', async () => {
+    await midiManager.requestAccess();
+    sentMessages = [];
+
+    // 觸發 Channel 1 的兩個音符
+    midiManager.sendNoteOn(0, 60, 100);
+    midiManager.sendNoteOn(0, 64, 100);
+    expect(sentMessages.length).toBe(2);
+
+    sentMessages = [];
+    midiManager.panicAllChannels();
+
+    // 應該先有 2 筆 Note-Off (0x80)，再加上 48 筆 CC 控制訊息 = 50 筆
+    expect(sentMessages.length).toBe(50);
+    expect(sentMessages[0].data).toEqual([0x80, 60, 0]);
+    expect(sentMessages[1].data).toEqual([0x80, 64, 0]);
+  });
+
   it('能正確切換音訊路由模式 (AudioRoutingMode)', async () => {
     await midiManager.requestAccess();
 
