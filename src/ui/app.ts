@@ -2751,6 +2751,7 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
       resizingStartDuration = edgeHit.durationTick;
       currentResizingDuration = edgeHit.durationTick;
       isResizingNote = false;
+      selectedRulerBar = null;
       selectNote(edgeHit);
       e.preventDefault();
     } else if (bodyHit) {
@@ -2761,12 +2762,14 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
       movingStartTick = bodyHit.startTick;
       currentMovingStartTick = bodyHit.startTick;
       isMovingNote = false;
+      selectedRulerBar = null;
       selectNote(bodyHit);
       e.preventDefault();
     } else {
       potentialResizeTarget = null;
       potentialMoveTarget = null;
       deselectNote();
+      selectedRulerBar = null;
     }
   });
 
@@ -2990,16 +2993,8 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
         delSelect.value = String(clickedBar);
       }
 
-      // 嘗試選取該小節的第一顆音符 (若有)
-      const ticksPerBar = currentTicksPerBeat * currentBeatsPerBar;
-      const barStartTick = currentGridStartTick + (clickedBar - 1) * ticksPerBar;
-      const barEndTick = barStartTick + ticksPerBar;
-      const firstBoxInBar = lastRenderedNoteBoxes.find(b => b.startTick >= barStartTick && b.startTick < barEndTick);
-      if (firstBoxInBar) {
-        selectNote(firstBoxInBar);
-      } else {
-        deselectNote();
-      }
+      // 點選小節尺規專注於小節整體操作（複製/剪除/清空），取消單音選取並保持靜音
+      deselectNote();
 
       if (currentCanvasRedraw) currentCanvasRedraw();
 
