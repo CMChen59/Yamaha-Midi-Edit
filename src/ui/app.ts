@@ -158,9 +158,14 @@ function initVoiceSearchModal() {
   if (btnClose) btnClose.addEventListener('click', handleClose);
   if (btnCloseFooter) btnCloseFooter.addEventListener('click', handleClose);
 
-  // 點選遮罩背景關閉
+  // 點選遮罩背景關閉 (避免拖曳選取文字時誤觸發關閉)
+  let isVoiceBackdown = false;
+  modal.addEventListener('mousedown', (e) => {
+    isVoiceBackdown = (e.target === modal);
+  });
   modal.addEventListener('click', (e) => {
-    if (e.target === modal) closeVoiceModal();
+    if (isVoiceBackdown && e.target === modal) closeVoiceModal();
+    isVoiceBackdown = false;
   });
 
   // 按下 ESC 鍵關閉
@@ -239,7 +244,12 @@ function openNewPadModal() {
   if (modal) {
     modal.style.display = 'flex';
     const nameInput = document.getElementById('new-pad-name') as HTMLInputElement | null;
-    if (nameInput) setTimeout(() => nameInput.focus(), 60);
+    if (nameInput) {
+      setTimeout(() => {
+        nameInput.focus();
+        nameInput.select();
+      }, 60);
+    }
   }
 }
 
@@ -456,10 +466,44 @@ function initEvents() {
 
   const newPadModal = document.getElementById('new-pad-modal');
   if (newPadModal) {
-    newPadModal.addEventListener('click', (e) => {
-      if (e.target === newPadModal) closeNewPadModal();
-    });
+    // 阻止彈窗本體 (modal-dialog) 事件冒泡
+    const dialog = newPadModal.querySelector('.modal-dialog');
+    if (dialog) {
+      dialog.addEventListener('click', (e) => e.stopPropagation());
+      dialog.addEventListener('mousedown', (e) => e.stopPropagation());
+    }
   }
+
+  // BPM 與專案名稱輸入框：焦點自動全選 (點選即全選，免手動塗抹拖曳) + Enter 鍵直接建立專案
+  const newPadNameInput = document.getElementById('new-pad-name') as HTMLInputElement | null;
+  const newPadBpmInput = document.getElementById('new-pad-bpm') as HTMLInputElement | null;
+
+  const handleEnterConfirmNewPad = (e: KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const btnConfirm = document.getElementById('btn-confirm-new-pad');
+      if (btnConfirm) btnConfirm.click();
+    }
+  };
+
+  if (newPadNameInput) {
+    newPadNameInput.addEventListener('focus', () => newPadNameInput.select());
+    newPadNameInput.addEventListener('keydown', handleEnterConfirmNewPad);
+  }
+
+  if (newPadBpmInput) {
+    newPadBpmInput.addEventListener('focus', () => newPadBpmInput.select());
+    newPadBpmInput.addEventListener('keydown', handleEnterConfirmNewPad);
+  }
+
+  // 鍵盤 Escape 鍵支援關閉建立視窗
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (newPadModal && newPadModal.style.display !== 'none') {
+        closeNewPadModal();
+      }
+    }
+  });
 
   const btnConfirmNewPad = document.getElementById('btn-confirm-new-pad');
   if (btnConfirmNewPad) {

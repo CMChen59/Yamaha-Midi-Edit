@@ -321,18 +321,18 @@
       <div style="padding: 16px 20px; display: flex; flex-direction: column; gap: 16px;">
         <!-- 專案名稱 -->
         <div style="display: flex; flex-direction: column; gap: 6px;">
-          <label style="font-size: 0.85rem; font-weight: 600; color: #e2e8f0;">專案名稱 (Project Name)：</label>
+          <label for="new-pad-name" style="font-size: 0.85rem; font-weight: 600; color: #e2e8f0; cursor: pointer;">專案名稱 (Project Name)：</label>
           <input type="text" id="new-pad-name" value="New Multi Pad" placeholder="請輸入專案名稱..." style="background: #16181f; border: 1px solid #333846; border-radius: 6px; color: #fff; padding: 8px 12px; font-size: 0.9rem;" />
         </div>
 
         <!-- 速度、拍號與小節長度網格 -->
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
           <div style="display: flex; flex-direction: column; gap: 6px;">
-            <label style="font-size: 0.82rem; font-weight: 600; color: #cbd5e1;">預設速度 (BPM)：</label>
+            <label for="new-pad-bpm" style="font-size: 0.82rem; font-weight: 600; color: #cbd5e1; cursor: pointer;">預設速度 (BPM)：</label>
             <input type="number" id="new-pad-bpm" min="40" max="260" value="120" style="background: #16181f; border: 1px solid #333846; border-radius: 6px; color: #fff; padding: 6px 10px; font-size: 0.85rem;" />
           </div>
           <div style="display: flex; flex-direction: column; gap: 6px;">
-            <label style="font-size: 0.82rem; font-weight: 600; color: #cbd5e1;">拍號 (Time Sig)：</label>
+            <label for="new-pad-timesig" style="font-size: 0.82rem; font-weight: 600; color: #cbd5e1; cursor: pointer;">拍號 (Time Sig)：</label>
             <select id="new-pad-timesig" style="background: #16181f; border: 1px solid #333846; border-radius: 6px; color: #fff; padding: 6px 10px; font-size: 0.85rem;">
               <option value="4/4" selected>4/4 拍 (標準流行/舞曲)</option>
               <option value="3/4">3/4 拍 (華爾滋/三拍子)</option>
@@ -341,7 +341,7 @@
             </select>
           </div>
           <div style="display: flex; flex-direction: column; gap: 6px;">
-            <label style="font-size: 0.82rem; font-weight: 600; color: #cbd5e1;">初始長度：</label>
+            <label for="new-pad-bars" style="font-size: 0.82rem; font-weight: 600; color: #cbd5e1; cursor: pointer;">初始長度：</label>
             <select id="new-pad-bars" style="background: #16181f; border: 1px solid #333846; border-radius: 6px; color: #fff; padding: 6px 10px; font-size: 0.85rem;">
               <option value="1">1 小節</option>
               <option value="2">2 小節</option>
