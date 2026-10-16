@@ -5,9 +5,11 @@
 > 1. 🎉 **Phase 1.5 實琴驗收 100% 通過！**（PSR-SX920 實機二進位解析與重構完全相容）  
 > 2. 🎉 **Phase 2.3 外部標準 MIDI 匯入與切片分配精靈全面完工！**  
 > 3. 🎉 **Phase 2.7 琴端手彈即時錄音 (Mode A)、單步步進 (Mode B)、音色嗅探自動綁定 (Direction B) 與畫布手彈步進直刻 100% 完工！**  
-> 4. 📌 **正式將【Phase 2.8：Multi Pad 進階工作站級增強】與【Phase 3.0：MIDI 轉 Yamaha Style 伴奏風格】納入正式執行計畫！**  
+> 4. 🎉 **Phase 2.8 Multi Pad 進階工作站級增強 (疊錄伴奏監聽 + Swing 搖擺量化 + 八度移調 + Chorus CC93 混音) 100% 完工！**  
+> 5. 🎉 **Phase 2.5 PSR-SX920 實體琴端對端全功能實機驗收 100% 通過！**（包含 Web MIDI 直連、模式 A/B 錄音、音色嗅探綁定、畫布直刻、隨身碟載入、和弦轉調與原廠 DSP 效果驗證無誤）  
+> 6. 📌 **正式將【Phase 3.0：MIDI 轉 Yamaha Style 伴奏風格 (.sty) 精靈】納入下一階段核心旗艦衝刺計畫！**  
 > **代碼倉庫**：`https://github.com/CMChen59/Yamaha-Midi-Edit.git`（分支: `main`）  
-> **測試狀態**：81 / 81 項單元測試全數通過（通過率 100%），14 個測試套件全數綠燈通過，TypeScript 編譯 0 錯誤，Vite 生產打包無誤。
+> **測試狀態**：83 / 83 項單元測試全數通過（通過率 100%），15 個測試套件全數綠燈通過，TypeScript 編譯 0 錯誤，Vite 生產打包無誤。
 
 ---
 
@@ -42,10 +44,11 @@
 
 ---
 
-### 3. Phase 2.2-F：Web MIDI 實體琴硬體直連與發聲 (已完工)
+### 3. Phase 2.2-F & Phase 2.5：Web MIDI 實體琴硬體直連與全功能實機驗收 (已完成)
 * **USB-to-Host 直連免驅動**：利用瀏覽器原生 Web MIDI API，自動握手 PSR-SX920。
-* **原廠音色與混音雙向同步**：Bank Select (CC0/CC32) 與 Program Change，混音推桿同步 CC7 (Volume)、CC10 (Pan)、CC91 (Reverb)。
+* **原廠音色與混音雙向同步**：Bank Select (CC0/CC32) 與 Program Change，混音推桿同步 CC7 (Volume)、CC10 (Pan)、CC91 (Reverb)、CC93 (Chorus)。
 * **多重發聲路由與防掛音保護**：切換時廣播 CC 123 (All Notes Off) 與 CC 120 (All Sound Off)。
+* **實琴端對端驗收**：隨身碟載入 `.PAD` 檔案於 PSR-SX920 實體按鈕 1~4 回放、Repeat 循環與 Chord Match 和弦轉調實測 100% 正常。
 
 ---
 
@@ -61,20 +64,20 @@ flowchart TD
         Step23["Phase 2.3：外部 MIDI 匯入與 4-Pad 切片精靈"]
     end
 
-    subgraph S2 ["第二階段：手彈創作與進階錄音 (當前推進)"]
+    subgraph S2 ["第二階段：手彈創作與實機全功能驗收 (已完成)"]
         Step27["Phase 2.7：琴端即時錄音 / 步進和弦 / 音色嗅探綁定 / 畫布直刻\n【🎉 100% 完工】"]
-        Step25["Phase 2.5：PSR-SX920 實體琴實機連線驗收\n【⏳ 待回家連琴驗證】"]
-        Step28["Phase 2.8：Multi Pad 進階工作站級增強\n(疊錄伴奏監聽 + Swing 搖擺量化 + 八度移調 + Chorus 混音)\n【📌 正式納入執行計畫】"]
+        Step28["Phase 2.8：Multi Pad 進階工作站級增強\n(疊錄伴奏監聽 + Swing 搖擺量化 + 八度移調 + Chorus 混音)\n【🎉 100% 完工】"]
+        Step25["Phase 2.5：PSR-SX920 實體琴端對端實機連線驗收\n【🎉 實琴驗收 100% 通過】"]
     end
 
-    subgraph S3 ["第三階段：伴奏風格旗艦拓展 (旗艦目標)"]
+    subgraph S3 ["第三階段：伴奏風格旗艦拓展 (下一階段)"]
         Step30["Phase 3.0：外部 MIDI 轉 Yamaha Style 伴奏風格 (.sty) 精靈\n(8 聲部映射 + 多段落曲式切片 + SFF2 CASM/OTS 合成)\n【🚀 核心旗艦計畫】"]
     end
 
     Step15 --> Step21 --> Step22 --> Step24 --> Step23 --> Step27
-    Step27 --> Step25
     Step27 --> Step28
-    Step28 --> Step30
+    Step28 --> Step25
+    Step25 --> Step30
 ```
 
 ---
@@ -92,7 +95,7 @@ flowchart TD
 | **Phase 2.8-A** | **多打擊墊疊錄伴奏監聽 (Multi-Pad Overdub)** | **🎉 已完工** | **獨立伴奏匯流排、動態 Pad 伴奏選單、獨立音量滑桿 (0~100%)、含伴奏試聽切換** |
 | **Phase 2.8-B** | **Swing 搖擺量化與整軌八度移調 (Groove/Shift)** | **🎉 已完工** | **1/16 Swing (54%, 60%, 66%) 搖擺律動量化、畫布一鍵升/降八度 (+12/-12)、Shift+↑/↓ 快捷鍵** |
 | **Phase 2.8-C** | **Chorus (合唱效果 CC93) & 混音深度擴充** | **🎉 已完工** | **混音推桿 CC93 (0~127)、Web Audio 立體聲雙路微延遲 LFO 顫動效果器、PSR-SX920 原廠 DSP CC93 雙向即時同步** |
-| **Phase 2.5** | PSR-SX920 實體琴連線驗證 (回家驗收) | **⏳ 待開始** | 依手冊驗證 MIDI 握手、音色嗅探綁定、模式 A/B 實彈與隨身碟插琴回放 |
+| **Phase 2.5** | **PSR-SX920 實體琴全功能端對端實機驗收** | **🎉 驗收通過** | **Web MIDI 雙向通訊、模式 A/B 錄音、音色嗅探綁定、隨身碟插琴回放、CM 和弦轉調與 RP 循環驗收全數合格** |
 | **Phase 3.0** | **外部 MIDI 轉 Yamaha Style 伴奏風格 (.sty) 精靈** | **🚀 核心旗艦** | **8 聲部映射 (Ch 9~16)、曲式切片 (Main A~D / Fill In / Intro / Ending)、SFF2 CASM 合成** |
 
 ---
