@@ -872,9 +872,17 @@ function getPadBackingTrackItem(padNum: number): BackingTrackItem | null {
   const padBars = YamahaPadModifier.getPadBarLength(currentParsed, padNum);
   const totalTicks = Math.max(1, padBars) * ticksPerBar;
 
+  const firstNoteTick = Math.min(...notes.map(n => n.startTick));
+  const gridStartTick = Math.floor(firstNoteTick / ticksPerBar) * ticksPerBar;
+
+  const normalizedNotes: NoteEvent[] = notes.map(n => ({
+    ...n,
+    startTick: Math.max(0, n.startTick - gridStartTick),
+  }));
+
   return {
     padNum,
-    notes,
+    notes: normalizedNotes,
     totalTicks,
     channelParams: {
       volume,
@@ -3053,9 +3061,20 @@ function togglePlayAllPads() {
         statusBadge.textContent = `🎼 合奏 [${activePadList}]: 第 ${state.currentBar} / ${totalBars} 小節 第 ${state.currentBeat} 拍`;
       }
 
-      // 畫布聯動：若目前鋼琴卷軸畫面所顯示的 Pad 參與了合奏，同步繪製走帶游標 (Playhead cursor)！
-      if (currentActivePadNum !== null && ensembleSelectedPads.has(currentActivePadNum) && currentCanvasRedrawWithPlayhead) {
-        currentCanvasRedrawWithPlayhead(state.relTick, []);
+      // 畫布聯動：若目前鋼琴卷軸畫面所顯示的 Pad 參與了合奏，同步繪製走帶游標與發聲音符高亮！
+      if (currentActivePadNum !== null && currentCanvasRedrawWithPlayhead) {
+        if (ensembleSelectedPads.has(currentActivePadNum)) {
+          let activeNotes: number[] = [];
+          const activeTrack = allTracks.find(t => t.padNum === currentActivePadNum);
+          if (activeTrack) {
+            activeNotes = activeTrack.notes
+              .filter(n => state.relTick >= n.startTick && state.relTick < n.startTick + n.durationTick)
+              .map(n => n.note);
+          }
+          currentCanvasRedrawWithPlayhead(state.relTick, activeNotes);
+        } else {
+          currentCanvasRedrawWithPlayhead(null, []);
+        }
       }
     },
     onEnded: () => {
