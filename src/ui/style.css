@@ -1247,6 +1247,17 @@ body {
   gap: 12px;
 }
 
+.record-backing-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 20px;
+  background: #11131a;
+  border-bottom: 1px solid #262b3a;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
 .midi-activity-led {
   display: inline-block;
   width: 9px;

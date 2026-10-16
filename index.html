@@ -569,6 +569,36 @@
         </div>
       </div>
 
+      <!-- 2.8-A 疊錄伴奏監聽控制列 (Overdub Backing Track Bar) -->
+      <div class="record-backing-bar">
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <span style="font-size: 0.8rem; font-weight: 600; color: #a78bfa; display: flex; align-items: center; gap: 4px;">
+            🎧 疊錄伴奏:
+          </span>
+          <select id="rec-backing-track-select" class="icon-select" style="padding: 2px 10px; font-weight: 600; min-width: 170px; background: #1a1e2b; border: 1px solid #3b4254; color: #e2e8f0;" title="錄音或試聽時，於背景循環播放指定已錄製打擊墊作為節奏/低音伴奏">
+            <option value="none">無 (不播放伴奏)</option>
+            <option value="all">所有已錄製 Pads (Pad 1~4 混音)</option>
+          </select>
+          <span id="rec-backing-status-hint" style="font-size: 0.72rem; color: #94a3b8; background: #12141c; padding: 2px 8px; border-radius: 4px; border: 1px solid #232736;">
+            未啟用伴奏
+          </span>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap;">
+          <!-- 伴奏音量滑桿 -->
+          <div style="display: flex; align-items: center; gap: 6px; font-size: 0.78rem;">
+            <label for="rec-backing-vol" style="color: #94a3b8;" title="調節背景伴奏音量，避免蓋過節拍器或正在彈奏的樂器">伴奏音量:</label>
+            <input type="range" id="rec-backing-vol" min="0" max="100" value="60" style="width: 65px; height: 5px; accent-color: #8b5cf6; cursor: pointer;" title="調整疊錄伴奏音量" />
+            <span id="rec-backing-vol-label" style="font-family: monospace; color: #c4b5fd; font-weight: 600; min-width: 32px;">60%</span>
+          </div>
+
+          <!-- 含伴奏試聽開關 -->
+          <button type="button" id="btn-toggle-backing-preview" class="toggle-btn active-rp" style="padding: 2px 8px; font-size: 0.74rem;" title="試聽錄音成果時，是否一併播放背景伴奏以確認合奏效果">
+            🎧 含伴奏試聽: 開
+          </button>
+        </div>
+      </div>
+
       <!-- 可滾動主體區 (Scrollable Modal Body) -->
       <div class="record-modal-body">
         <!-- 模式 A 主面板：即時節拍器錄音 (Live Recorder) -->

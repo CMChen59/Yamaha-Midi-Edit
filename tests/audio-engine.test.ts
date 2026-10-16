@@ -55,11 +55,27 @@ describe('Web Audio 試聽引擎單元測試 (Audio Engine)', () => {
     it('預設未播放狀態為 idle', () => {
       expect(engine.isPlaying()).toBe(false);
       expect(engine.getPlayingPadNum()).toBeNull();
+      expect(engine.isBackingTrackPlaying()).toBe(false);
     });
 
     it('呼叫 stop() 在無播放時能安全返回', () => {
       expect(() => engine.stop()).not.toThrow();
       expect(engine.isPlaying()).toBe(false);
+      expect(engine.isBackingTrackPlaying()).toBe(false);
+    });
+
+    it('2.8-A: 疊錄伴奏音量調節與安全停止 (Backing Track Lifecycle)', () => {
+      expect(() => engine.setBackingVolume(0.8)).not.toThrow();
+      expect(() => engine.setBackingVolume(-0.5)).not.toThrow();
+      expect(() => engine.setBackingVolume(1.5)).not.toThrow();
+
+      // 在無音頻環境呼叫 stopBackingTrack 能安全退出
+      expect(() => engine.stopBackingTrack()).not.toThrow();
+      expect(engine.isBackingTrackPlaying()).toBe(false);
+
+      // 當傳入空音軌清單時，startBackingTrack 不會拋錯且維持非播放狀態
+      engine.startBackingTrack([], { bpm: 120 });
+      expect(engine.isBackingTrackPlaying()).toBe(false);
     });
   });
 });

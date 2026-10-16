@@ -9,7 +9,7 @@ import {
 } from '../core/writer/midi-importer';
 import { audioEngine, ticksToSeconds } from '../core/audio/audio-engine';
 import { midiManager, MidiDeviceInfo } from '../core/audio/midi-manager';
-import type { NoteEvent, PlaybackState } from '../core/audio/audio-engine';
+import type { NoteEvent, PlaybackState, BackingTrackItem } from '../core/audio/audio-engine';
 import {
   PadRecorder,
   type RecordedNote,
@@ -366,6 +366,11 @@ let lastSniffedVoice: YamahaVoice | null = null;
 let lastSniffedRawConfig: { msb: number; lsb: number; pc: number } | null = null;
 let isAutoBindVoiceEnabled: boolean = true;
 
+// 2.8-A 疊錄伴奏監聽 (Multi-Pad Overdub Backing Track) 狀態
+let selectedBackingOption: string = 'none'; // 'none' | 'all' | '1' | '2' | '3' | '4'
+let backingVolumeRatio: number = 0.6;
+let isBackingPreviewEnabled: boolean = true;
+
 // 畫布直接手彈步進輸入狀態
 let isCanvasStepInputActive: boolean = false;
 let canvasStepRecorder: StepRecorder = new StepRecorder({ ppq: 480, resolution: '1/4' });
@@ -585,6 +590,7 @@ function initPadRecordModal() {
   if (selectTargetPad) {
     selectTargetPad.addEventListener('change', () => {
       currentRecordPadNum = parseInt(selectTargetPad.value, 10) || 1;
+      updateBackingTrackOptionsUI(currentRecordPadNum);
       const applyBtnA = document.getElementById('btn-rec-apply');
       if (applyBtnA) {
         applyBtnA.textContent = `💾 寫入 Pad ${currentRecordPadNum}`;
@@ -615,6 +621,49 @@ function initPadRecordModal() {
       toggleAutoBind.className = `toggle-btn ${isAutoBindVoiceEnabled ? 'active-cm' : 'inactive'}`;
       toggleAutoBind.textContent = isAutoBindVoiceEnabled ? '🔗 自動綁定音色: 開' : '🔒 自動綁定音色: 關';
       showStatus(isAutoBindVoiceEnabled ? '已啟用：寫入 Pad 時將自動綁定琴端音色與圖標' : '已關閉自動綁定音色 (僅寫入音符)');
+    });
+  }
+
+  // 2.8-A: 疊錄伴奏下拉切換監聽
+  const backingSelect = document.getElementById('rec-backing-track-select') as HTMLSelectElement | null;
+  const backingHint = document.getElementById('rec-backing-status-hint');
+  if (backingSelect) {
+    backingSelect.addEventListener('change', () => {
+      selectedBackingOption = backingSelect.value;
+      if (backingHint) {
+        if (selectedBackingOption === 'none') {
+          backingHint.textContent = '未啟用伴奏';
+          backingHint.style.color = '#94a3b8';
+        } else if (selectedBackingOption === 'all') {
+          backingHint.textContent = '伴奏: 全軌混音';
+          backingHint.style.color = '#c4b5fd';
+        } else {
+          backingHint.textContent = `伴奏: PAD ${selectedBackingOption}`;
+          backingHint.style.color = '#a78bfa';
+        }
+      }
+    });
+  }
+
+  // 2.8-A: 疊錄伴奏音量滑桿監聽
+  const backingVolSlider = document.getElementById('rec-backing-vol') as HTMLInputElement | null;
+  const backingVolLabel = document.getElementById('rec-backing-vol-label');
+  if (backingVolSlider) {
+    backingVolSlider.addEventListener('input', () => {
+      const val = parseInt(backingVolSlider.value, 10);
+      backingVolumeRatio = Math.max(0, Math.min(100, val)) / 100;
+      if (backingVolLabel) backingVolLabel.textContent = `${val}%`;
+      audioEngine.setBackingVolume(backingVolumeRatio);
+    });
+  }
+
+  // 2.8-A: 含伴奏試聽切換按鈕監聽
+  const toggleBackingPreview = document.getElementById('btn-toggle-backing-preview');
+  if (toggleBackingPreview) {
+    toggleBackingPreview.addEventListener('click', () => {
+      isBackingPreviewEnabled = !isBackingPreviewEnabled;
+      toggleBackingPreview.className = `toggle-btn ${isBackingPreviewEnabled ? 'active-rp' : 'inactive'}`;
+      toggleBackingPreview.textContent = isBackingPreviewEnabled ? '🎧 含伴奏試聽: 開' : '🎧 含伴奏試聽: 關';
     });
   }
 
@@ -783,6 +832,168 @@ function getPadVoiceConfig(parsed: YamahaFileParsed, padNum: number): { msb: num
   return null;
 }
 
+/**
+ * 2.8-A 提取單一 Pad 之疊錄伴奏音軌資訊 (音符、音色、混音、循環長度)
+ */
+function getPadBackingTrackItem(padNum: number): BackingTrackItem | null {
+  if (!currentParsed) return null;
+  const track = currentParsed.tracks[padNum];
+  if (!track) return null;
+
+  const notes = extractTrackNotes(track);
+  if (notes.length === 0) return null;
+
+  let currentPc = 0;
+  let currentMsb = 0;
+  let currentLsb = 0;
+  let volume = 100;
+  let pan = 64;
+  let reverb = 40;
+
+  for (const ev of track.events) {
+    if (ev.type === 'programChange' && ev.program !== undefined) currentPc = ev.program;
+    if (ev.type === 'controlChange') {
+      if (ev.controller === 0 && ev.value !== undefined) currentMsb = ev.value;
+      if (ev.controller === 32 && ev.value !== undefined) currentLsb = ev.value;
+      if (ev.controller === 7 && ev.value !== undefined) volume = ev.value;
+      if (ev.controller === 10 && ev.value !== undefined) pan = ev.value;
+      if (ev.controller === 91 && ev.value !== undefined) reverb = ev.value;
+    }
+  }
+
+  const matchedInst = PRESET_INSTRUMENTS.find(i => i.pc === currentPc && (currentMsb === 0 || i.msb === currentMsb) && (currentLsb === 0 || i.lsb === currentLsb))
+    || PRESET_INSTRUMENTS.find(i => i.pc === currentPc && (currentMsb === 0 || i.msb === currentMsb))
+    || PRESET_INSTRUMENTS.find(i => i.pc === currentPc);
+  const instrumentId = matchedInst ? matchedInst.id : 'grand-piano';
+
+  const division = currentParsed.division || 480;
+  const beatsPerBar = currentParsed.timeSignature?.numerator || 4;
+  const ticksPerBar = division * beatsPerBar;
+  const padBars = YamahaPadModifier.getPadBarLength(currentParsed, padNum);
+  const totalTicks = Math.max(1, padBars) * ticksPerBar;
+
+  return {
+    padNum,
+    notes,
+    totalTicks,
+    channelParams: {
+      volume,
+      pan,
+      reverb,
+      instrumentId,
+      msb: currentMsb,
+      lsb: currentLsb,
+      pc: currentPc,
+      channel: padNum - 1,
+    }
+  };
+}
+
+/**
+ * 2.8-A 依使用者選擇提取所有伴奏音軌項目
+ */
+function getSelectedBackingTrackItems(option: string, excludePadNum: number): BackingTrackItem[] {
+  if (option === 'none' || !currentParsed) return [];
+
+  if (option === 'all') {
+    const items: BackingTrackItem[] = [];
+    for (let p = 1; p <= 4; p++) {
+      if (p !== excludePadNum) {
+        const item = getPadBackingTrackItem(p);
+        if (item) items.push(item);
+      }
+    }
+    return items;
+  }
+
+  const targetPad = parseInt(option, 10);
+  if (!isNaN(targetPad) && targetPad >= 1 && targetPad <= 4 && targetPad !== excludePadNum) {
+    const item = getPadBackingTrackItem(targetPad);
+    return item ? [item] : [];
+  }
+
+  return [];
+}
+
+/**
+ * 2.8-A 動態更新伴奏選單下拉項目與狀態標籤
+ */
+function updateBackingTrackOptionsUI(excludePadNum: number) {
+  const select = document.getElementById('rec-backing-track-select') as HTMLSelectElement | null;
+  const hintEl = document.getElementById('rec-backing-status-hint');
+  if (!select) return;
+
+  const prevValue = select.value || selectedBackingOption;
+  select.innerHTML = '';
+
+  const noneOpt = document.createElement('option');
+  noneOpt.value = 'none';
+  noneOpt.textContent = '無 (不播放伴奏)';
+  select.appendChild(noneOpt);
+
+  const availablePads: Array<{ padNum: number; voiceName: string; bars: number; notesCount: number }> = [];
+
+  if (currentParsed) {
+    for (let p = 1; p <= 4; p++) {
+      if (p === excludePadNum) continue;
+      const track = currentParsed.tracks[p];
+      if (!track) continue;
+      const notes = extractTrackNotes(track);
+      if (notes.length === 0) continue;
+
+      const padVoice = getPadVoiceConfig(currentParsed, p);
+      let vName = 'Piano';
+      if (padVoice) {
+        const found = findYamahaVoice(padVoice.msb, padVoice.lsb, padVoice.pc);
+        vName = found?.chineseName || found?.name || `Bank ${padVoice.msb}-${padVoice.lsb}`;
+      }
+      const bars = YamahaPadModifier.getPadBarLength(currentParsed, p);
+      availablePads.push({ padNum: p, voiceName: vName, bars, notesCount: notes.length });
+    }
+  }
+
+  if (availablePads.length > 1) {
+    const allOpt = document.createElement('option');
+    allOpt.value = 'all';
+    allOpt.textContent = `所有已錄製 Pads (${availablePads.map(ap => `Pad ${ap.padNum}`).join('+')} 混音)`;
+    select.appendChild(allOpt);
+  }
+
+  for (const ap of availablePads) {
+    const opt = document.createElement('option');
+    opt.value = String(ap.padNum);
+    opt.textContent = `PAD ${ap.padNum} (${ap.voiceName} - ${ap.bars} 小節 / ${ap.notesCount} 音)`;
+    select.appendChild(opt);
+  }
+
+  // 自動智慧選擇：若先前的選擇在可選項中則沿用；否則若只有1個有內容的Pad且先前非明確選none，自動選該Pad
+  let chosenValue = 'none';
+  const validValues = Array.from(select.options).map(o => o.value);
+  if (validValues.includes(prevValue)) {
+    chosenValue = prevValue;
+  } else if (availablePads.length === 1 && prevValue !== 'none') {
+    chosenValue = String(availablePads[0].padNum);
+  }
+
+  select.value = chosenValue;
+  selectedBackingOption = chosenValue;
+
+  // 更新提示標籤
+  if (hintEl) {
+    if (chosenValue === 'none') {
+      hintEl.textContent = '未啟用伴奏';
+      hintEl.style.color = '#94a3b8';
+    } else if (chosenValue === 'all') {
+      hintEl.textContent = `伴奏: 全軌混音 (${availablePads.length} 個 Pad)`;
+      hintEl.style.color = '#c4b5fd';
+    } else {
+      const match = availablePads.find(ap => String(ap.padNum) === chosenValue);
+      hintEl.textContent = match ? `伴奏: PAD ${match.padNum} (${match.voiceName})` : `伴奏: PAD ${chosenValue}`;
+      hintEl.style.color = '#a78bfa';
+    }
+  }
+}
+
 function openRecordModal(padNum: number = 1) {
   initPadRecordModal();
   const modal = document.getElementById('pad-record-modal');
@@ -794,6 +1005,9 @@ function openRecordModal(padNum: number = 1) {
   // 目標 Pad 設定
   const selectTargetPad = document.getElementById('rec-target-pad-select') as HTMLSelectElement | null;
   if (selectTargetPad) selectTargetPad.value = String(padNum);
+
+  // 2.8-A: 動態刷新伴奏音軌選單 (排除當前錄音 Pad)
+  updateBackingTrackOptionsUI(padNum);
 
   // 速度同步
   const bpmInput = document.getElementById('rec-bpm-input') as HTMLInputElement | null;
@@ -994,6 +1208,7 @@ function closeRecordModal() {
   padRecorder.stop();
   stepRecorder.reset();
   audioEngine.stop();
+  audioEngine.stopBackingTrack();
 
   // 清除所有虛擬鋼琴按壓狀態
   document.querySelectorAll('#sim-piano-keys .active').forEach(el => el.classList.remove('active'));
@@ -1142,9 +1357,34 @@ function previewStepRecordedNotes() {
     return;
   }
 
+  // 若目前正在試聽播放中，點擊可立即停止
+  if (audioEngine.isPlaying() || audioEngine.isBackingTrackPlaying()) {
+    audioEngine.stop();
+    audioEngine.stopBackingTrack();
+    showStatus('已停止試聽');
+    return;
+  }
+
   const bpmInput = document.getElementById('rec-bpm-input') as HTMLInputElement | null;
   const bpm = parseInt(bpmInput?.value || '120', 10) || 120;
   const totalTicks = stepTargetBars * 4 * 480;
+
+  // 2.8-A: 若有開啟含伴奏試聽且選中了伴奏，同步啟動伴奏音軌
+  if (isBackingPreviewEnabled && selectedBackingOption !== 'none') {
+    const backingItems = getSelectedBackingTrackItems(selectedBackingOption, currentRecordPadNum);
+    if (backingItems.length > 0) {
+      audioEngine.startBackingTrack(backingItems, {
+        bpm,
+        division: 480,
+        volumeRatio: backingVolumeRatio,
+        loop: false,
+      });
+    }
+  }
+
+  const voiceCfg = lastSniffedRawConfig || (currentParsed ? getPadVoiceConfig(currentParsed, currentRecordPadNum) : null);
+  const matched = voiceCfg ? (PRESET_INSTRUMENTS.find(i => i.pc === voiceCfg.pc && (voiceCfg.msb === 0 || i.msb === voiceCfg.msb)) || PRESET_INSTRUMENTS.find(i => i.pc === voiceCfg.pc)) : null;
+  const instrumentId = matched ? matched.id : 'grand-piano';
 
   audioEngine.playSequence(currentRecordPadNum, notes, {
     bpm,
@@ -1153,6 +1393,16 @@ function previewStepRecordedNotes() {
     loop: false,
     gridStartTick: 0,
     totalTicks,
+    channelParams: {
+      instrumentId,
+      msb: voiceCfg?.msb ?? 0,
+      lsb: voiceCfg?.lsb ?? 0,
+      pc: voiceCfg?.pc ?? 0,
+      channel: currentRecordPadNum - 1,
+    },
+    onEnded: () => {
+      audioEngine.stopBackingTrack();
+    },
   });
   showStatus(`🔊 正在試聽 Pad ${currentRecordPadNum} 步進錄入旋律 (${notes.length} 顆音符)...`);
 }
@@ -1327,6 +1577,19 @@ function startLiveRecording() {
       if (state === 'recording') {
         const badge = document.getElementById('rec-status-badge');
         if (badge) badge.className = 'rec-status-badge status-recording';
+
+        // 2.8-A: 若有啟用疊錄伴奏，在真正錄音開始時啟動伴奏循環
+        if (selectedBackingOption !== 'none') {
+          const backingItems = getSelectedBackingTrackItems(selectedBackingOption, currentRecordPadNum);
+          if (backingItems.length > 0) {
+            audioEngine.startBackingTrack(backingItems, {
+              bpm,
+              division: currentParsed?.division || 480,
+              volumeRatio: backingVolumeRatio,
+              loop: true,
+            });
+          }
+        }
       }
     },
     onFinish: (notes) => {
@@ -1337,9 +1600,11 @@ function startLiveRecording() {
 
 function stopLiveRecording() {
   padRecorder.stop();
+  audioEngine.stopBackingTrack();
 }
 
 function finishLiveRecording(notes: RecordedNote[], bars: number) {
+  audioEngine.stopBackingTrack();
   recordedNotesBuffer = notes;
   const badge = document.getElementById('rec-status-badge');
   const textEl = document.getElementById('rec-status-text');
@@ -1382,10 +1647,35 @@ function previewRecordedNotes() {
     return;
   }
 
+  // 若目前正在試聽播放中，點擊可立即停止
+  if (audioEngine.isPlaying() || audioEngine.isBackingTrackPlaying()) {
+    audioEngine.stop();
+    audioEngine.stopBackingTrack();
+    showStatus('已停止試聽');
+    return;
+  }
+
   const bpmInput = document.getElementById('rec-bpm-input') as HTMLInputElement | null;
   const bpm = parseInt(bpmInput?.value || '120', 10) || 120;
   const noteEvents = PadRecorder.toNoteEvents(recordedNotesBuffer);
   const totalTicks = recordedBarsCount * 4 * 480;
+
+  // 2.8-A: 若有開啟含伴奏試聽且選中了伴奏，同步啟動伴奏音軌
+  if (isBackingPreviewEnabled && selectedBackingOption !== 'none') {
+    const backingItems = getSelectedBackingTrackItems(selectedBackingOption, currentRecordPadNum);
+    if (backingItems.length > 0) {
+      audioEngine.startBackingTrack(backingItems, {
+        bpm,
+        division: 480,
+        volumeRatio: backingVolumeRatio,
+        loop: false,
+      });
+    }
+  }
+
+  const voiceCfg = lastSniffedRawConfig || (currentParsed ? getPadVoiceConfig(currentParsed, currentRecordPadNum) : null);
+  const matched = voiceCfg ? (PRESET_INSTRUMENTS.find(i => i.pc === voiceCfg.pc && (voiceCfg.msb === 0 || i.msb === voiceCfg.msb)) || PRESET_INSTRUMENTS.find(i => i.pc === voiceCfg.pc)) : null;
+  const instrumentId = matched ? matched.id : 'grand-piano';
 
   audioEngine.playSequence(currentRecordPadNum, noteEvents, {
     bpm,
@@ -1394,6 +1684,16 @@ function previewRecordedNotes() {
     loop: false,
     gridStartTick: 0,
     totalTicks,
+    channelParams: {
+      instrumentId,
+      msb: voiceCfg?.msb ?? 0,
+      lsb: voiceCfg?.lsb ?? 0,
+      pc: voiceCfg?.pc ?? 0,
+      channel: currentRecordPadNum - 1,
+    },
+    onEnded: () => {
+      audioEngine.stopBackingTrack();
+    },
   });
 }
 

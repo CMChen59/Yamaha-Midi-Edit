@@ -46,6 +46,26 @@ export interface PlaybackState {
 }
 
 /**
+ * 2.8-A 疊錄伴奏監聽音軌項目 (Backing Track Item)
+ */
+export interface BackingTrackItem {
+  padNum: number;
+  notes: NoteEvent[];
+  channelParams?: ChannelAudioParams;
+  totalTicks?: number;
+}
+
+/**
+ * 2.8-A 疊錄伴奏播放配置 (Backing Track Options)
+ */
+export interface BackingTrackOptions {
+  bpm: number;
+  division?: number;
+  volumeRatio?: number; // 0.0 ~ 1.0 (預設 0.6)
+  loop?: boolean;
+}
+
+/**
  * 將 MIDI 音符編號轉換為頻率 (Hz)
  * A4 (69) = 440 Hz
  */
@@ -104,6 +124,16 @@ export class AudioEngine {
   private scheduledTimerIds: any[] = [];
   private currentPadGain: GainNode | null = null;
   private activeOscillators: Array<OscillatorNode | AudioBufferSourceNode> = [];
+
+  // 2.8-A 疊錄伴奏音軌專用匯流排與狀態
+  private backingGain: GainNode | null = null;
+  private backingTimerIds: any[] = [];
+  private backingPlaybackSessionId: number = 0;
+  private isBackingPlaying: boolean = false;
+  private backingStartTime: number = 0;
+  private activeBackingVoices: Array<{ stop: (time: number) => void }> = [];
+  private backingVolume: number = 0.6;
+  private backingAnimFrameId: number | null = null;
 
   private createOscillator(): OscillatorNode {
     if (!this.ctx) throw new Error('AudioContext not initialized');
@@ -240,6 +270,9 @@ export class AudioEngine {
       this.activeVoices = [];
     }
 
+    // 4.4 停止並清理伴奏音軌
+    this.stopBackingTrack();
+
     // 5. 若 Web MIDI 輸出啟用，對實體琴進行 Panic (熄滅正在發聲的音符 + 全通道斷音)
     midiManager.panicAllChannels();
 
@@ -252,6 +285,226 @@ export class AudioEngine {
     }
     this.playbackOptions = null;
     return oldPad;
+  }
+
+  // ==========================================
+  // Phase 2.8-A: 疊錄伴奏監聽 (Multi-Pad Overdub Backing Track)
+  // ==========================================
+
+  /**
+   * 取得當前疊錄伴奏是否正在播放中
+   */
+  public isBackingTrackPlaying(): boolean {
+    return this.isBackingPlaying;
+  }
+
+  /**
+   * 動態調節疊錄伴奏音量比例 (0.0 ~ 1.0)
+   */
+  public setBackingVolume(ratio: number): void {
+    this.backingVolume = Math.max(0, Math.min(1, ratio));
+    if (this.backingGain && this.ctx) {
+      try {
+        this.backingGain.gain.setValueAtTime(this.backingVolume, this.ctx.currentTime);
+      } catch {}
+    }
+  }
+
+  /**
+   * 停止當前疊錄伴奏播放並清理資源
+   */
+  public stopBackingTrack(): void {
+    this.backingPlaybackSessionId++;
+
+    for (const tid of this.backingTimerIds) {
+      clearTimeout(tid);
+    }
+    this.backingTimerIds = [];
+
+    if (this.backingAnimFrameId !== null && typeof cancelAnimationFrame !== 'undefined') {
+      cancelAnimationFrame(this.backingAnimFrameId);
+      this.backingAnimFrameId = null;
+    }
+
+    if (this.ctx) {
+      const now = this.ctx.currentTime;
+      if (this.backingGain) {
+        try {
+          this.backingGain.gain.cancelScheduledValues(now);
+          this.backingGain.gain.setValueAtTime(this.backingGain.gain.value, now);
+          this.backingGain.gain.linearRampToValueAtTime(0, now + 0.01);
+          const oldGain = this.backingGain;
+          setTimeout(() => {
+            try { oldGain.disconnect(); } catch {}
+          }, 25);
+        } catch {}
+        this.backingGain = null;
+      }
+
+      for (const voice of this.activeBackingVoices) {
+        try {
+          voice.stop(now);
+        } catch {}
+      }
+      this.activeBackingVoices = [];
+    }
+
+    this.isBackingPlaying = false;
+  }
+
+  /**
+   * 啟動疊錄伴奏音軌播放 (支援多 Pad 混音與無縫循環)
+   */
+  public startBackingTrack(tracks: BackingTrackItem[], options: BackingTrackOptions): void {
+    this.stopBackingTrack();
+    this.init();
+
+    if (!this.ctx || tracks.length === 0) return;
+    if (this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
+
+    const validTracks = tracks.filter(t => t.notes && t.notes.length > 0);
+    if (validTracks.length === 0) return;
+
+    const sessionId = ++this.backingPlaybackSessionId;
+    this.isBackingPlaying = true;
+
+    // 建立伴奏專屬 Gain 節點並銜接至主混音
+    if (this.masterGain && this.ctx) {
+      this.backingGain = this.ctx.createGain();
+      const vol = options.volumeRatio !== undefined ? Math.max(0, Math.min(1, options.volumeRatio)) : this.backingVolume;
+      this.backingVolume = vol;
+      this.backingGain.gain.setValueAtTime(this.backingVolume, this.ctx.currentTime);
+      this.backingGain.connect(this.masterGain);
+    }
+
+    const bpm = options.bpm || 120;
+    const division = options.division || 480;
+    const ticksPerBar = division * 4;
+
+    // 計算最長音軌小節數作為整組伴奏之循環長度
+    let maxTotalTicks = ticksPerBar;
+    for (const track of validTracks) {
+      if (track.totalTicks && track.totalTicks > 0) {
+        maxTotalTicks = Math.max(maxTotalTicks, track.totalTicks);
+      } else {
+        const lastTick = Math.max(...track.notes.map(n => n.startTick + n.durationTick), 0);
+        const bars = Math.max(1, Math.ceil(lastTick / ticksPerBar));
+        maxTotalTicks = Math.max(maxTotalTicks, bars * ticksPerBar);
+      }
+    }
+
+    const loopDurationSec = ticksToSeconds(maxTotalTicks, bpm, division);
+    this.backingStartTime = this.ctx.currentTime;
+
+    // 若 Web MIDI 開啟，為各伴奏音軌發送 Voice Change 與 Mixer Controllers
+    if (midiManager.isMidiActive()) {
+      for (const track of validTracks) {
+        const midiCh = track.channelParams?.channel ?? (track.padNum - 1);
+        const params = track.channelParams || {};
+        if (params.msb !== undefined || params.lsb !== undefined || params.pc !== undefined) {
+          midiManager.sendVoiceChange(midiCh, {
+            msb: params.msb ?? 0,
+            lsb: params.lsb ?? 0,
+            pc: params.pc ?? 0,
+          });
+        }
+        midiManager.sendMixerControllers(midiCh, {
+          volume: Math.round(((params.volume ?? 100) * this.backingVolume)),
+          pan: params.pan ?? 64,
+          reverb: params.reverb ?? 40,
+        });
+      }
+    }
+
+    // 排程第 0 週期的伴奏音符
+    this.scheduleBackingPass(0, loopDurationSec, sessionId, validTracks, bpm, division, maxTotalTicks);
+
+    // 啟動伴奏循環監視器
+    let lastScheduledCycle = 0;
+    const isLoop = options.loop !== false; // 預設循環
+
+    const updateBackingLoop = () => {
+      if (this.backingPlaybackSessionId !== sessionId || !this.isBackingPlaying || !this.ctx) return;
+
+      const elapsedSec = this.ctx.currentTime - this.backingStartTime;
+      const currentCycle = Math.floor(elapsedSec / loopDurationSec);
+
+      if (!isLoop && elapsedSec >= loopDurationSec) {
+        this.stopBackingTrack();
+        return;
+      }
+
+      if (isLoop && currentCycle > lastScheduledCycle) {
+        lastScheduledCycle = currentCycle;
+        this.scheduleBackingPass(currentCycle, loopDurationSec, sessionId, validTracks, bpm, division, maxTotalTicks);
+      }
+
+      if (this.backingPlaybackSessionId === sessionId && this.isBackingPlaying) {
+        this.backingAnimFrameId = requestAnimationFrame(updateBackingLoop);
+      }
+    };
+
+    if (typeof requestAnimationFrame !== 'undefined') {
+      this.backingAnimFrameId = requestAnimationFrame(updateBackingLoop);
+    }
+  }
+
+  /**
+   * 排程一個循環週期的所有伴奏音軌
+   */
+  private scheduleBackingPass(
+    cycleIndex: number,
+    loopDurationSec: number,
+    sessionId: number,
+    tracks: BackingTrackItem[],
+    bpm: number,
+    division: number,
+    totalTicks: number
+  ) {
+    if (!this.ctx || this.backingPlaybackSessionId !== sessionId || !this.isBackingPlaying) return;
+
+    const passStartTime = this.backingStartTime + cycleIndex * loopDurationSec;
+
+    for (const track of tracks) {
+      const params = track.channelParams || {};
+      const midiCh = params.channel ?? (track.padNum - 1);
+
+      for (const n of track.notes) {
+        if (this.backingPlaybackSessionId !== sessionId || !this.isBackingPlaying) return;
+        if (n.startTick >= totalTicks) continue;
+
+        const noteOffsetSec = ticksToSeconds(n.startTick, bpm, division);
+        const noteDurSec = Math.max(ticksToSeconds(n.durationTick, bpm, division), 0.05);
+        const noteStartTime = passStartTime + noteOffsetSec;
+        const noteStopTime = noteStartTime + noteDurSec;
+
+        // Web Audio 觸發 (走專屬 backingGain)
+        if (midiManager.isAudioActive()) {
+          this.triggerVoice(n.note, n.velocity, noteStartTime, noteDurSec, params, this.backingGain);
+        }
+
+        // Web MIDI 實體琴轉發
+        if (midiManager.isMidiActive()) {
+          const now = this.ctx.currentTime;
+          const delayMs = Math.max(0, (noteStartTime - now) * 1000);
+          const stopDelayMs = Math.max(0, (noteStopTime - now) * 1000);
+
+          const onTimer = setTimeout(() => {
+            if (this.backingPlaybackSessionId !== sessionId || !this.isBackingPlaying) return;
+            midiManager.sendNoteOn(midiCh, n.note, n.velocity);
+          }, delayMs);
+          this.backingTimerIds.push(onTimer);
+
+          const offTimer = setTimeout(() => {
+            if (this.backingPlaybackSessionId !== sessionId) return;
+            midiManager.sendNoteOff(midiCh, n.note);
+          }, stopDelayMs);
+          this.backingTimerIds.push(offTimer);
+        }
+      }
+    }
   }
 
   /**
@@ -442,7 +695,8 @@ export class AudioEngine {
     velocity: number,
     startTime: number,
     durationSec: number,
-    params: ChannelAudioParams
+    params: ChannelAudioParams,
+    customBus?: GainNode | null
   ) {
     if (!this.ctx || !this.masterGain) return;
 
@@ -453,8 +707,8 @@ export class AudioEngine {
     const inst = params.instrumentId || 'grand-piano';
     const isDrum = params.isDrum || (params.pc !== undefined && params.pc >= 120);
 
-    // 建立軌道聲道架構 (Gain -> Panner -> Sub-bus / Master)
-    const targetBus = this.currentPadGain || this.masterGain;
+    // 建立軌道聲道架構 (Gain -> Panner -> Sub-bus / Backing-bus / Master)
+    const targetBus = customBus || this.currentPadGain || this.masterGain;
     const channelGain = ctx.createGain();
     channelGain.gain.setValueAtTime(gainFactor, startTime);
 
@@ -494,7 +748,7 @@ export class AudioEngine {
       this.synthesizePiano(freq, startTime, durationSec, channelGain);
     }
 
-    this.activeVoices.push({
+    const voiceEntry = {
       stop: (t: number) => {
         try {
           channelGain.gain.cancelScheduledValues(t);
@@ -502,7 +756,13 @@ export class AudioEngine {
           channelGain.disconnect();
         } catch {}
       }
-    });
+    };
+
+    if (customBus && customBus === this.backingGain) {
+      this.activeBackingVoices.push(voiceEntry);
+    } else {
+      this.activeVoices.push(voiceEntry);
+    }
   }
 
   // --- 樂器聲音物理/諧波合成器 ---
