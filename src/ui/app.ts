@@ -344,6 +344,8 @@ let recordedNotesBuffer: RecordedNote[] = [];
 let isCountInEnabled: boolean = true;
 let isAutoQuantizeEnabled: boolean = true;
 let selectedQuantizeGrid: QuantizeGrid = '1/16';
+let isAudioMonitorEnabled: boolean = true;
+let metronomeVolumeRatio: number = 0.5;
 let recordMidiUnsubs: Array<() => void> = [];
 let isRecordModalEventsBound: boolean = false;
 let recordedBarsCount: number = 2;
@@ -361,6 +363,8 @@ function initPadRecordModal() {
   const btnApply = document.getElementById('btn-rec-apply');
   const toggleCountIn = document.getElementById('rec-toggle-countin');
   const toggleQuantize = document.getElementById('rec-toggle-quantize');
+  const toggleMonitor = document.getElementById('rec-toggle-monitor');
+  const volSlider = document.getElementById('rec-metronome-vol') as HTMLInputElement | null;
   const selectGrid = document.getElementById('rec-grid-select') as HTMLSelectElement | null;
   const selectTargetPad = document.getElementById('rec-target-pad-select') as HTMLSelectElement | null;
   const selectBars = document.getElementById('rec-bars-select') as HTMLSelectElement | null;
@@ -416,6 +420,22 @@ function initPadRecordModal() {
     });
   }
 
+  // 節拍器音量滑桿
+  if (volSlider) {
+    volSlider.addEventListener('input', () => {
+      metronomeVolumeRatio = (parseInt(volSlider.value, 10) || 50) / 100;
+    });
+  }
+
+  // 電腦喇叭監聽發聲開關
+  if (toggleMonitor) {
+    toggleMonitor.addEventListener('click', () => {
+      isAudioMonitorEnabled = !isAudioMonitorEnabled;
+      toggleMonitor.className = `toggle-btn ${isAudioMonitorEnabled ? 'active-rp' : 'inactive'}`;
+      toggleMonitor.textContent = isAudioMonitorEnabled ? '🔊 電腦監聽: 開' : '🔇 電腦監聽: 關';
+    });
+  }
+
   // 量化網格選擇
   if (selectGrid) {
     selectGrid.addEventListener('change', () => {
@@ -447,6 +467,7 @@ function initPadRecordModal() {
   // 電腦鍵盤演奏監聽 (A~K, W, E, T, Y, U)
   window.addEventListener('keydown', (e) => {
     if (!modal || modal.style.display === 'none') return;
+    if (e.repeat) return; // 忽略作業系統長按自動連發，防止重複重疊發聲
     const target = e.target as HTMLElement | null;
     if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')) {
       return;
@@ -601,8 +622,10 @@ function bindRecordMidiListeners() {
           countLabel.textContent = `已捕捉 ${padRecorder.getRecordedNotes().length + 1} 個音符`;
         }
       }
-      // 即時發聲監聽
-      audioEngine.playAuditionNote(pitch, 0.35, { volume: Math.min(127, Math.max(30, velocity)) });
+      // 即時發聲監聽 (若有啟用電腦監聽)
+      if (isAudioMonitorEnabled) {
+        audioEngine.playAuditionNote(pitch, 0.35, { volume: Math.min(127, Math.max(30, velocity)) });
+      }
     } else {
       if (keyEl) keyEl.classList.remove('active');
       if (padRecorder.getState() === 'recording') {
@@ -710,7 +733,9 @@ function startLiveRecording() {
     quantizeGrid: selectedQuantizeGrid,
     onTick: (info) => {
       // 1. 播放節拍器聲音 (強拍高音，弱拍低音)
-      audioEngine.playMetronomeClick(info.isDownbeat, 0.7);
+      if (metronomeVolumeRatio > 0) {
+        audioEngine.playMetronomeClick(info.isDownbeat, metronomeVolumeRatio);
+      }
 
       // 2. 點亮對應節拍燈
       document.querySelectorAll('.beat-lamp').forEach(l => l.classList.remove('active-downbeat', 'active-weak'));

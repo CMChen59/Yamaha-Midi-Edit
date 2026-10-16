@@ -290,29 +290,35 @@ export class AudioEngine {
   }
 
   /**
-   * 播放錄音節拍器 Click 滴答聲 (Downbeat 第一拍高音 1200Hz, 弱拍 800Hz)
+   * 播放錄音節拍器 Click 滴答聲 (Downbeat 第一拍高音 1400Hz, 弱拍 900Hz)
+   * 採用 25ms 快速衰減木魚打擊音色，直接輸出至硬體輸出端 (避開主混音壓縮器與殘響，防止與琴聲重疊混濁)
    */
-  public playMetronomeClick(isDownbeat: boolean = false, volume: number = 0.6): void {
+  public playMetronomeClick(isDownbeat: boolean = false, volume: number = 0.5): void {
     this.init();
     if (!this.ctx) return;
     if (this.ctx.state === 'suspended') {
       this.ctx.resume().catch(() => {});
     }
 
+    const now = this.ctx.currentTime;
     const osc = this.createOscillator();
     const gain = this.ctx.createGain();
 
+    // 快速音高滑落打擊感 (Woodblock / Rimshot 衝擊瞬態)
     osc.type = isDownbeat ? 'sine' : 'triangle';
-    osc.frequency.setValueAtTime(isDownbeat ? 1200 : 800, this.ctx.currentTime);
+    osc.frequency.setValueAtTime(isDownbeat ? 1400 : 900, now);
+    osc.frequency.exponentialRampToValueAtTime(isDownbeat ? 800 : 450, now + 0.025);
 
-    gain.gain.setValueAtTime(volume * 0.7, this.ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + 0.05);
+    // 25ms 內急速衰減，音質俐落乾淨，不與演奏的音符頻率互相干擾
+    gain.gain.setValueAtTime(volume * 0.75, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.025);
 
     osc.connect(gain);
-    gain.connect(this.masterGain || this.ctx.destination);
+    // 直通 ctx.destination，完全獨立於樂器軌道，不吃壓縮器與殘響
+    gain.connect(this.ctx.destination);
 
-    osc.start(this.ctx.currentTime);
-    osc.stop(this.ctx.currentTime + 0.06);
+    osc.start(now);
+    osc.stop(now + 0.03);
   }
 
   /**

@@ -577,6 +577,17 @@
             <option value="1/16T">1/16T (十六分三連音)</option>
           </select>
         </div>
+
+        <div class="record-config-item" style="border-left: 1px solid #2d3345; padding-left: 12px;">
+          <label for="rec-metronome-vol" title="節拍器音量">🔔 音量:</label>
+          <input type="range" id="rec-metronome-vol" min="0" max="100" value="50" style="width: 55px; height: 5px; accent-color: #f59e0b; cursor: pointer;" title="調整節拍器音量" />
+        </div>
+
+        <div class="record-config-item">
+          <button type="button" id="rec-toggle-monitor" class="toggle-btn active-rp" title="切換錄音時電腦是否發聲。使用實體琴演奏時建議關閉以防雙重發聲">
+            🔊 電腦監聽: 開
+          </button>
+        </div>
       </div>
 
       <!-- 錄音視窗中央：節拍燈、狀態與進度 -->
