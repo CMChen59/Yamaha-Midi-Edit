@@ -24,6 +24,7 @@ import type { YamahaFileParsed, YamahaSection, MidiTrack } from '../core/models/
 import {
   findYamahaVoice,
   searchYamahaVoices,
+  YAMAHA_SX920_VOICES,
   VOICE_CATEGORIES,
   VOICE_SUITABILITY_FILTERS,
   type YamahaVoice,
@@ -360,6 +361,16 @@ let isRecordModalEventsBound: boolean = false;
 let recordedBarsCount: number = 2;
 const activeSimKeys = new Set<string>();
 
+// 嗅探與自動綁定音色狀態
+let lastSniffedVoice: YamahaVoice | null = null;
+let lastSniffedRawConfig: { msb: number; lsb: number; pc: number } | null = null;
+let isAutoBindVoiceEnabled: boolean = true;
+
+// 畫布直接手彈步進輸入狀態
+let isCanvasStepInputActive: boolean = false;
+let canvasStepRecorder: StepRecorder = new StepRecorder({ ppq: 480, resolution: '1/4' });
+
+
 function initPadRecordModal() {
   if (isRecordModalEventsBound) return;
   isRecordModalEventsBound = true;
@@ -596,20 +607,66 @@ function initPadRecordModal() {
     });
   }
 
+  // 自動綁定音色開關
+  const toggleAutoBind = document.getElementById('rec-toggle-autobind-voice');
+  if (toggleAutoBind) {
+    toggleAutoBind.addEventListener('click', () => {
+      isAutoBindVoiceEnabled = !isAutoBindVoiceEnabled;
+      toggleAutoBind.className = `toggle-btn ${isAutoBindVoiceEnabled ? 'active-cm' : 'inactive'}`;
+      toggleAutoBind.textContent = isAutoBindVoiceEnabled ? '🔗 自動綁定音色: 開' : '🔒 自動綁定音色: 關';
+      showStatus(isAutoBindVoiceEnabled ? '已啟用：寫入 Pad 時將自動綁定琴端音色與圖標' : '已關閉自動綁定音色 (僅寫入音符)');
+    });
+  }
+
+  // 模擬琴端切換音色選單
+  const simVoiceSelect = document.getElementById('rec-sim-voice-select') as HTMLSelectElement | null;
+  if (simVoiceSelect) {
+    simVoiceSelect.addEventListener('change', () => {
+      const val = simVoiceSelect.value;
+      if (!val) return;
+      const v = YAMAHA_SX920_VOICES.find(item => item.name === val || item.name.toLowerCase().includes(val.toLowerCase())) || searchYamahaVoices(val)[0];
+      if (v) {
+        midiManager.simulateVoiceChange({ msb: v.msb, lsb: v.lsb, pc: v.pc });
+        showStatus(`已模擬琴端切換音色: ${v.name} (${v.chineseName}) [Bank ${v.msb}-${v.lsb}, PC ${v.pc}]`);
+      }
+      simVoiceSelect.value = '';
+    });
+  }
+
   // 渲染虛擬鋼琴琴鍵
   renderVirtualPianoKeys();
 
-  // 電腦鍵盤演奏與控制監聽
+  // 電腦鍵盤演奏與控制監聽 (支援錄音視窗與畫布手彈步進)
   window.addEventListener('keydown', (e) => {
-    if (!modal || modal.style.display === 'none') return;
+    const isModalOpen = modal && modal.style.display !== 'none';
+    if (!isModalOpen && !isCanvasStepInputActive) return;
     if (e.repeat) return; // 忽略作業系統長按自動連發，防止重複重疊發聲
     const target = e.target as HTMLElement | null;
     if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')) {
       return;
     }
 
+    // 畫布步進專屬快捷鍵 (當錄音彈窗關閉且畫布步進開啟時)
+    if (!isModalOpen && isCanvasStepInputActive) {
+      if (e.code === 'Space' || e.key === ' ') {
+        e.preventDefault();
+        canvasStepRecorder.insertRest();
+        return;
+      }
+      if (e.key === 'Backspace') {
+        e.preventDefault();
+        handleCanvasStepBack();
+        return;
+      }
+      if (e.key === '+' || e.key === '=' || ((e.key === 't' || e.key === 'T') && (e.ctrlKey || e.altKey || e.shiftKey))) {
+        e.preventDefault();
+        handleCanvasStepTie();
+        return;
+      }
+    }
+
     // 模式 B 快捷鍵：Space 插入休止符, Backspace 撤銷, +/=/Shift+T 延長前音 (Tie)
-    if (activeRecordMode === 'B') {
+    if (isModalOpen && activeRecordMode === 'B') {
       if (e.code === 'Space' || e.key === ' ') {
         e.preventDefault();
         stepRecorder.insertRest();
@@ -638,7 +695,8 @@ function initPadRecordModal() {
   });
 
   window.addEventListener('keyup', (e) => {
-    if (!modal || modal.style.display === 'none') return;
+    const isModalOpen = modal && modal.style.display !== 'none';
+    if (!isModalOpen && !isCanvasStepInputActive) return;
     const key = e.key.toLowerCase();
     if (activeSimKeys.has(key)) {
       activeSimKeys.delete(key);
@@ -704,6 +762,27 @@ function renderVirtualPianoKeys() {
   container.appendChild(wrapper);
 }
 
+function getPadVoiceConfig(parsed: YamahaFileParsed, padNum: number): { msb: number; lsb: number; pc: number } | null {
+  const track = parsed.tracks[padNum];
+  if (!track || !track.events) return null;
+  let msb: number | undefined;
+  let lsb: number | undefined;
+  let pc: number | undefined;
+  for (const ev of track.events) {
+    if (ev.type === 'controlChange') {
+      if (ev.controller === 0 && ev.value !== undefined) msb = ev.value;
+      if (ev.controller === 32 && ev.value !== undefined) lsb = ev.value;
+    }
+    if (ev.type === 'programChange' && ev.program !== undefined) {
+      pc = ev.program;
+    }
+  }
+  if (msb !== undefined || pc !== undefined) {
+    return { msb: msb ?? 0, lsb: lsb ?? 0, pc: pc ?? 0 };
+  }
+  return null;
+}
+
 function openRecordModal(padNum: number = 1) {
   initPadRecordModal();
   const modal = document.getElementById('pad-record-modal');
@@ -757,6 +836,35 @@ function openRecordModal(padNum: number = 1) {
 
   // 重置 UI 狀態
   resetRecorderUI();
+
+  // 嗅探音色狀態同步 (若目標 Pad 已有音色，優先載入顯示；否則提示待命中)
+  const snifferLabel = document.getElementById('rec-voice-sniffer-label');
+  const simVoiceSelect = document.getElementById('rec-sim-voice-select') as HTMLSelectElement | null;
+  if (simVoiceSelect) simVoiceSelect.value = '';
+
+  if (currentParsed) {
+    const padVoice = getPadVoiceConfig(currentParsed, padNum);
+    if (padVoice) {
+      const existingV = findYamahaVoice(padVoice.msb, padVoice.lsb, padVoice.pc);
+      lastSniffedRawConfig = { msb: padVoice.msb, lsb: padVoice.lsb, pc: padVoice.pc };
+      lastSniffedVoice = existingV || null;
+      if (snifferLabel) {
+        if (existingV) {
+          snifferLabel.textContent = `${existingV.name} (${existingV.chineseName || ''}) [現有]`;
+        } else {
+          snifferLabel.textContent = `Bank ${padVoice.msb}-${padVoice.lsb} PC ${padVoice.pc} [現有]`;
+        }
+        snifferLabel.style.color = '#94a3b8';
+      }
+    } else {
+      lastSniffedVoice = null;
+      lastSniffedRawConfig = null;
+      if (snifferLabel) {
+        snifferLabel.textContent = '--- (未偵測到)';
+        snifferLabel.style.color = '#94a3b8';
+      }
+    }
+  }
 
   // 掃描 MIDI 設備
   midiManager.requestAccess().then(() => {
@@ -824,13 +932,16 @@ function bindRecordMidiListeners() {
 
   // 2. 音色嗅探監聽 (Voice Sniffer)
   const unVoice = midiManager.onVoiceInput((config) => {
+    lastSniffedRawConfig = { msb: config.msb, lsb: config.lsb, pc: config.pc };
+    lastSniffedVoice = findYamahaVoice(config.msb, config.lsb, config.pc) || null;
     const snifferLabel = document.getElementById('rec-voice-sniffer-label');
     if (snifferLabel) {
-      const v = findYamahaVoice(config.msb, config.lsb, config.pc);
-      if (v) {
-        snifferLabel.textContent = `${v.name} (${v.chineseName || ''})`;
+      if (lastSniffedVoice) {
+        snifferLabel.textContent = `${lastSniffedVoice.name} (${lastSniffedVoice.chineseName || ''})`;
+        snifferLabel.style.color = '#38bdf8';
       } else {
         snifferLabel.textContent = `Bank ${config.msb}-${config.lsb} PC ${config.pc}`;
+        snifferLabel.style.color = '#fbbf24';
       }
     }
   });
@@ -1046,6 +1157,70 @@ function previewStepRecordedNotes() {
   showStatus(`🔊 正在試聽 Pad ${currentRecordPadNum} 步進錄入旋律 (${notes.length} 顆音符)...`);
 }
 
+/**
+ * 將指定音色或 Bank/PC 設定綁定至 Pad (同步圖示、混音、實體琴、聲部混音表與卡片)
+ */
+function bindVoiceToPad(
+  padNum: number,
+  voiceOrConfig: YamahaVoice | { msb: number; lsb: number; pc: number; name?: string; icon?: string; suitability?: string; chineseName?: string },
+  options?: { skipAudition?: boolean; skipConfirm?: boolean; logChange?: boolean }
+): boolean {
+  if (!currentParsed) return false;
+
+  const voiceName = voiceOrConfig.name || `Bank ${voiceOrConfig.msb}-${voiceOrConfig.lsb} PC ${voiceOrConfig.pc}`;
+
+  if (!options?.skipConfirm && voiceOrConfig.suitability === 'warning') {
+    const confirmApply = window.confirm(
+      `⚠️ 避坑提醒：\n音色「${voiceName}」屬於 Organ Flutes 拉桿音色。\nYamaha PSR-SX920 琴端僅支援右手現場演奏此類即時拉桿音色，在 Multi Pad 序列中播放可能無聲音或不支援！\n\n確定仍要套用至 Pad ${padNum} 嗎？`
+    );
+    if (!confirmApply) return false;
+  }
+
+  // 1. 若有 Yamaha 圖示代碼 (I1~I4)，更新 Track 0
+  if (voiceOrConfig.icon) {
+    YamahaPadModifier.setPadIcon(currentParsed, padNum, voiceOrConfig.icon);
+  }
+
+  // 2. 更新 Track 混音 Bank MSB, Bank LSB, Program Change
+  YamahaPadModifier.setPadMixing(currentParsed, padNum, {
+    bankMsb: voiceOrConfig.msb,
+    bankLsb: voiceOrConfig.lsb,
+    programChange: voiceOrConfig.pc,
+  });
+
+  // 3. 實體琴即時同步原廠音色
+  midiManager.sendVoiceChange(padNum - 1, {
+    msb: voiceOrConfig.msb,
+    lsb: voiceOrConfig.lsb,
+    pc: voiceOrConfig.pc,
+  });
+
+  // 4. 同步下方表格與卡片輸入框
+  updatePartsTableRowVoice(padNum, voiceOrConfig.msb, voiceOrConfig.lsb, voiceOrConfig.pc);
+  updatePadCardInstrumentSelect(padNum, voiceOrConfig.msb, voiceOrConfig.lsb, voiceOrConfig.pc);
+
+  // 5. 若當前畫面正在檢視此 Pad，立即刷新詳細資訊面板
+  if (currentActivePadNum === padNum) {
+    const sec = currentParsed.sections[padNum - 1];
+    const nameInput = document.querySelector(`.pad-card-${padNum} .pad-name-input`) as HTMLInputElement | null;
+    const currentName = nameInput ? nameInput.value : `Pad ${padNum}`;
+    if (sec) showPadNotesDetail(currentParsed, sec, currentName, padNum);
+  }
+
+  // 6. 試聽 (可選)
+  if (!options?.skipAudition) {
+    const yv = (voiceOrConfig as YamahaVoice).category ? (voiceOrConfig as YamahaVoice) : findYamahaVoice(voiceOrConfig.msb, voiceOrConfig.lsb, voiceOrConfig.pc);
+    if (yv) auditionSingleVoice(yv);
+  }
+
+  // 7. 變更紀錄 (可選)
+  if (options?.logChange) {
+    markModified(`Pad ${padNum} 音色已設定為: ${voiceName} [Bank ${voiceOrConfig.msb}-${voiceOrConfig.lsb}, PC ${voiceOrConfig.pc}]`);
+  }
+
+  return true;
+}
+
 function applyStepRecordedNotes() {
   if (!currentParsed) {
     showStatus('請先載入或建立 Yamaha PAD 專案', true);
@@ -1066,12 +1241,19 @@ function applyStepRecordedNotes() {
   );
 
   if (success) {
-    markModified(`已將單步步進輸入 (${notes.length} 顆音符) 寫入 Pad ${currentRecordPadNum}`);
+    let boundVoiceDesc = '';
+    if (isAutoBindVoiceEnabled && (lastSniffedVoice || lastSniffedRawConfig)) {
+      const v = lastSniffedVoice || lastSniffedRawConfig!;
+      bindVoiceToPad(currentRecordPadNum, v, { skipAudition: true, skipConfirm: true, logChange: false });
+      boundVoiceDesc = lastSniffedVoice ? ` (同步綁定音色: ${lastSniffedVoice.name})` : ` (同步綁定音色 Bank ${lastSniffedRawConfig!.msb}-${lastSniffedRawConfig!.lsb})`;
+    }
+
+    markModified(`已將單步步進輸入 (${notes.length} 顆音符) 寫入 Pad ${currentRecordPadNum}${boundVoiceDesc}`);
     renderSections(currentParsed);
     if (currentCanvasPadNum === currentRecordPadNum) {
       refreshCurrentPadDetail();
     }
-    showStatus(`✨ 成功將 ${notes.length} 顆步進錄入音符套用至 Pad ${currentRecordPadNum}！`);
+    showStatus(`✨ 成功將 ${notes.length} 顆步進錄入音符套用至 Pad ${currentRecordPadNum}${boundVoiceDesc}！`);
     closeRecordModal();
   } else {
     showStatus(`寫入 Pad ${currentRecordPadNum} 失敗，請檢查專案狀態`, true);
@@ -1235,12 +1417,19 @@ function applyRecordedNotes() {
   );
 
   if (success) {
-    markModified(`已將琴端即時錄音 (${noteEvents.length} 顆音符) 寫入 Pad ${currentRecordPadNum}`);
+    let boundVoiceDesc = '';
+    if (isAutoBindVoiceEnabled && (lastSniffedVoice || lastSniffedRawConfig)) {
+      const v = lastSniffedVoice || lastSniffedRawConfig!;
+      bindVoiceToPad(currentRecordPadNum, v, { skipAudition: true, skipConfirm: true, logChange: false });
+      boundVoiceDesc = lastSniffedVoice ? ` (同步綁定音色: ${lastSniffedVoice.name})` : ` (同步綁定音色 Bank ${lastSniffedRawConfig!.msb}-${lastSniffedRawConfig!.lsb})`;
+    }
+
+    markModified(`已將琴端即時錄音 (${noteEvents.length} 顆音符) 寫入 Pad ${currentRecordPadNum}${boundVoiceDesc}`);
     renderSections(currentParsed);
     if (currentCanvasPadNum === currentRecordPadNum) {
       refreshCurrentPadDetail();
     }
-    showStatus(`✨ 成功將 ${noteEvents.length} 顆即時錄製音符套用至 Pad ${currentRecordPadNum}！`);
+    showStatus(`✨ 成功將 ${noteEvents.length} 顆即時錄製音符套用至 Pad ${currentRecordPadNum}${boundVoiceDesc}！`);
     closeRecordModal();
   } else {
     showStatus(`寫入 Pad ${currentRecordPadNum} 失敗，請重試`, true);
@@ -1698,53 +1887,10 @@ function auditionSingleVoice(voice: YamahaVoice) {
 }
 
 function applyVoiceToPad(padNum: number, voice: YamahaVoice) {
-  if (!currentParsed) return;
-
-  // 0. 若為 OrganFlutes 避坑音色，給予防呆提示
-  if (voice.suitability === 'warning') {
-    const confirmApply = window.confirm(
-      `⚠️ 避坑提醒：\n音色「${voice.name}」屬於 Organ Flutes 拉桿音色。\nYamaha PSR-SX920 琴端僅支援右手現場演奏此類即時拉桿音色，在 Multi Pad 序列中播放可能無聲音或不支援！\n\n確定仍要套用至 Pad ${padNum} 嗎？`
-    );
-    if (!confirmApply) return;
+  const ok = bindVoiceToPad(padNum, voice, { skipAudition: false, skipConfirm: false, logChange: true });
+  if (ok) {
+    closeVoiceModal();
   }
-
-  // 1. 更新 Track 0 的 Yamaha 圖示代碼 (I1~I4)
-  YamahaPadModifier.setPadIcon(currentParsed, padNum, voice.icon);
-
-  // 2. 更新 Track 混音 Bank MSB, Bank LSB, Program Change
-  YamahaPadModifier.setPadMixing(currentParsed, padNum, {
-    bankMsb: voice.msb,
-    bankLsb: voice.lsb,
-    programChange: voice.pc,
-  });
-
-  // 實體琴即時同步原廠音色
-  midiManager.sendVoiceChange(padNum - 1, {
-    msb: voice.msb,
-    lsb: voice.lsb,
-    pc: voice.pc,
-  });
-
-  // 3. 同步下方表格與卡片輸入框
-  updatePartsTableRowVoice(padNum, voice.msb, voice.lsb, voice.pc);
-  updatePadCardInstrumentSelect(padNum, voice.msb, voice.lsb, voice.pc);
-
-  // 4. 若當前畫面正在檢視此 Pad，立即刷新詳細資訊面板
-  if (currentActivePadNum === padNum) {
-    const sec = currentParsed.sections[padNum - 1];
-    const nameInput = document.querySelector(`.pad-card-${padNum} .pad-name-input`) as HTMLInputElement | null;
-    const currentName = nameInput ? nameInput.value : `Pad ${padNum}`;
-    if (sec) showPadNotesDetail(currentParsed, sec, currentName, padNum);
-  }
-
-  // 5. 觸發試聽音
-  auditionSingleVoice(voice);
-
-  // 6. 標記變更
-  markModified(`Pad ${padNum} 音色已更換為: ${voice.name} (${voice.chineseName}) [Bank ${voice.msb}-${voice.lsb}, PC ${voice.pc}]`);
-
-  // 7. 關閉視窗
-  closeVoiceModal();
 }
 
 function renderVoiceModalList() {
@@ -4221,6 +4367,9 @@ function setupNoteCreationControls() {
     btnDrawMode.addEventListener('click', () => {
       isDrawMode = !isDrawMode;
       if (isDrawMode) {
+        if (isCanvasStepInputActive) {
+          toggleCanvasStepInput(false);
+        }
         btnDrawMode.className = 'toggle-btn active-rp';
         btnDrawMode.textContent = '✏️ 畫筆模式 (開)';
         if (canvas) canvas.style.cursor = 'crosshair';
@@ -4237,6 +4386,186 @@ function setupNoteCreationControls() {
       }
     });
   }
+
+  // 畫布直接手彈步進輸入控制
+  const btnCanvasStepInput = document.getElementById('btn-toggle-canvas-step-input');
+  const selectCanvasStepRes = document.getElementById('select-canvas-step-res') as HTMLSelectElement | null;
+
+  if (btnCanvasStepInput) {
+    btnCanvasStepInput.addEventListener('click', () => {
+      toggleCanvasStepInput();
+    });
+  }
+
+  if (selectCanvasStepRes) {
+    selectCanvasStepRes.addEventListener('change', () => {
+      const res = selectCanvasStepRes.value as StepResolution;
+      canvasStepRecorder.setResolution(res);
+      showStatus(`手彈步進每步時值已設定為: ${res}`);
+    });
+  }
+
+  initCanvasStepRecorder();
+}
+
+function initCanvasStepRecorder() {
+  canvasStepRecorder.configure({
+    ppq: 480,
+    timeSignature: { numerator: 4, denominator: 4 },
+    resolution: '1/4',
+    onStepChange: (entry, nextTick) => {
+      if (!currentParsed) return;
+      if (entry.type === 'notes' && entry.notes.length > 0) {
+        for (const n of entry.notes) {
+          YamahaPadModifier.addNoteEvent(currentParsed, currentCanvasPadNum, {
+            note: n.note,
+            startTick: n.startTick,
+            durationTick: n.durationTick,
+            velocity: n.velocity,
+          });
+        }
+        markModified(`畫布手彈步進寫入 ${entry.chordName || '音符'} (${entry.notes.length} 顆) 至 Pad ${currentCanvasPadNum}`);
+        refreshCurrentPadDetail();
+
+        // 自動選取新增音符中的第一顆，以便檢查器即時顯示
+        const newBox = lastRenderedNoteBoxes.find(b => b.startTick === entry.startTick && b.note === entry.notes[0].note);
+        if (newBox) {
+          selectNote(newBox);
+        }
+
+        showStatus(`🎹 步進寫入: ${entry.chordName || midiNoteToName(entry.notes[0].note)} (時值: ${entry.durationTick} ticks, 下一拍: Tick ${nextTick})`);
+      } else if (entry.type === 'rest') {
+        showStatus(`⏸️ 插入休止符 (時值: ${entry.durationTick} ticks, 下一拍: Tick ${nextTick})`);
+      }
+
+      const hoverInfoEl = document.getElementById('canvas-hover-info');
+      if (hoverInfoEl && isCanvasStepInputActive) {
+        hoverInfoEl.innerHTML = `🎹 <span style="color:#38bdf8;font-weight:700;">手彈步進模式已開啟</span>：彈奏琴鍵或電腦鍵盤直接印入和弦；按 <kbd style="background:#1e293b;padding:1px 5px;border-radius:3px;border:1px solid #475569;color:#e2e8f0;">Space</kbd> 插入休止符，<kbd style="background:#1e293b;padding:1px 5px;border-radius:3px;border:1px solid #475569;color:#e2e8f0;">Backspace</kbd> 撤銷前步，<kbd style="background:#1e293b;padding:1px 5px;border-radius:3px;border:1px solid #475569;color:#e2e8f0;">+</kbd> 延長時值 (Tie)。[游標: Tick ${nextTick}]`;
+      }
+    },
+  });
+
+  // 全域註冊 Canvas Step Input MIDI 監聽器
+  midiManager.onNoteInput((type, pitch, velocity) => {
+    const modal = document.getElementById('pad-record-modal');
+    const isModalOpen = modal && modal.style.display !== 'none';
+    if (isModalOpen) return; // 彈窗開啟時由彈窗專屬監聽器負責
+
+    if (!isCanvasStepInputActive) return;
+
+    if (type === 'noteon') {
+      canvasStepRecorder.handleNoteOn(pitch, velocity);
+      audioEngine.playAuditionNote(pitch, 0.35, { volume: Math.min(127, Math.max(30, velocity)) });
+    } else {
+      canvasStepRecorder.handleNoteOff(pitch);
+    }
+  });
+}
+
+function toggleCanvasStepInput(forceState?: boolean) {
+  const btn = document.getElementById('btn-toggle-canvas-step-input');
+  const selectRes = document.getElementById('select-canvas-step-res') as HTMLSelectElement | null;
+  isCanvasStepInputActive = forceState !== undefined ? forceState : !isCanvasStepInputActive;
+
+  if (isCanvasStepInputActive) {
+    if (isDrawMode) {
+      const btnDraw = document.getElementById('btn-draw-mode');
+      if (btnDraw) btnDraw.click();
+    }
+
+    if (btn) {
+      btn.className = 'toggle-btn active-rp';
+      btn.textContent = '🎹 手彈步進: 開';
+    }
+    if (selectRes) selectRes.style.display = 'inline-block';
+
+    midiManager.requestAccess().catch(() => {});
+
+    let startTick = 0;
+    if (selectedNoteBox) {
+      startTick = selectedNoteBox.startTick + selectedNoteBox.durationTick;
+    } else {
+      startTick = currentWindowStartTick;
+    }
+
+    canvasStepRecorder.reset();
+    canvasStepRecorder.seekToTick(startTick);
+    const chosenRes = (selectRes?.value as StepResolution) || '1/4';
+    canvasStepRecorder.configure({
+      ppq: currentTicksPerBeat || 480,
+      timeSignature: { numerator: currentBeatsPerBar || 4, denominator: 4 },
+      resolution: chosenRes,
+    });
+
+    const hoverInfoEl = document.getElementById('canvas-hover-info');
+    if (hoverInfoEl) {
+      hoverInfoEl.innerHTML = `🎹 <span style="color:#38bdf8;font-weight:700;">手彈步進模式已開啟</span>：彈奏琴鍵或電腦鍵盤直接印入和弦；按 <kbd style="background:#1e293b;padding:1px 5px;border-radius:3px;border:1px solid #475569;color:#e2e8f0;">Space</kbd> 插入休止符，<kbd style="background:#1e293b;padding:1px 5px;border-radius:3px;border:1px solid #475569;color:#e2e8f0;">Backspace</kbd> 撤銷前步，<kbd style="background:#1e293b;padding:1px 5px;border-radius:3px;border:1px solid #475569;color:#e2e8f0;">+</kbd> 延長時值 (Tie)。[游標: Tick ${startTick}]`;
+      hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.16)';
+    }
+
+    showStatus(`🎹 畫布手彈步進已開啟 (游標: Tick ${startTick})，彈奏琴鍵或電腦鍵盤直接在畫布印入音符！`);
+  } else {
+    if (btn) {
+      btn.className = 'toggle-btn inactive';
+      btn.textContent = '🎹 手彈步進: 關';
+    }
+    if (selectRes) selectRes.style.display = 'none';
+    resetHoverInfo();
+    showStatus('已關閉畫布手彈步進模式');
+  }
+}
+
+function handleCanvasStepBack() {
+  if (!currentParsed) return;
+  const history = canvasStepRecorder.getHistory();
+  if (history.length === 0) {
+    showStatus('畫布步進歷史已空，無法再後退', true);
+    return;
+  }
+  const lastEntry = history[history.length - 1];
+  const ok = canvasStepRecorder.stepBack();
+  if (ok && lastEntry.type === 'notes' && lastEntry.notes.length > 0) {
+    for (const n of lastEntry.notes) {
+      YamahaPadModifier.deleteNoteEvent(currentParsed, currentCanvasPadNum, {
+        note: n.note,
+        startTick: n.startTick,
+        oldDurationTick: n.durationTick,
+      });
+    }
+    markModified(`畫布步進撤銷：已刪除 Tick ${lastEntry.startTick} 的 ${lastEntry.chordName || '音符'}`);
+    refreshCurrentPadDetail();
+    showStatus(`已撤銷步進輸入 (${lastEntry.chordName || '音符'})，游標退回 Tick ${canvasStepRecorder.getCurrentTick()}`);
+  } else if (ok) {
+    showStatus(`已撤銷休止符，游標退回 Tick ${canvasStepRecorder.getCurrentTick()}`);
+  }
+}
+
+function handleCanvasStepTie() {
+  if (!currentParsed) return;
+  const history = canvasStepRecorder.getHistory();
+  const tiedEntry = history.slice().reverse().find(e => e.type === 'notes' && e.notes.length > 0);
+  if (!tiedEntry) {
+    showStatus('目前無前置音符可供延長 (Tie)', true);
+    return;
+  }
+  const oldDur = tiedEntry.durationTick;
+  const ok = canvasStepRecorder.tiePreviousNote();
+  if (!ok) {
+    showStatus('目前無前置音符可供延長 (Tie)', true);
+    return;
+  }
+  const newDur = tiedEntry.durationTick;
+  for (const n of tiedEntry.notes) {
+    YamahaPadModifier.updateNoteEvent(
+      currentParsed,
+      currentCanvasPadNum,
+      { note: n.note, startTick: n.startTick, oldDurationTick: oldDur },
+      { durationTick: newDur }
+    );
+  }
+  markModified(`畫布步進延長音 (Tie)：延長至 ${newDur} ticks`);
+  refreshCurrentPadDetail();
+  showStatus(`已延長音符時值至 ${newDur} ticks (下一拍 Tick: ${canvasStepRecorder.getCurrentTick()})`);
 }
 
 function updateMeasureControlsUI(totalBars: number) {
@@ -4950,9 +5279,23 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
     );
     if (hit) return;
 
-    // 點擊在空白處：若開啟畫筆模式 (isDrawMode)，單擊即可建立音符；否則顯示雙擊新增提示
+    // 點擊在空白處：若開啟畫筆模式 (isDrawMode)，單擊即可建立音符；若開啟手彈步進，移動步進游標；否則顯示雙擊新增提示
     if (isDrawMode) {
       createNoteAtCanvasPos(mouseX, mouseY);
+    } else if (isCanvasStepInputActive) {
+      const effectivePlotW = currentPlotW > 0 ? currentPlotW : 1000;
+      const effectiveWindowTotalTicks = currentWindowTotalTicks > 0 ? currentWindowTotalTicks : (currentTicksPerBeat * currentBeatsPerBar * 4);
+      const relTick = ((mouseX - 54) / effectivePlotW) * effectiveWindowTotalTicks;
+      const rawTick = currentWindowStartTick + relTick;
+      const snapStep = Math.max(24, Math.round(currentTicksPerBeat / 4));
+      const snappedTick = Math.max(0, Math.round(rawTick / snapStep) * snapStep);
+      canvasStepRecorder.seekToTick(snappedTick);
+
+      const hoverInfoEl = document.getElementById('canvas-hover-info');
+      if (hoverInfoEl) {
+        hoverInfoEl.innerHTML = `🎹 <span style="color:#38bdf8;font-weight:700;">手彈步進游標已移動至 Tick ${snappedTick}</span>：彈奏琴鍵或電腦鍵盤直接在此拍印入音符！`;
+      }
+      showStatus(`🎯 手彈步進游標已移至 Tick ${snappedTick}`);
     } else {
       if (hoverInfoEl) {
         hoverInfoEl.innerHTML = `💡 <span style="color:#fbbf24;font-weight:700;">點擊了空白處</span>：連點兩下 (雙擊) 即可在此處建立音符，或開啟上方 <strong>[✏️ 畫筆模式]</strong> 單擊新增！`;
@@ -4994,6 +5337,14 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
 
 function selectNote(box: RenderedNoteBox) {
   selectedNoteBox = box;
+  if (isCanvasStepInputActive) {
+    const nextTick = box.startTick + box.durationTick;
+    canvasStepRecorder.seekToTick(nextTick);
+    const hoverInfoEl = document.getElementById('canvas-hover-info');
+    if (hoverInfoEl) {
+      hoverInfoEl.innerHTML = `🎹 <span style="color:#38bdf8;font-weight:700;">手彈步進游標已接續於音符後方 (Tick ${nextTick})</span>：彈奏琴鍵或電腦鍵盤直接印入下一組音符！`;
+    }
+  }
   if (currentCanvasRedraw) currentCanvasRedraw();
 
   updateInspectorFields(box);

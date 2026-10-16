@@ -170,6 +170,14 @@
                 <button type="button" id="btn-add-note-action" class="toggle-btn" style="padding: 2px 10px; font-size: 0.74rem; background: #059669; color: #ffffff; border-color: #10b981; font-weight: 700;" title="在當前視野新增一顆音符">➕ 新增音符</button>
                 <button type="button" id="btn-draw-mode" class="toggle-btn inactive" style="padding: 2px 8px; font-size: 0.74rem;" title="切換畫筆模式：開啟後點擊畫布空白處直接建立音符">✏️ 畫筆模式</button>
                 <button type="button" id="btn-toggle-velocity-lane" class="toggle-btn inactive" style="padding: 2px 8px; font-size: 0.72rem;" title="展開或收合下方力度軌道">📊 力度軌道 ▸</button>
+                <button type="button" id="btn-toggle-canvas-step-input" class="toggle-btn inactive" style="padding: 2px 9px; font-size: 0.72rem;" title="啟用畫布手彈步進模式：點選畫布小節拍位，按實體琴鍵或電腦鍵盤直接在畫布印入和弦並自動步進">🎹 手彈步進: 關</button>
+                <select id="select-canvas-step-res" class="icon-select" style="display: none; padding: 1px 5px; font-size: 0.72rem; background: #131722; color: #38bdf8; border: 1px solid #2e384d;" title="手彈步進每步時值 (音長)">
+                  <option value="1/1">時值: 1/1 全小節</option>
+                  <option value="1/2">時值: 1/2 二分音符</option>
+                  <option value="1/4" selected>時值: 1/4 四分 (1拍)</option>
+                  <option value="1/8">時值: 1/8 八分音符</option>
+                  <option value="1/16">時值: 1/16 十六分音符</option>
+                </select>
               </div>
             </div>
             <!-- 固定高度資訊列，徹底消除滑鼠懸停時的畫面抖動 -->
@@ -539,10 +547,24 @@
             <span id="rec-midi-activity-led" class="midi-activity-led" title="MIDI 訊號傳輸指示燈"></span>
           </div>
 
-          <!-- 音色嗅探 -->
-          <div style="display: flex; align-items: center; gap: 4px; font-size: 0.78rem; background: #13151c; padding: 2px 8px; border-radius: 4px; border: 1px solid #232734;">
+          <!-- 音色嗅探與自動綁定 -->
+          <div style="display: flex; align-items: center; gap: 6px; font-size: 0.78rem; background: #13151c; padding: 2px 10px; border-radius: 6px; border: 1px solid #282d3c; flex-wrap: wrap;">
             <span style="color: #94a3b8;">嗅探音色:</span>
-            <span id="rec-voice-sniffer-label" style="color: #a7f3d0; font-family: monospace;">---</span>
+            <span id="rec-voice-sniffer-label" style="color: #a7f3d0; font-family: monospace; font-weight: 600;">--- (未偵測到)</span>
+            <button type="button" id="rec-toggle-autobind-voice" class="toggle-btn active-cm" style="padding: 1px 7px; font-size: 0.72rem;" title="寫入 Pad 時自動將琴端嗅探到的音色與圖標代碼同步套用至目標 Pad">
+              🔗 自動綁定音色: 開
+            </button>
+            <select id="rec-sim-voice-select" class="icon-select" style="padding: 1px 6px; font-size: 0.72rem; background: #181b24; color: #38bdf8; border: 1px solid #333a4c;" title="模擬琴端切換音色 (無實體琴時可由此測試音色嗅探與自動綁定)">
+              <option value="">-- 模擬琴端音色 --</option>
+              <option value="CFX Concert Grand">CFX Concert Grand (三角鋼琴 S801)</option>
+              <option value="Vintage EP">Vintage EP (經典電鋼琴 S801)</option>
+              <option value="Seattle Strings">Seattle Strings (西雅圖弦樂 S809)</option>
+              <option value="Jazz Rotary">Jazz Rotary (爵士旋轉風琴 S805)</option>
+              <option value="Real Distortion">Real Distortion (搖滾電吉他 S807)</option>
+              <option value="Finger Bass">Finger Bass (指彈電貝斯 S808)</option>
+              <option value="Pop Horn Section">Pop Horn Section (流行管樂組 S811)</option>
+              <option value="Standard Kit">Standard Kit (原廠爵士鼓組 S820)</option>
+            </select>
           </div>
         </div>
       </div>
