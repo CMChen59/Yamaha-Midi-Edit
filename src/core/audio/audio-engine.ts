@@ -493,11 +493,10 @@ export class AudioEngine {
     for (const track of tracks) {
       const params = track.channelParams || {};
       const midiCh = params.channel ?? (track.padNum - 1);
-      const trackLimit = track.totalTicks && track.totalTicks > 0 ? track.totalTicks : totalTicks;
 
       for (const n of track.notes) {
         if (this.backingPlaybackSessionId !== sessionId || !this.isBackingPlaying) return;
-        if (n.startTick >= trackLimit) continue;
+        if (n.startTick >= totalTicks) continue;
 
         const noteOffsetSec = ticksToSeconds(n.startTick, bpm, division);
         const noteDurSec = Math.max(ticksToSeconds(n.durationTick, bpm, division), 0.05);
