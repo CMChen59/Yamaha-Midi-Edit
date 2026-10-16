@@ -3648,6 +3648,7 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection | null 
 
   drawNoteRoll(canvas, notes, padNum, ticksPerBeat, beatsPerBar);
   setupMeasureControls();
+  setupOctaveAndQuantizeControls();
   updateMeasureControlsUI(actualBars);
 
   // 若當前有已選取的音符，重新在最新渲染方塊中比對並維持選取態
@@ -5306,6 +5307,75 @@ function setupMeasureControls() {
   }
 }
 
+/**
+ * 2.8-B 八度移調與畫布量化律動事件綁定
+ */
+let isOctaveQuantizeControlsBound = false;
+
+function setupOctaveAndQuantizeControls() {
+  if (isOctaveQuantizeControlsBound) return;
+  isOctaveQuantizeControlsBound = true;
+
+  const btnOctDown = document.getElementById('btn-roll-octave-down');
+  const btnOctUp = document.getElementById('btn-roll-octave-up');
+  const btnExecQuantize = document.getElementById('btn-execute-roll-quantize');
+  const selectQuantizeGrid = document.getElementById('select-roll-quantize-grid') as HTMLSelectElement | null;
+
+  const handleOctaveShift = (direction: 1 | -1) => {
+    if (!currentParsed) return;
+    const isSingle = !!selectedNoteBox;
+    const res = isSingle
+      ? YamahaPadModifier.shiftPadOctave(currentParsed, currentCanvasPadNum, direction, selectedNoteBox!.startTick, selectedNoteBox!.note)
+      : YamahaPadModifier.shiftPadOctave(currentParsed, currentCanvasPadNum, direction);
+
+    if (res.success) {
+      const dirText = direction > 0 ? '升高 1 個八度 (+12 半音)' : '降低 1 個八度 (-12 半音)';
+      if (isSingle && res.targetNoteInfo) {
+        selectedNoteBox!.note = res.targetNoteInfo.newNote;
+        const pitchEl = document.getElementById('insp-pitch-name');
+        if (pitchEl) pitchEl.textContent = `${midiNoteToName(res.targetNoteInfo.newNote)} (${res.targetNoteInfo.newNote})`;
+        markModified(`Pad ${currentCanvasPadNum} 音符已${dirText}至 ${midiNoteToName(res.targetNoteInfo.newNote)} (${res.targetNoteInfo.newNote})`);
+        auditionSelectedNote(res.targetNoteInfo.newNote, selectedNoteBox!.durationTick, selectedNoteBox!.velocity);
+        showStatus(`✨ 已將選取音符${dirText}至 ${midiNoteToName(res.targetNoteInfo.newNote)}！`);
+      } else {
+        markModified(`Pad ${currentCanvasPadNum} 整軌 ${res.shiftedCount} 顆音符已${dirText}`);
+        showStatus(`✨ 已將 Pad ${currentCanvasPadNum} 整軌 ${res.shiftedCount} 顆音符${dirText}！`);
+      }
+      refreshCurrentPadDetail();
+    } else {
+      showStatus('音高已達 MIDI 邊界 (0~127) 或此 Pad 無音符', true);
+    }
+  };
+
+  if (btnOctDown) {
+    btnOctDown.addEventListener('click', () => handleOctaveShift(-1));
+  }
+  if (btnOctUp) {
+    btnOctUp.addEventListener('click', () => handleOctaveShift(1));
+  }
+
+  if (btnExecQuantize) {
+    btnExecQuantize.addEventListener('click', () => {
+      if (!currentParsed) return;
+      const grid = (selectQuantizeGrid?.value || '1/16') as QuantizeGrid;
+      const isSingle = !!selectedNoteBox;
+
+      const res = isSingle
+        ? YamahaPadModifier.quantizePadTrack(currentParsed, currentCanvasPadNum, grid, selectedNoteBox!.startTick, selectedNoteBox!.note)
+        : YamahaPadModifier.quantizePadTrack(currentParsed, currentCanvasPadNum, grid);
+
+      if (res.success) {
+        const targetDesc = isSingle ? '選取音符' : `整軌 ${res.quantizedCount} 顆音符`;
+        markModified(`Pad ${currentCanvasPadNum} ${targetDesc}已套用 ${grid} 量化律動`);
+        refreshCurrentPadDetail();
+        showStatus(`✨ 成功將 Pad ${currentCanvasPadNum} ${targetDesc}吸附至 ${grid} 網格！`);
+      } else {
+        showStatus('此 Pad 目前無音符可套用量化', true);
+      }
+    });
+  }
+}
+
 function updateTimelineNavigationUI(totalBars: number) {
   const container = document.getElementById('canvas-scroll-container');
   const btn4Bars = document.getElementById('btn-zoom-4bars') as HTMLButtonElement | null;
@@ -6176,7 +6246,16 @@ function initNoteInspectorEvents() {
       }
     }
 
-    if (!selectedNoteBox) return;
+    if (!selectedNoteBox) {
+      if (e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        const btnOct = document.getElementById(e.key === 'ArrowUp' ? 'btn-roll-octave-up' : 'btn-roll-octave-down');
+        if (btnOct) {
+          e.preventDefault();
+          btnOct.click();
+        }
+      }
+      return;
+    }
 
     if (e.key === 'ArrowUp') {
       e.preventDefault();

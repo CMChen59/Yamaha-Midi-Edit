@@ -174,6 +174,28 @@
                   </select>
                   <button type="button" id="btn-ripple-delete-bar" class="toggle-btn" style="padding: 2px 7px; font-size: 0.72rem; background: rgba(220, 38, 38, 0.2); color: #f87171; border-color: rgba(239, 68, 68, 0.45); font-weight: 600;" title="模式 A：剪除此小節，後方小節音符自動往前順移遞補 (Shift + Delete)">✂️ 剪除小節</button>
                   <button type="button" id="btn-clear-bar-notes" class="toggle-btn" style="padding: 2px 7px; font-size: 0.72rem; background: rgba(245, 158, 11, 0.15); color: #fbbf24; border-color: rgba(245, 158, 11, 0.4); font-weight: 600;" title="模式 B：清空此小節音符為靜音空白，後方音符與總小節數保持不變 (Delete)">🧹 清空音符</button>
+                <!-- Phase 2.8-B: 八度移調控制項 -->
+                <div style="display: inline-flex; align-items: center; gap: 4px; background: #1a1e29; padding: 2px 6px; border-radius: 4px; border: 1px solid #2e3547;">
+                  <span style="color: #94a3b8; font-size: 0.72rem;">八度:</span>
+                  <button type="button" id="btn-roll-octave-down" class="toggle-btn" style="padding: 2px 7px; font-size: 0.72rem;" title="將選取音符或整軌降低一個八度 (-12半音，快捷鍵: Shift + ↓)">🔽 降八度 (-12)</button>
+                  <button type="button" id="btn-roll-octave-up" class="toggle-btn" style="padding: 2px 7px; font-size: 0.72rem;" title="將選取音符或整軌升高一個八度 (+12半音，快捷鍵: Shift + ↑)">🔼 升八度 (+12)</button>
+                </div>
+                <!-- Phase 2.8-B: 畫布量化與 Swing 搖擺律動 -->
+                <div style="display: inline-flex; align-items: center; gap: 4px; background: #1a1e29; padding: 2px 6px; border-radius: 4px; border: 1px solid #2e3547;">
+                  <span style="color: #94a3b8; font-size: 0.72rem;">🎛️ 量化:</span>
+                  <select id="select-roll-quantize-grid" style="background: #11131a; color: #f8fafc; border: 1px solid #3b4256; border-radius: 3px; font-size: 0.72rem; padding: 1px 4px;">
+                    <option value="1/16">1/16 (標準十六分)</option>
+                    <option value="1/16-swing-54">1/16 Swing 輕微 (54%)</option>
+                    <option value="1/16-swing-60" selected>1/16 Swing 經典 (60%)</option>
+                    <option value="1/16-swing-66">1/16 Swing 三連音 (66%)</option>
+                    <option value="1/8">1/8 (標準八分)</option>
+                    <option value="1/8-swing-60">1/8 Swing 搖擺 (60%)</option>
+                    <option value="1/4">1/4 (四分音符)</option>
+                    <option value="1/32">1/32 (三十二分)</option>
+                    <option value="1/8T">1/8T (八分三連音)</option>
+                    <option value="1/16T">1/16T (十六分三連音)</option>
+                  </select>
+                  <button type="button" id="btn-execute-roll-quantize" class="toggle-btn active-rp" style="padding: 2px 8px; font-size: 0.72rem; background: #0284c7; color: #fff; border-color: #38bdf8;" title="將選取音符或整軌音符吸附至所選量化網格與 Swing 律動">套用量化</button>
                 </div>
               </div>
               <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
@@ -645,10 +667,14 @@
             <div class="record-config-item">
               <label for="rec-grid-select">量化網格:</label>
               <select id="rec-grid-select">
-                <option value="1/16" selected>1/16 (十六分音符 - 推薦)</option>
-                <option value="1/8">1/8 (八分音符)</option>
+                <option value="1/16" selected>1/16 (標準十六分)</option>
+                <option value="1/16-swing-54">1/16 Swing 輕微 (54%)</option>
+                <option value="1/16-swing-60">1/16 Swing 經典 (60%)</option>
+                <option value="1/16-swing-66">1/16 Swing 三連音 (66%)</option>
+                <option value="1/8">1/8 (標準八分)</option>
+                <option value="1/8-swing-60">1/8 Swing 搖擺 (60%)</option>
                 <option value="1/4">1/4 (四分音符)</option>
-                <option value="1/32">1/32 (三十二分音符)</option>
+                <option value="1/32">1/32 (三十二分)</option>
                 <option value="1/8T">1/8T (八分三連音)</option>
                 <option value="1/16T">1/16T (十六分三連音)</option>
               </select>

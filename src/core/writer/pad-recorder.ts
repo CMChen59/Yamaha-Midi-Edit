@@ -12,7 +12,18 @@ export interface RecordedNote {
   durationTick: number;
 }
 
-export type QuantizeGrid = 'off' | '1/4' | '1/8' | '1/16' | '1/32' | '1/8T' | '1/16T';
+export type QuantizeGrid =
+  | 'off'
+  | '1/4'
+  | '1/8'
+  | '1/16'
+  | '1/32'
+  | '1/8T'
+  | '1/16T'
+  | '1/16-swing-54'
+  | '1/16-swing-60'
+  | '1/16-swing-66'
+  | '1/8-swing-60';
 
 export type PadRecorderState = 'idle' | 'countingIn' | 'recording' | 'finished';
 
@@ -276,7 +287,94 @@ export class PadRecorder {
   }
 
   /**
-   * 智慧網格量化演算法 (Smart Quantization)
+   * 2.8-B 將特定 Tick 吸附至量化網格 (支援 Straight 網格與 Swing 搖擺律動)
+   */
+  public static snapTickToGrid(tick: number, grid: QuantizeGrid, ppq: number = 480): number {
+    if (grid === 'off') return Math.max(0, Math.round(tick));
+
+    if (grid.startsWith('1/16-swing-')) {
+      const ratio = grid === '1/16-swing-54' ? 0.54 : (grid === '1/16-swing-66' ? (2 / 3) : 0.60);
+      const eighth = Math.round(ppq / 2);
+      const eighthIndex = Math.floor(tick / eighth);
+      const eighthStart = eighthIndex * eighth;
+      const swungOffset = Math.round(eighth * ratio);
+
+      const candidates = [
+        eighthStart - eighth + swungOffset,
+        eighthStart,
+        eighthStart + swungOffset,
+        eighthStart + eighth,
+        eighthStart + eighth + swungOffset,
+      ];
+
+      let best = eighthStart;
+      let minDiff = Infinity;
+      for (const p of candidates) {
+        if (p < 0) continue;
+        const diff = Math.abs(tick - p);
+        if (diff < minDiff) {
+          minDiff = diff;
+          best = p;
+        }
+      }
+      return best;
+    }
+
+    if (grid === '1/8-swing-60') {
+      const ratio = 0.60;
+      const beatIndex = Math.floor(tick / ppq);
+      const beatStart = beatIndex * ppq;
+      const swungOffset = Math.round(ppq * ratio);
+
+      const candidates = [
+        beatStart - ppq + swungOffset,
+        beatStart,
+        beatStart + swungOffset,
+        beatStart + ppq,
+        beatStart + ppq + swungOffset,
+      ];
+
+      let best = beatStart;
+      let minDiff = Infinity;
+      for (const p of candidates) {
+        if (p < 0) continue;
+        const diff = Math.abs(tick - p);
+        if (diff < minDiff) {
+          minDiff = diff;
+          best = p;
+        }
+      }
+      return best;
+    }
+
+    const gridTicks = PadRecorder.getGridTicks(grid, ppq);
+    if (gridTicks <= 0) return Math.max(0, Math.round(tick));
+    return Math.max(0, Math.round(tick / gridTicks) * gridTicks);
+  }
+
+  /**
+   * 2.8-B 計算指定網格之最小音符時值
+   */
+  public static getMinGridDuration(grid: QuantizeGrid, ppq: number = 480): number {
+    switch (grid) {
+      case '1/4': return ppq;
+      case '1/8': return Math.round(ppq / 2);
+      case '1/16': return Math.round(ppq / 4);
+      case '1/32': return Math.round(ppq / 8);
+      case '1/8T': return Math.round(ppq / 3);
+      case '1/16T': return Math.round(ppq / 6);
+      case '1/16-swing-54':
+      case '1/16-swing-60':
+      case '1/16-swing-66':
+        return Math.round(ppq / 6);
+      case '1/8-swing-60':
+        return Math.round(ppq / 3);
+      default: return Math.round(ppq / 4);
+    }
+  }
+
+  /**
+   * 智慧網格量化演算法 (Smart Quantization with Swing Support)
    */
   public static quantizeNotes(
     notes: RecordedNote[],
@@ -286,18 +384,25 @@ export class PadRecorder {
   ): RecordedNote[] {
     if (grid === 'off' || notes.length === 0) return [...notes];
 
+    const isSwing = grid.includes('swing');
     const gridTicks = PadRecorder.getGridTicks(grid, ppq);
-    if (gridTicks <= 0) return [...notes];
+    const minDur = isSwing ? PadRecorder.getMinGridDuration(grid, ppq) : gridTicks;
 
     return notes.map((note) => {
       // 1. 起始拍吸附至最近網格點
-      let qStart = Math.round(note.startTick / gridTicks) * gridTicks;
-      qStart = Math.max(0, Math.min(maxTicks - gridTicks, qStart));
+      let qStart = PadRecorder.snapTickToGrid(note.startTick, grid, ppq);
+      qStart = Math.max(0, Math.min(maxTicks - minDur, qStart));
 
-      // 2. 音長吸附至最近網格長度 (最短為 1 個網格)
-      let qDur = Math.round(note.durationTick / gridTicks) * gridTicks;
-      if (qDur < gridTicks) qDur = gridTicks;
-      if (qStart + qDur > maxTicks) qDur = maxTicks - qStart;
+      // 2. 音長吸附至最近網格長度 (最短為 minDur)
+      let qDur: number;
+      if (isSwing) {
+        const snappedEnd = PadRecorder.snapTickToGrid(note.startTick + note.durationTick, grid, ppq);
+        qDur = Math.max(minDur, snappedEnd - qStart);
+      } else {
+        qDur = Math.round(note.durationTick / gridTicks) * gridTicks;
+        if (qDur < gridTicks) qDur = gridTicks;
+      }
+      if (qStart + qDur > maxTicks) qDur = Math.max(minDur, maxTicks - qStart);
 
       return {
         pitch: note.pitch,
@@ -319,6 +424,12 @@ export class PadRecorder {
       case '1/32': return Math.round(ppq / 8);
       case '1/8T': return Math.round(ppq / 3);
       case '1/16T': return Math.round(ppq / 6);
+      case '1/16-swing-54':
+      case '1/16-swing-60':
+      case '1/16-swing-66':
+        return Math.round(ppq / 4);
+      case '1/8-swing-60':
+        return Math.round(ppq / 2);
       default: return 0;
     }
   }

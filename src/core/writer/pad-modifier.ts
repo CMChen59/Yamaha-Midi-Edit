@@ -1,5 +1,6 @@
 import { BinaryWriter } from './binary-writer';
 import type { YamahaFileParsed, MidiEvent, MidiTrack } from '../models/types';
+import { PadRecorder, type QuantizeGrid } from './pad-recorder';
 
 /**
  * Yamaha Pad 屬性與混音編輯核心模組
@@ -1263,6 +1264,158 @@ export class YamahaPadModifier {
 
     this.rebuildTrackRawChunk(track);
     return { success: true, deletedCount, newTotalBars };
+  }
+
+  /**
+   * 2.8-B 八度快速移調工具 (Octave Shift +/- 12 半音)
+   * - 若傳入 targetStartTick 與 targetNote：僅移調該特定單一音符
+   * - 若未傳入目標音符：將指定 Pad 整軌所有音符一鍵升/降八度
+   * - 自動進行 0 ~ 127 MIDI 音高邊界防護
+   */
+  public static shiftPadOctave(
+    parsed: YamahaFileParsed,
+    padNum: number,
+    direction: 1 | -1,
+    targetStartTick?: number,
+    targetNote?: number
+  ): { success: boolean; shiftedCount: number; targetNoteInfo?: { oldNote: number; newNote: number } } {
+    const track = parsed.tracks[padNum];
+    if (!track || !track.events) return { success: false, shiftedCount: 0 };
+
+    const semitones = direction * 12;
+    let curTick = 0;
+    const annotated = track.events.map((ev, index) => {
+      curTick += ev.delta;
+      return { ev, absTick: curTick, index };
+    });
+
+    let shiftedCount = 0;
+    let targetNoteInfo: { oldNote: number; newNote: number } | undefined;
+
+    if (targetStartTick !== undefined && targetNote !== undefined) {
+      // 僅移調單一目標音符
+      const onEntry = annotated.find(
+        (i) => i.absTick === targetStartTick && i.ev.type === 'noteOn' && i.ev.noteNumber === targetNote && (i.ev.velocity ?? 0) > 0
+      );
+      if (!onEntry) return { success: false, shiftedCount: 0 };
+
+      const oldNote = targetNote;
+      const newNote = Math.max(0, Math.min(127, oldNote + semitones));
+      if (newNote === oldNote) return { success: false, shiftedCount: 0 };
+
+      // 尋找對應的 Note-Off
+      const offEntry = annotated.find(
+        (i) => i.index > onEntry.index &&
+          i.ev.noteNumber === targetNote &&
+          (i.ev.type === 'noteOff' || (i.ev.type === 'noteOn' && (i.ev.velocity ?? 0) === 0))
+      );
+
+      onEntry.ev.noteNumber = newNote;
+      if (offEntry) offEntry.ev.noteNumber = newNote;
+
+      shiftedCount = 1;
+      targetNoteInfo = { oldNote, newNote };
+    } else {
+      // 整軌所有音符一鍵移調
+      for (const item of annotated) {
+        if ((item.ev.type === 'noteOn' || item.ev.type === 'noteOff') && item.ev.noteNumber !== undefined) {
+          const oldNote = item.ev.noteNumber;
+          const newNote = Math.max(0, Math.min(127, oldNote + semitones));
+          item.ev.noteNumber = newNote;
+          if (item.ev.type === 'noteOn' && (item.ev.velocity ?? 0) > 0) {
+            shiftedCount++;
+          }
+        }
+      }
+    }
+
+    if (shiftedCount === 0) return { success: false, shiftedCount: 0 };
+
+    this.rebuildTrackRawChunk(track);
+    return { success: true, shiftedCount, targetNoteInfo };
+  }
+
+  /**
+   * 2.8-B Pad 音軌量化與 Swing 搖擺律動套用
+   * - 支援 1/16、1/8、1/4、1/32、三連音及 Swing 搖擺律動 (54%, 60%, 66%)
+   * - 可針對「選取音符」或「整軌音符」執行量化
+   */
+  public static quantizePadTrack(
+    parsed: YamahaFileParsed,
+    padNum: number,
+    grid: QuantizeGrid,
+    targetStartTick?: number,
+    targetNote?: number
+  ): { success: boolean; quantizedCount: number } {
+    const track = parsed.tracks[padNum];
+    if (!track || !track.events || grid === 'off') return { success: false, quantizedCount: 0 };
+
+    const ppq = parsed.division || 480;
+    const beatsPerBar = parsed.timeSignature?.numerator || 4;
+    const ticksPerBar = ppq * beatsPerBar;
+    const totalBars = this.getPadBarLength(parsed, padNum);
+    const maxTicks = totalBars * ticksPerBar;
+
+    // 提取所有音符
+    let curTick = 0;
+    const activeNotes = new Map<number, { tick: number; velocity: number }>();
+    const noteList: Array<{ note: number; startTick: number; durationTick: number; velocity: number }> = [];
+
+    for (const ev of track.events) {
+      curTick += ev.delta;
+      if (ev.type === 'noteOn' && ev.noteNumber !== undefined && (ev.velocity ?? 0) > 0) {
+        activeNotes.set(ev.noteNumber, { tick: curTick, velocity: ev.velocity! });
+      } else if ((ev.type === 'noteOff' || (ev.type === 'noteOn' && ev.velocity === 0)) && ev.noteNumber !== undefined) {
+        const st = activeNotes.get(ev.noteNumber);
+        if (st) {
+          noteList.push({
+            note: ev.noteNumber,
+            velocity: st.velocity,
+            startTick: st.tick,
+            durationTick: Math.max(curTick - st.tick, 1),
+          });
+          activeNotes.delete(ev.noteNumber);
+        }
+      }
+    }
+
+    if (noteList.length === 0) return { success: false, quantizedCount: 0 };
+
+    let quantizedCount = 0;
+    const firstNoteTick = Math.min(...noteList.map((n) => n.startTick));
+    const gridStartTick = Math.floor(firstNoteTick / ticksPerBar) * ticksPerBar;
+
+    const modifiedNotes = noteList.map((n) => {
+      const isTarget = (targetStartTick !== undefined && targetNote !== undefined)
+        ? (n.startTick === targetStartTick && n.note === targetNote)
+        : true;
+
+      if (!isTarget) return n;
+
+      // 依據 gridStartTick 計算相對 Tick 進行量化
+      const relStart = n.startTick - gridStartTick;
+      const qRelStart = PadRecorder.snapTickToGrid(relStart, grid, ppq);
+      const minDur = PadRecorder.getMinGridDuration(grid, ppq);
+      const qStart = gridStartTick + Math.max(0, Math.min(maxTicks - minDur, qRelStart));
+
+      // 音長吸附
+      const relEnd = relStart + n.durationTick;
+      const qRelEnd = PadRecorder.snapTickToGrid(relEnd, grid, ppq);
+      const qDur = Math.max(minDur, qRelEnd - qRelStart);
+
+      quantizedCount++;
+      return {
+        note: n.note,
+        velocity: n.velocity,
+        startTick: qStart,
+        durationTick: qDur,
+      };
+    });
+
+    if (quantizedCount === 0) return { success: false, quantizedCount: 0 };
+
+    const ok = this.replacePadNotes(parsed, padNum, modifiedNotes, totalBars);
+    return { success: ok, quantizedCount };
   }
 
   /**
