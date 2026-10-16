@@ -1200,9 +1200,40 @@ body {
    ========================================================================== */
 
 .record-modal-dialog {
-  max-width: 860px;
-  height: auto;
-  max-height: 92vh;
+  max-width: 900px;
+  height: 90vh;
+  max-height: 94vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.record-modal-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  scrollbar-width: thin;
+  scrollbar-color: #334155 #11141c;
+}
+
+.record-modal-body::-webkit-scrollbar {
+  width: 6px;
+}
+.record-modal-body::-webkit-scrollbar-track {
+  background: #11141c;
+}
+.record-modal-body::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 3px;
+}
+
+.record-modal-footer {
+  flex-shrink: 0;
+  border-top: 1px solid #282c39;
+  background: #181c26;
+  z-index: 10;
 }
 
 .record-meta-bar {

@@ -477,15 +477,23 @@ function initPadRecordModal() {
     });
   }
 
-  // Mode B: 試聽與寫入
+  // Mode B: 試聽與寫入 (支援底部按鈕與上方操作列按鈕)
   const btnStepPreview = document.getElementById('btn-step-preview');
   if (btnStepPreview) {
     btnStepPreview.addEventListener('click', previewStepRecordedNotes);
+  }
+  const btnStepTopPreview = document.getElementById('btn-step-top-preview');
+  if (btnStepTopPreview) {
+    btnStepTopPreview.addEventListener('click', previewStepRecordedNotes);
   }
 
   const btnStepApply = document.getElementById('btn-step-apply');
   if (btnStepApply) {
     btnStepApply.addEventListener('click', applyStepRecordedNotes);
+  }
+  const btnStepTopApply = document.getElementById('btn-step-top-apply');
+  if (btnStepTopApply) {
+    btnStepTopApply.addEventListener('click', applyStepRecordedNotes);
   }
 
   if (btnClose) btnClose.addEventListener('click', closeRecordModal);
@@ -573,6 +581,10 @@ function initPadRecordModal() {
       const applyBtnB = document.getElementById('btn-step-apply');
       if (applyBtnB) {
         applyBtnB.textContent = `💾 寫入 Pad ${currentRecordPadNum}`;
+      }
+      const applyBtnBTop = document.getElementById('btn-step-top-apply');
+      if (applyBtnBTop) {
+        applyBtnBTop.textContent = `💾 寫入 Pad ${currentRecordPadNum}`;
       }
     });
   }
@@ -732,6 +744,10 @@ function openRecordModal(padNum: number = 1) {
   const applyBtnB = document.getElementById('btn-step-apply');
   if (applyBtnB) {
     applyBtnB.textContent = `💾 寫入 Pad ${padNum}`;
+  }
+  const applyBtnBTop = document.getElementById('btn-step-top-apply');
+  if (applyBtnBTop) {
+    applyBtnBTop.textContent = `💾 寫入 Pad ${padNum}`;
   }
 
   // 重置 Mode B 步進狀態
@@ -921,6 +937,10 @@ function switchRecordMode(mode: 'A' | 'B') {
     const stepApply = document.getElementById('btn-step-apply');
     if (stepApply) {
       stepApply.textContent = `💾 寫入 Pad ${currentRecordPadNum}`;
+    }
+    const stepTopApply = document.getElementById('btn-step-top-apply');
+    if (stepTopApply) {
+      stepTopApply.textContent = `💾 寫入 Pad ${currentRecordPadNum}`;
     }
   }
 }
