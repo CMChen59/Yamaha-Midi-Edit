@@ -276,7 +276,7 @@
       <div class="modal-header">
         <div>
           <h3 class="modal-title">🎹 Yamaha PSR-SX920 原廠音色庫搜尋</h3>
-          <p class="modal-subtitle">即時搜尋 1,500+ 原廠音色、查看 MSB-LSB-PC 身分證並一鍵套用至打擊墊</p>
+          <p class="modal-subtitle">即時搜尋 2,300+ 完整 Data List 原廠音色、查看 MSB-LSB-PC 身分證並一鍵套用至打擊墊</p>
         </div>
         <button type="button" id="btn-close-voice-modal" class="modal-close-btn" title="關閉視窗">&times;</button>
       </div>
@@ -292,9 +292,14 @@
       <div class="modal-search-bar">
         <div class="search-input-wrapper">
           <span class="search-icon">🔍</span>
-          <input type="text" id="voice-search-input" placeholder="輸入樂器名稱 (如 Concert, Strings, Pizz)、中文 (鋼琴, 弦樂) 或三聯號 (0-113-75)..." />
+          <input type="text" id="voice-search-input" placeholder="輸入樂器名稱 (如 Concert, Mega, Strings)、中文 (鋼琴, 弦樂) 或三聯號 (104-1-0)..." />
           <button type="button" id="btn-clear-voice-search" class="clear-search-btn" style="display: none;">&times;</button>
         </div>
+      </div>
+
+      <!-- Multi Pad 適用度與音色類型過濾標籤列 -->
+      <div class="suitability-pills" id="voice-suitability-pills">
+        <!-- 動態渲染各類型與推薦標籤 -->
       </div>
 
       <!-- 分類標籤快捷列 -->
@@ -307,19 +312,25 @@
         <table class="voice-table">
           <thead>
             <tr>
-              <th style="width: 50px; text-align: center;">圖標</th>
+              <th style="width: 48px; text-align: center;">圖標</th>
               <th>音色名稱 (英文 / 繁體中文說明)</th>
-              <th style="width: 100px;">樂器分類</th>
-              <th style="width: 75px; text-align: center;">類型</th>
-              <th style="width: 110px;">Bank MSB-LSB</th>
-              <th style="width: 70px;">Program</th>
-              <th style="width: 140px; text-align: center;">操作</th>
+              <th style="width: 95px;">樂器分類</th>
+              <th style="width: 80px; text-align: center;">類型</th>
+              <th style="width: 140px; text-align: center;">Multi Pad 適用度</th>
+              <th style="width: 105px;">Bank MSB-LSB</th>
+              <th style="width: 65px;">Program</th>
+              <th style="width: 135px; text-align: center;">操作</th>
             </tr>
           </thead>
           <tbody id="voice-list-tbody">
             <!-- 動態渲染音色列表 -->
           </tbody>
         </table>
+        <div id="voice-load-more-container" style="text-align: center; padding: 14px; display: none;">
+          <button type="button" id="btn-load-more-voices" class="btn btn-secondary" style="font-size: 0.8rem; padding: 6px 18px;">
+            ⬇️ 載入更多音色 (<span id="voice-remaining-count">0</span>)
+          </button>
+        </div>
       </div>
 
       <div class="modal-footer">

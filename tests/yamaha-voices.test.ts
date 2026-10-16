@@ -36,8 +36,8 @@ describe('Yamaha PSR-SX920 音色資料庫與搜尋引擎測試 (Voice DB)', () 
 
   it('關鍵字搜尋支援英文模糊搜尋', () => {
     const results = searchYamahaVoices('kino');
-    expect(results.length).toBe(1);
-    expect(results[0].name).toBe('Kino Strings');
+    expect(results.length).toBeGreaterThan(0);
+    expect(results.some(r => r.name === 'Kino Strings')).toBe(true);
   });
 
   it('關鍵字搜尋支援繁體中文搜尋', () => {
@@ -48,7 +48,7 @@ describe('Yamaha PSR-SX920 音色資料庫與搜尋引擎測試 (Voice DB)', () 
 
   it('分類篩選功能正常運作', () => {
     const guitars = searchYamahaVoices('', 'Guitar');
-    expect(guitars.length).toBeGreaterThan(3);
+    expect(guitars.length).toBeGreaterThan(50);
     expect(guitars.every(g => g.category === 'Guitar')).toBe(true);
   });
 
@@ -56,5 +56,28 @@ describe('Yamaha PSR-SX920 音色資料庫與搜尋引擎測試 (Voice DB)', () 
     const results = searchYamahaVoices('0-113-75');
     expect(results.length).toBe(1);
     expect(results[0].name).toBe('Pizzicato Strings');
+  });
+
+  it('資料庫擴充至 2,000+ 完整 Data List 音色', () => {
+    expect(YAMAHA_SX920_VOICES.length).toBeGreaterThan(2000);
+  });
+
+  it('支援 Multi Pad 推薦篩選 (RECOMMENDED)', () => {
+    const recommended = searchYamahaVoices('', 'ALL', 'RECOMMENDED');
+    expect(recommended.length).toBeGreaterThan(100);
+    expect(recommended.every(r => r.suitability === 'recommended')).toBe(true);
+  });
+
+  it('支援 MegaVoice 專利伴奏音色篩選 (MEGAVOICE)', () => {
+    const mega = searchYamahaVoices('', 'ALL', 'MEGAVOICE');
+    expect(mega.length).toBeGreaterThan(50);
+    expect(mega.every(r => r.type === 'MegaVoice')).toBe(true);
+  });
+
+  it('支援避坑警示篩選 (WARNING / OrganFlutes)', () => {
+    const warnings = searchYamahaVoices('', 'ALL', 'WARNING');
+    expect(warnings.length).toBeGreaterThan(20);
+    expect(warnings.every(r => r.suitability === 'warning')).toBe(true);
+    expect(warnings[0].suitabilityReason).toContain('避坑警示');
   });
 });

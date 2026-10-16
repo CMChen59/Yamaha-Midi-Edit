@@ -15,8 +15,10 @@ import {
   findYamahaVoice,
   searchYamahaVoices,
   VOICE_CATEGORIES,
-  YamahaVoice,
-  VoiceCategory,
+  VOICE_SUITABILITY_FILTERS,
+  type YamahaVoice,
+  type VoiceCategory,
+  type VoiceSuitabilityFilter,
 } from '../core/data/yamaha-voices';
 
 console.log('[Yamaha App] 系統腳本已載入');
@@ -150,7 +152,9 @@ function updatePadCardInstrumentSelect(padNum: number, msb: number, lsb: number,
 // ========================================================
 let targetModalPadNum: number = 1;
 let currentModalCategory: VoiceCategory | 'ALL' = 'ALL';
+let currentModalSuitabilityFilter: VoiceSuitabilityFilter = 'ALL';
 let currentModalSearchQuery: string = '';
+let currentModalRenderLimit: number = 60;
 
 function initVoiceSearchModal() {
   const modal = document.getElementById('voice-search-modal');
@@ -158,7 +162,9 @@ function initVoiceSearchModal() {
   const btnCloseFooter = document.getElementById('btn-close-modal-footer');
   const searchInput = document.getElementById('voice-search-input') as HTMLInputElement | null;
   const btnClearSearch = document.getElementById('btn-clear-voice-search');
+  const suitabilityPillsContainer = document.getElementById('voice-suitability-pills');
   const pillsContainer = document.getElementById('voice-category-pills');
+  const btnLoadMore = document.getElementById('btn-load-more-voices');
 
   if (!modal) return;
 
@@ -187,6 +193,7 @@ function initVoiceSearchModal() {
   if (searchInput) {
     searchInput.addEventListener('input', () => {
       currentModalSearchQuery = searchInput.value.trim();
+      currentModalRenderLimit = 60; // 搜尋條件變更時重置分頁
       if (btnClearSearch) {
         btnClearSearch.style.display = searchInput.value ? 'block' : 'none';
       }
@@ -199,9 +206,41 @@ function initVoiceSearchModal() {
     btnClearSearch.addEventListener('click', () => {
       searchInput.value = '';
       currentModalSearchQuery = '';
+      currentModalRenderLimit = 60;
       btnClearSearch.style.display = 'none';
       searchInput.focus();
       renderVoiceModalList();
+    });
+  }
+
+  // 點擊載入更多音色
+  if (btnLoadMore) {
+    btnLoadMore.addEventListener('click', () => {
+      currentModalRenderLimit += 60;
+      renderVoiceModalList();
+    });
+  }
+
+  // 動態渲染 Multi Pad 適用度與類型篩選標籤
+  if (suitabilityPillsContainer) {
+    suitabilityPillsContainer.innerHTML = '';
+    VOICE_SUITABILITY_FILTERS.forEach((filter) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      let extraClass = '';
+      if (filter.key === 'RECOMMENDED' || filter.key === 'MEGAVOICE') extraClass = 'pill-recommended';
+      else if (filter.key === 'WARNING') extraClass = 'pill-warning';
+
+      btn.className = `suit-pill ${extraClass} ${filter.key === currentModalSuitabilityFilter ? 'active' : ''}`;
+      btn.innerHTML = `${filter.icon} ${filter.label}`;
+      btn.addEventListener('click', () => {
+        currentModalSuitabilityFilter = filter.key;
+        currentModalRenderLimit = 60;
+        suitabilityPillsContainer.querySelectorAll('.suit-pill').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        renderVoiceModalList();
+      });
+      suitabilityPillsContainer.appendChild(btn);
     });
   }
 
@@ -215,6 +254,7 @@ function initVoiceSearchModal() {
       btn.innerHTML = `${cat.icon} ${cat.label}`;
       btn.addEventListener('click', () => {
         currentModalCategory = cat.key;
+        currentModalRenderLimit = 60;
         pillsContainer.querySelectorAll('.cat-pill').forEach(p => p.classList.remove('active'));
         btn.classList.add('active');
         renderVoiceModalList();
@@ -231,6 +271,7 @@ function openVoiceModal(padNum: number) {
   if (!modal) return;
 
   targetModalPadNum = padNum;
+  currentModalRenderLimit = 60;
   if (badge) {
     badge.textContent = `Pad ${padNum}`;
   }
@@ -719,6 +760,14 @@ function auditionSingleVoice(voice: YamahaVoice) {
 function applyVoiceToPad(padNum: number, voice: YamahaVoice) {
   if (!currentParsed) return;
 
+  // 0. 若為 OrganFlutes 避坑音色，給予防呆提示
+  if (voice.suitability === 'warning') {
+    const confirmApply = window.confirm(
+      `⚠️ 避坑提醒：\n音色「${voice.name}」屬於 Organ Flutes 拉桿音色。\nYamaha PSR-SX920 琴端僅支援右手現場演奏此類即時拉桿音色，在 Multi Pad 序列中播放可能無聲音或不支援！\n\n確定仍要套用至 Pad ${padNum} 嗎？`
+    );
+    if (!confirmApply) return;
+  }
+
   // 1. 更新 Track 0 的 Yamaha 圖示代碼 (I1~I4)
   YamahaPadModifier.setPadIcon(currentParsed, padNum, voice.icon);
 
@@ -761,9 +810,11 @@ function applyVoiceToPad(padNum: number, voice: YamahaVoice) {
 function renderVoiceModalList() {
   const tbody = document.getElementById('voice-list-tbody');
   const countLabel = document.getElementById('voice-count-label');
+  const loadMoreContainer = document.getElementById('voice-load-more-container');
+  const remainingLabel = document.getElementById('voice-remaining-count');
   if (!tbody) return;
 
-  const voices = searchYamahaVoices(currentModalSearchQuery, currentModalCategory);
+  const voices = searchYamahaVoices(currentModalSearchQuery, currentModalCategory, currentModalSuitabilityFilter);
 
   if (countLabel) {
     countLabel.textContent = `共 ${voices.length} 種音色符合`;
@@ -772,18 +823,31 @@ function renderVoiceModalList() {
   if (voices.length === 0) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="7" style="text-align: center; padding: 36px 12px; color: #94a3b8;">
+        <td colspan="8" style="text-align: center; padding: 36px 12px; color: #94a3b8;">
           <div style="font-size: 1.8rem; margin-bottom: 8px;">🔍</div>
           <div>找不到符合條件的 Yamaha 原廠音色</div>
-          <div style="font-size: 0.75rem; color: #64748b; margin-top: 4px;">請嘗試更換關鍵字、樂器類別或清除搜尋篩選</div>
+          <div style="font-size: 0.75rem; color: #64748b; margin-top: 4px;">請嘗試更換關鍵字、樂器類別或切換適用度標籤</div>
         </td>
       </tr>
     `;
+    if (loadMoreContainer) loadMoreContainer.style.display = 'none';
     return;
   }
 
+  const visibleVoices = voices.slice(0, currentModalRenderLimit);
+
+  if (loadMoreContainer && remainingLabel) {
+    const remaining = voices.length - visibleVoices.length;
+    if (remaining > 0) {
+      loadMoreContainer.style.display = 'block';
+      remainingLabel.textContent = remaining.toString();
+    } else {
+      loadMoreContainer.style.display = 'none';
+    }
+  }
+
   tbody.innerHTML = '';
-  for (const voice of voices) {
+  for (const voice of visibleVoices) {
     const tr = document.createElement('tr');
     tr.className = 'voice-row';
 
@@ -796,6 +860,16 @@ function renderVoiceModalList() {
     else if (voice.type === 'Sweet!') typeClass = 'sweet';
     else if (voice.type === 'Cool!') typeClass = 'cool';
     else if (voice.type === 'MegaVoice') typeClass = 'megavoice';
+    else if (voice.type === 'OrganFlutes') typeClass = 'organflutes';
+    else if (voice.type === 'Legacy') typeClass = 'legacy';
+
+    // 適用度標籤
+    let suitabilityHtml = '<span class="voice-suitability-badge voice-suitability-standard">一般</span>';
+    if (voice.suitability === 'recommended') {
+      suitabilityHtml = `<span class="voice-suitability-badge voice-suitability-recommended" title="${escapeHtml(voice.suitabilityReason || '推薦音色')}">⭐ 推薦</span>`;
+    } else if (voice.suitability === 'warning') {
+      suitabilityHtml = `<span class="voice-suitability-badge voice-suitability-warning" title="${escapeHtml(voice.suitabilityReason || '避坑警示')}">⚠️ 避坑</span>`;
+    }
 
     tr.innerHTML = `
       <td style="text-align: center; font-size: 1.2rem;">${catIcon}</td>
@@ -806,6 +880,9 @@ function renderVoiceModalList() {
       <td><span style="font-size: 0.78rem; color: #cbd5e1;">${voice.category}</span></td>
       <td style="text-align: center;">
         <span class="voice-type-badge voice-type-${typeClass}">${voice.type || 'Standard'}</span>
+      </td>
+      <td style="text-align: center;">
+        ${suitabilityHtml}
       </td>
       <td><code style="font-family: monospace; color: #38bdf8; font-size: 0.8rem;">${voice.msb} - ${voice.lsb}</code></td>
       <td><code style="font-family: monospace; color: #f59e0b; font-size: 0.8rem;">${voice.pc}</code></td>

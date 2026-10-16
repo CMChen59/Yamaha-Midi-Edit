@@ -1,8 +1,8 @@
 # Yamaha PSR-SX920 Multi Pad / Style Editor 開發進度查核點 (PROJECT PROGRESS CHECKPOINT)
 
-**最後更新時間**：2026-10-15  
-**當前 Git Commit**：`a4bd543` (main 分支最新代碼)  
-**自動化測試狀態**：✅ 50 / 50 項單元與回歸測試 100% 通過  
+**最後更新時間**：2026-10-16  
+**當前 Git Commit**：待提交 (2,300+ 音色庫完整整合)  
+**自動化測試狀態**：✅ 54 / 54 項單元與回歸測試 100% 通過  
 **本地開發伺服器**：🚀 運行中於 `http://localhost:5173` (Vite)
 
 ---
@@ -13,8 +13,9 @@
 | :--- | :--- | :--- | :--- |
 | **Phase 1** | STY / PAD 底層二進位解析與無損重構 (Parser & Round-trip) | **已完成** | Byte-by-byte 深度重構比對 100% 一致，PSR-SX920 實體琴載入零報錯。 |
 | **Phase 2.1** | Pad Studio 互動編輯介面 (屬性、名稱、開關、混音推桿) | **已完成** | Pad 1~4 即時名稱、RP 循環、CM 和弦跟隨、音色與圖標連動、二進位即時同步寫回。 |
-| **Phase 2.2-A~E** | Web Audio 試聽引擎、Yamaha 原廠音色庫與鋼琴卷軸微調 | **已完成** | 多樂器物理諧波合成、走帶雷射指針、音符增刪移調、小節擴展/複製/順移剪除 (Ripple Delete)。 |
+| **Phase 2.2-A~E** | Web Audio 試聽引擎、原廠音色庫與鋼琴卷軸微調 | **已完成** | 多樂器物理諧波合成、走帶雷射指針、音符增刪移調、小節擴展/複製/順移剪除 (Ripple Delete)。 |
 | **Phase 2.2-F** | Web MIDI 實體琴硬體直連與發聲 (Yamaha PSR-SX920) | **已完成** | 透過 Web MIDI API 自動識別 PSR-SX920 / Digital Workstation，實時同步 Bank/PC 音色與發聲試聽。 |
+| **Phase 2.2-G** | **PSR-SX920 完整原廠 Data List (2,300+ 音色庫) 數位手冊整合** | **已完成** | 收錄官方 2,321 種全套音色（Panel、MegaVoice、Drum Kits、Legacy），支援 O(1) 毫秒級查找、多維模糊搜尋、⭐ Multi Pad 推薦與 ⚠️ OrganFlutes 避坑防呆。 |
 | **Phase 2.3** | 外部標準 MIDI 匯入與切片分配精靈 (MIDI Importer & Slice Wizard) | **已完成** | 支援拖曳外部 `.mid`，自動偵測音軌與小節長度，精準切片並指派給 Pad 1~4。 |
 | **Phase 2.4** | Yamaha PAD 二進位合成器與 CASM 區塊注入 (Pad Synthesizer) | **已完成** | 從零組裝標準 4-Pad 二進位結構（Section Markers、RP/CM/N/I 控制標記、CASM NTR/NTT 和弦轉調規則）。 |
 | **Phase 2.5** | **PSR-SX920 實體琴端對端驗證與全功能驗收 (當前階段)** | **進行中** | 實體琴 USB-to-Host 硬體直連發聲、USB 隨身碟實體琴載入播放、和弦跟隨 (CM) 與循環模式 (RP) 測試。 |
@@ -32,21 +33,21 @@
 3. **Pad 4 鋼琴音色更換後聽感不一致診斷 (已完成深入分析)**：
    - 原檔 Pad 4 採用的是 Yamaha 原廠 Live! Grand Piano (`Bank MSB: 8, Bank LSB: 34, PC: 0`)，具有多層立體聲採樣與共鳴。
    - 下拉選單選回之鋼琴寫入的是通用 GM 標準鋼琴 (`Bank MSB: 0, Bank LSB: 112, PC: 0`)，故實體琴發聲聽感較扁平。已指導使用者於混音器輸入原三聯號或透過音色庫選取旗艦 CFX Grand (`104-1-0`)。
+4. **Yamaha PSR-SX920 完整 Data List 音色庫上線 (已完成 - 2026-10-16)**：
+   - 全面結構化導入 2,321 款原廠音色（涵蓋 80 款伴奏專利 MegaVoice、367 款 S.Art!、267 款 Live!/Sweet!/Cool!、69 款 Drum Kits 與 GM/XG 經典全庫）。
+   - 引入 Multi Pad 適用度體系（⭐ 推薦、⚠️ 避坑、一般），當套用 OrganFlutes 等琴端限制音色時自動彈出防呆警示。
+   - 提供 16 大樂器分類標籤與適用度篩選藥丸按鈕，支援分頁平滑渲染與毫秒級即時搜尋。
 
 ---
 
 ## 📋 待開發功能儲備清單 (Backlog)
 
-### 📌 【規劃中】Yamaha PSR-SX920 原廠完整 Data List (1,500+ 音色資料庫) 數位手冊整合
-- **需求概述**：將 Yamaha 官方 Data List 的 1,500+ 種音色（含 Panel Voices、MegaVoices、Drum Kits、XG/GM）全面結構化導入系統供隨時檢索。
+### 📌 【規劃中】Phase 3.0：外部標準 MIDI 轉 Yamaha 伴奏風格檔（MIDI to STY Converter）
+- **需求概述**：支援匯入外部多軌 MIDI 檔案，自動識別節奏、貝斯、和弦聲部，轉換並分配至 Yamaha STY 伴奏 8 音軌（Ch 9~16），並自動建置 SFF2 CASM 和弦轉調與段落（Main A~D, Fill, Intro, Ending）。
 - **功能亮點**：
-  1. **免翻 PDF 字典**：支援中文、英文、樂器分類、MSB/LSB/PC 代碼即時模糊搜尋。
-  2. **實體琴一鍵試聽 (Audition)**：透過 Web MIDI 點擊直接讓 PSR-SX920 發出該音色示範音。
-  3. **一鍵套用至 Pad 1~4**：自動同步三聯號、圖標至對應音軌與混音器。
-  4. **Multi Pad 友善度與避坑標記**：
-     - ⭐ **推薦標記**：MegaVoice、Live!、Sweet! 等 Multi Pad 最佳拍檔。
-     - ⚠️ **避坑警示**：標記 Organ Flutes（實體琴僅支援右手即時彈奏，Pad 不支援）、S.Art!（播放時缺乏手彈即時技巧）。
-- **當前狀態**：已完整記錄需求與架構設計，暫不執行，待後續排程啟動。
+  1. 8 軌伴奏聲部自動映射（Ch 9/10 Drums, Ch 11 Bass, Ch 12/13 Chords, Ch 14/15 Pads, Ch 16 Phrases）。
+  2. 多小節段落切片（Intro, Main A~D, Fill In, Ending）。
+  3. SFF2 CASM 與 OTS 聲部自動合成與匯出。
 
 ---
 
