@@ -41,8 +41,20 @@ describe('Phase 2.2-F: Web MIDI 實體琴硬體直連與發聲 (MidiManager Veri
     mockOutputs.set('port-sx920', yamahaPort);
     mockOutputs.set('port-generic', genericPort);
 
+    const mockInputs = new Map<string, WebMidiPort>();
+    const yamahaInPort: WebMidiPort = {
+      id: 'port-in-sx920',
+      name: 'Digital Workstation 1',
+      manufacturer: 'Yamaha',
+      type: 'input',
+      state: 'connected',
+      connection: 'open',
+      send: () => {},
+    };
+    mockInputs.set('port-in-sx920', yamahaInPort);
+
     mockAccess = {
-      inputs: new Map(),
+      inputs: mockInputs,
       outputs: mockOutputs,
       onstatechange: null,
     };
@@ -185,5 +197,98 @@ describe('Phase 2.2-F: Web MIDI 實體琴硬體直連與發聲 (MidiManager Veri
 
     expect(changeTriggered).toBe(true);
     unsubscribe();
+  });
+
+  it('能成功識別並自動綁定 Yamaha 原廠 MIDI 輸入裝置', async () => {
+    const res = await midiManager.requestAccess();
+    expect(res.success).toBe(true);
+
+    const inputDevices = midiManager.getAvailableInputs();
+    expect(inputDevices.length).toBe(1);
+    expect(inputDevices[0].id).toBe('port-in-sx920');
+    expect(inputDevices[0].isRecommended).toBe(true);
+
+    const selectedInput = midiManager.getSelectedInput();
+    expect(selectedInput).not.toBeNull();
+    expect(selectedInput?.id).toBe('port-in-sx920');
+  });
+
+  it('能正確接收實體琴 Note-On 與 Note-Off 訊息 (包含 Velocity 0 視為 Off)', async () => {
+    await midiManager.requestAccess();
+    const receivedNotes: Array<{ type: string; pitch: number; velocity: number }> = [];
+
+    const unsubscribe = midiManager.onNoteInput((type, pitch, velocity) => {
+      receivedNotes.push({ type, pitch, velocity });
+    });
+
+    const inPort = mockAccess.inputs.get('port-in-sx920') as any;
+    expect(inPort).toBeDefined();
+
+    // 模擬實體琴彈下 C4 (Note-On, vel=95, ch=0)
+    inPort.onmidimessage({ data: [0x90, 60, 95] });
+    // 模擬實體琴彈下 E4 (Note-On, vel=80, ch=0)
+    inPort.onmidimessage({ data: [0x90, 64, 80] });
+    // 模擬實體琴放開 C4 (Note-Off, vel=0, ch=0)
+    inPort.onmidimessage({ data: [0x80, 60, 0] });
+    // 模擬實體琴以 Note-On vel=0 放開 E4 (Yamaha 常見標準行為)
+    inPort.onmidimessage({ data: [0x90, 64, 0] });
+
+    expect(receivedNotes.length).toBe(4);
+    expect(receivedNotes[0]).toEqual({ type: 'noteon', pitch: 60, velocity: 95 });
+    expect(receivedNotes[1]).toEqual({ type: 'noteon', pitch: 64, velocity: 80 });
+    expect(receivedNotes[2]).toEqual({ type: 'noteoff', pitch: 60, velocity: 0 });
+    expect(receivedNotes[3]).toEqual({ type: 'noteoff', pitch: 64, velocity: 0 });
+
+    unsubscribe();
+  });
+
+  it('能精準嗅探琴端切換音色 (Voice Sniffer: CC0 + CC32 + Program Change)', async () => {
+    await midiManager.requestAccess();
+    const sniffedVoices: Array<{ msb: number; lsb: number; pc: number; channel: number }> = [];
+
+    const unsubscribe = midiManager.onVoiceInput((config, channel) => {
+      sniffedVoices.push({ ...config, channel });
+    });
+
+    const inPort = mockAccess.inputs.get('port-in-sx920') as any;
+
+    // 模擬琴端選取 SeattleStrings (MSB 104, LSB 1, PC 48, Channel 0)
+    inPort.onmidimessage({ data: [0xB0, 0, 104] });
+    inPort.onmidimessage({ data: [0xB0, 32, 1] });
+    inPort.onmidimessage({ data: [0xC0, 48] });
+
+    expect(sniffedVoices.length).toBe(1);
+    expect(sniffedVoices[0]).toEqual({
+      msb: 104,
+      lsb: 1,
+      pc: 48,
+      channel: 0,
+    });
+
+    unsubscribe();
+  });
+
+  it('支援無琴環境下的軟體/鍵盤模擬彈奏 (simulateNoteOn/Off, simulateVoiceChange)', () => {
+    const receivedNotes: Array<{ type: string; pitch: number; velocity: number }> = [];
+    let activityCount = 0;
+
+    const unNote = midiManager.onNoteInput((type, pitch, velocity) => {
+      receivedNotes.push({ type, pitch, velocity });
+    });
+    const unAct = midiManager.onMidiActivity(() => {
+      activityCount++;
+    });
+
+    // 模擬電腦鍵盤敲擊 Note-On / Note-Off
+    midiManager.simulateNoteOn(62, 100);
+    midiManager.simulateNoteOff(62);
+
+    expect(receivedNotes.length).toBe(2);
+    expect(receivedNotes[0]).toEqual({ type: 'noteon', pitch: 62, velocity: 100 });
+    expect(receivedNotes[1]).toEqual({ type: 'noteoff', pitch: 62, velocity: 0 });
+    expect(activityCount).toBeGreaterThan(0);
+
+    unNote();
+    unAct();
   });
 });

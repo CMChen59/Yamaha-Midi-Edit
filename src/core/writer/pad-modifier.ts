@@ -504,6 +504,109 @@ export class YamahaPadModifier {
   }
 
   /**
+   * 整軌替換 Pad 音符 (適用於即時錄音寫入、MIDI 切片置換)：
+   * 保留該軌道之所有控制事件 (Program Change, Bank Select, Volume, Pan 等)，
+   * 將原音符清除並批次填入新音符序列，自動設定 End of Track 與重編二進位資料。
+   */
+  public static replacePadNotes(
+    parsed: YamahaFileParsed,
+    padNum: number,
+    notes: Array<{ note: number; startTick: number; durationTick: number; velocity: number }>,
+    totalBars?: number
+  ): boolean {
+    const track = parsed.tracks[padNum];
+    if (!track || !track.events) return false;
+
+    let channel = padNum - 1;
+    for (const ev of track.events) {
+      if (ev.channel !== undefined) {
+        channel = ev.channel;
+        break;
+      }
+    }
+
+    // 保留非音符事件 (Program Change, CC, Pitch Bend, Meta 等)
+    let curTick = 0;
+    const nonNoteEntries: Array<{ ev: any; absTick: number }> = [];
+    for (const ev of track.events) {
+      curTick += ev.delta;
+      const isNote = ev.type === 'noteOn' || ev.type === 'noteOff';
+      const isEndOfTrack = ev.type === 'meta' && ev.metaType === 0x2f;
+      if (!isNote && !isEndOfTrack) {
+        nonNoteEntries.push({ ev: { ...ev }, absTick: curTick });
+      }
+    }
+
+    // 生成新音符事件之 Note-On 與 Note-Off
+    const newNoteEntries: Array<{ ev: any; absTick: number }> = [];
+    for (const n of notes) {
+      const noteNum = Math.max(0, Math.min(127, Math.round(n.note)));
+      const vel = Math.max(1, Math.min(127, Math.round(n.velocity)));
+      const sTick = Math.max(0, Math.round(n.startTick));
+      const dur = Math.max(1, Math.round(n.durationTick));
+      const eTick = sTick + dur;
+
+      newNoteEntries.push({
+        ev: { delta: 0, type: 'noteOn', channel, noteNumber: noteNum, velocity: vel },
+        absTick: sTick,
+      });
+      newNoteEntries.push({
+        ev: { delta: 0, type: 'noteOff', channel, noteNumber: noteNum, velocity: 0 },
+        absTick: eTick,
+      });
+    }
+
+    // 合併並排序
+    const allEntries = [...nonNoteEntries, ...newNoteEntries];
+    allEntries.sort((a, b) => {
+      if (a.absTick !== b.absTick) return a.absTick - b.absTick;
+      const aIsOff = a.ev.type === 'noteOff' || (a.ev.type === 'noteOn' && (a.ev.velocity ?? 0) === 0);
+      const bIsOff = b.ev.type === 'noteOff' || (b.ev.type === 'noteOn' && (b.ev.velocity ?? 0) === 0);
+      if (aIsOff && !bIsOff) return -1;
+      if (!aIsOff && bIsOff) return 1;
+      return 0;
+    });
+
+    // 計算小節長度
+    const ppq = parsed.division || 480;
+    const beatsPerBar = parsed.timeSignature?.numerator || 4;
+    const ticksPerBar = ppq * beatsPerBar;
+    let maxTick = 0;
+    for (const item of allEntries) {
+      if (item.absTick > maxTick) maxTick = item.absTick;
+    }
+
+    const bars = totalBars || Math.max(1, Math.ceil(maxTick / ticksPerBar));
+    const targetEndTick = Math.max(maxTick, bars * ticksPerBar);
+
+    // 加入 End of Track Meta
+    allEntries.push({
+      ev: { delta: 0, type: 'meta', metaType: 0x2f, metaData: new Uint8Array(0) },
+      absTick: targetEndTick,
+    });
+
+    // 重新計算 delta
+    let prevTick = 0;
+    track.events = allEntries.map((item) => {
+      const delta = Math.max(0, item.absTick - prevTick);
+      prevTick = item.absTick;
+      item.ev.delta = delta;
+      return item.ev;
+    });
+
+    // 重新編碼 rawChunk
+    this.rebuildTrackRawChunk(track);
+
+    // 同步更新 Section 資訊
+    const secIdx = padNum - 1;
+    if (parsed.sections && parsed.sections[secIdx]) {
+      parsed.sections[secIdx].measureCount = bars;
+    }
+
+    return true;
+  }
+
+  /**
    * 清理並消除音軌中重複堆疊的 Note-On 與多餘的 Note-Off 事件，防止重疊幽靈音符
    * @returns boolean 是否進行了實質清理與重新計算
    */

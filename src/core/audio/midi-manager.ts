@@ -40,8 +40,14 @@ export interface WebMidiAccess {
 export class MidiManager {
   private midiAccess: WebMidiAccess | null = null;
   private selectedOutput: WebMidiPort | null = null;
+  private selectedInput: WebMidiPort | null = null;
   private routingMode: AudioRoutingMode = 'audio';
   private stateChangeListeners: Array<(devices: MidiDeviceInfo[]) => void> = [];
+  private noteInputListeners: Array<(type: 'noteon' | 'noteoff', pitch: number, velocity: number, channel: number) => void> = [];
+  private voiceInputListeners: Array<(config: VoiceBankConfig, channel: number) => void> = [];
+  private midiActivityListeners: Array<() => void> = [];
+  private currentBankMsb: number = 0;
+  private currentBankLsb: number = 0;
   private isRequesting = false;
   private activeNotes: Set<string> = new Set(); // 格式: `${channel}:${note}`
 
@@ -84,6 +90,17 @@ export class MidiManager {
           this.selectOutput(recommended.id);
         } else if (devices.length > 0) {
           this.selectOutput(devices[0].id);
+        }
+      }
+
+      // 掃描並自動推薦選取 Yamaha 輸入設備
+      const inDevices = this.getAvailableInputs();
+      if (!this.selectedInput) {
+        const recommendedIn = inDevices.find(d => d.isRecommended && d.state === 'connected');
+        if (recommendedIn) {
+          this.selectInput(recommendedIn.id);
+        } else if (inDevices.length > 0) {
+          this.selectInput(inDevices[0].id);
         }
       }
 
@@ -155,6 +172,187 @@ export class MidiManager {
       manufacturer: mfr,
       state: (this.selectedOutput.state as 'connected' | 'disconnected') || 'connected',
       isRecommended: /digital workstation|yamaha|sx920|psr/i.test(name) || /yamaha/i.test(mfr),
+    };
+  }
+
+  /**
+   * 取得所有已連線之 MIDI 輸入裝置清單
+   */
+  public getAvailableInputs(): MidiDeviceInfo[] {
+    if (!this.midiAccess) return [];
+
+    const result: MidiDeviceInfo[] = [];
+    for (const port of this.midiAccess.inputs.values()) {
+      const name = port.name || 'MIDI Input';
+      const mfr = port.manufacturer || '';
+      const isRecommended = /digital workstation|yamaha|sx920|psr|workstation/i.test(name) || /yamaha/i.test(mfr);
+
+      result.push({
+        id: port.id,
+        name,
+        manufacturer: mfr,
+        state: (port.state as 'connected' | 'disconnected') || 'connected',
+        isRecommended,
+      });
+    }
+
+    return result.sort((a, b) => (b.isRecommended ? 1 : 0) - (a.isRecommended ? 1 : 0));
+  }
+
+  /**
+   * 依據 ID 或名稱選取當前使用的 MIDI 輸入裝置並綁定訊息監聽
+   */
+  public selectInput(idOrName: string | null): boolean {
+    if (!idOrName) {
+      if (this.selectedInput) {
+        (this.selectedInput as any).onmidimessage = null;
+      }
+      this.selectedInput = null;
+      return true;
+    }
+
+    if (!this.midiAccess) return false;
+
+    for (const port of this.midiAccess.inputs.values()) {
+      if (port.id === idOrName || port.name === idOrName) {
+        if (this.selectedInput && this.selectedInput !== port) {
+          (this.selectedInput as any).onmidimessage = null;
+        }
+        this.selectedInput = port;
+        (this.selectedInput as any).onmidimessage = (event: any) => this.handleIncomingMidiMessage(event);
+        return true;
+      }
+    }
+
+    this.selectedInput = null;
+    return false;
+  }
+
+  /**
+   * 取得當前選取的 MIDI 輸入裝置資訊
+   */
+  public getSelectedInput(): MidiDeviceInfo | null {
+    if (!this.selectedInput) return null;
+    const name = this.selectedInput.name || 'MIDI Input';
+    const mfr = this.selectedInput.manufacturer || '';
+    return {
+      id: this.selectedInput.id,
+      name,
+      manufacturer: mfr,
+      state: (this.selectedInput.state as 'connected' | 'disconnected') || 'connected',
+      isRecommended: /digital workstation|yamaha|sx920|psr/i.test(name) || /yamaha/i.test(mfr),
+    };
+  }
+
+  /**
+   * 處理實體鍵盤傳入的原生 MIDI 訊息 (Note-On, Note-Off, CC0/32 Bank Select, Program Change)
+   */
+  private handleIncomingMidiMessage(event: any): void {
+    const data = event?.data;
+    if (!data || data.length === 0) return;
+
+    this.triggerMidiActivity();
+
+    const status = data[0];
+    const ch = status & 0x0F;
+    const msgType = status & 0xF0;
+
+    if (msgType === 0x90) {
+      const pitch = data[1];
+      const velocity = data[2] ?? 0;
+      if (velocity === 0) {
+        this.triggerNoteInput('noteoff', pitch, 0, ch);
+      } else {
+        this.triggerNoteInput('noteon', pitch, velocity, ch);
+      }
+    } else if (msgType === 0x80) {
+      const pitch = data[1];
+      this.triggerNoteInput('noteoff', pitch, 0, ch);
+    } else if (msgType === 0xB0) {
+      const ccNum = data[1];
+      const ccVal = data[2];
+      if (ccNum === 0) {
+        this.currentBankMsb = ccVal;
+      } else if (ccNum === 32) {
+        this.currentBankLsb = ccVal;
+      }
+    } else if (msgType === 0xC0) {
+      const pc = data[1];
+      const config: VoiceBankConfig = {
+        msb: this.currentBankMsb,
+        lsb: this.currentBankLsb,
+        pc,
+      };
+      for (const cb of this.voiceInputListeners) {
+        try { cb(config, ch); } catch (err) { console.error(err); }
+      }
+    }
+  }
+
+  private triggerMidiActivity(): void {
+    for (const cb of this.midiActivityListeners) {
+      try { cb(); } catch (err) { console.error(err); }
+    }
+  }
+
+  private triggerNoteInput(type: 'noteon' | 'noteoff', pitch: number, velocity: number, ch: number) {
+    for (const cb of this.noteInputListeners) {
+      try { cb(type, pitch, velocity, ch); } catch (err) { console.error(err); }
+    }
+  }
+
+  /**
+   * 模擬 Note-On 事件 (適用於無琴測試、電腦鍵盤敲擊、觸控點擊)
+   */
+  public simulateNoteOn(pitch: number, velocity: number = 100, channel: number = 0): void {
+    this.triggerMidiActivity();
+    this.triggerNoteInput('noteon', pitch, velocity, channel);
+  }
+
+  /**
+   * 模擬 Note-Off 事件
+   */
+  public simulateNoteOff(pitch: number, channel: number = 0): void {
+    this.triggerNoteInput('noteoff', pitch, 0, channel);
+  }
+
+  /**
+   * 模擬音色嗅探變更 (Voice Sniffer)
+   */
+  public simulateVoiceChange(config: VoiceBankConfig, channel: number = 0): void {
+    this.triggerMidiActivity();
+    for (const cb of this.voiceInputListeners) {
+      try { cb(config, channel); } catch (err) { console.error(err); }
+    }
+  }
+
+  /**
+   * 註冊琴端 Note 輸入事件監聽器
+   */
+  public onNoteInput(callback: (type: 'noteon' | 'noteoff', pitch: number, velocity: number, channel: number) => void): () => void {
+    this.noteInputListeners.push(callback);
+    return () => {
+      this.noteInputListeners = this.noteInputListeners.filter(cb => cb !== callback);
+    };
+  }
+
+  /**
+   * 註冊琴端音色變更嗅探監聽器
+   */
+  public onVoiceInput(callback: (config: VoiceBankConfig, channel: number) => void): () => void {
+    this.voiceInputListeners.push(callback);
+    return () => {
+      this.voiceInputListeners = this.voiceInputListeners.filter(cb => cb !== callback);
+    };
+  }
+
+  /**
+   * 註冊 MIDI 傳輸活動 (Activity LED) 監聽器
+   */
+  public onMidiActivity(callback: () => void): () => void {
+    this.midiActivityListeners.push(callback);
+    return () => {
+      this.midiActivityListeners = this.midiActivityListeners.filter(cb => cb !== callback);
     };
   }
 
@@ -313,18 +511,32 @@ export class MidiManager {
 
   private handleStateChange(event: any) {
     const devices = this.getAvailableOutputs();
+    const inDevices = this.getAvailableInputs();
 
-    // 如果目前選取的設備斷線了
+    // 如果目前選取的輸出設備斷線了
     if (this.selectedOutput && event?.port?.id === this.selectedOutput.id) {
       if (event.port.state === 'disconnected') {
         this.selectedOutput = null;
       }
     }
 
-    // 若斷線後又有推薦設備，自動重新連線
+    // 若輸出斷線後又有推薦設備，自動重新連線
     if (!this.selectedOutput) {
       const rec = devices.find(d => d.isRecommended && d.state === 'connected');
       if (rec) this.selectOutput(rec.id);
+    }
+
+    // 如果目前選取的輸入設備斷線了
+    if (this.selectedInput && event?.port?.id === this.selectedInput.id) {
+      if (event.port.state === 'disconnected') {
+        this.selectedInput = null;
+      }
+    }
+
+    // 若輸入斷線後又有推薦設備，自動重新連線
+    if (!this.selectedInput) {
+      const recIn = inDevices.find(d => d.isRecommended && d.state === 'connected');
+      if (recIn) this.selectInput(recIn.id);
     }
 
     // 觸發所有註冊的監聽器

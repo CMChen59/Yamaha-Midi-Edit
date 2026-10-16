@@ -10,6 +10,11 @@ import {
 import { audioEngine, ticksToSeconds } from '../core/audio/audio-engine';
 import { midiManager, MidiDeviceInfo } from '../core/audio/midi-manager';
 import type { NoteEvent, PlaybackState } from '../core/audio/audio-engine';
+import {
+  PadRecorder,
+  type RecordedNote,
+  type QuantizeGrid,
+} from '../core/writer/pad-recorder';
 import type { YamahaFileParsed, YamahaSection, MidiTrack } from '../core/models/types';
 import {
   findYamahaVoice,
@@ -305,6 +310,542 @@ function openNewPadModal() {
 function closeNewPadModal() {
   const modal = document.getElementById('new-pad-modal');
   if (modal) modal.style.display = 'none';
+}
+
+// ========================================================
+// Phase 2.7: Yamaha PSR-SX920 琴端即時錄音與智慧量化 (Mode A)
+// ========================================================
+
+const PIANO_KEY_MAP: Array<{
+  pitch: number;
+  noteName: string;
+  isBlack: boolean;
+  charKey: string;
+  leftOffset?: number;
+}> = [
+  { pitch: 60, noteName: 'C4', isBlack: false, charKey: 'a' },
+  { pitch: 61, noteName: 'C#4', isBlack: true, charKey: 'w', leftOffset: 26 },
+  { pitch: 62, noteName: 'D4', isBlack: false, charKey: 's' },
+  { pitch: 63, noteName: 'D#4', isBlack: true, charKey: 'e', leftOffset: 68 },
+  { pitch: 64, noteName: 'E4', isBlack: false, charKey: 'd' },
+  { pitch: 65, noteName: 'F4', isBlack: false, charKey: 'f' },
+  { pitch: 66, noteName: 'F#4', isBlack: true, charKey: 't', leftOffset: 152 },
+  { pitch: 67, noteName: 'G4', isBlack: false, charKey: 'g' },
+  { pitch: 68, noteName: 'G#4', isBlack: true, charKey: 'y', leftOffset: 194 },
+  { pitch: 69, noteName: 'A4', isBlack: false, charKey: 'h' },
+  { pitch: 70, noteName: 'A#4', isBlack: true, charKey: 'u', leftOffset: 236 },
+  { pitch: 71, noteName: 'B4', isBlack: false, charKey: 'j' },
+  { pitch: 72, noteName: 'C5', isBlack: false, charKey: 'k' },
+];
+
+let padRecorder: PadRecorder = new PadRecorder();
+let currentRecordPadNum: number = 1;
+let recordedNotesBuffer: RecordedNote[] = [];
+let isCountInEnabled: boolean = true;
+let isAutoQuantizeEnabled: boolean = true;
+let selectedQuantizeGrid: QuantizeGrid = '1/16';
+let recordMidiUnsubs: Array<() => void> = [];
+let isRecordModalEventsBound: boolean = false;
+let recordedBarsCount: number = 2;
+const activeSimKeys = new Set<string>();
+
+function initPadRecordModal() {
+  if (isRecordModalEventsBound) return;
+  isRecordModalEventsBound = true;
+
+  const modal = document.getElementById('pad-record-modal');
+  const btnClose = document.getElementById('btn-close-record-modal');
+  const btnCancel = document.getElementById('btn-rec-cancel');
+  const btnAction = document.getElementById('btn-rec-action');
+  const btnPreview = document.getElementById('btn-rec-preview');
+  const btnApply = document.getElementById('btn-rec-apply');
+  const toggleCountIn = document.getElementById('rec-toggle-countin');
+  const toggleQuantize = document.getElementById('rec-toggle-quantize');
+  const selectGrid = document.getElementById('rec-grid-select') as HTMLSelectElement | null;
+  const selectTargetPad = document.getElementById('rec-target-pad-select') as HTMLSelectElement | null;
+  const selectBars = document.getElementById('rec-bars-select') as HTMLSelectElement | null;
+
+  if (btnClose) btnClose.addEventListener('click', closeRecordModal);
+  if (btnCancel) btnCancel.addEventListener('click', closeRecordModal);
+
+  // 開始 / 停止 錄音動作按鈕
+  if (btnAction) {
+    btnAction.addEventListener('click', () => {
+      const state = padRecorder.getState();
+      if (state === 'countingIn' || state === 'recording') {
+        stopLiveRecording();
+      } else {
+        startLiveRecording();
+      }
+    });
+  }
+
+  // 試聽按鈕
+  if (btnPreview) {
+    btnPreview.addEventListener('click', () => {
+      previewRecordedNotes();
+    });
+  }
+
+  // 寫入 Pad
+  if (btnApply) {
+    btnApply.addEventListener('click', () => {
+      applyRecordedNotes();
+    });
+  }
+
+  // 切換 1 小節預備拍
+  if (toggleCountIn) {
+    toggleCountIn.addEventListener('click', () => {
+      isCountInEnabled = !isCountInEnabled;
+      toggleCountIn.className = `toggle-btn ${isCountInEnabled ? 'active-rp' : 'inactive'}`;
+      toggleCountIn.textContent = isCountInEnabled ? '🔔 預備拍: 1 小節' : '🔕 預備拍: 關閉';
+    });
+  }
+
+  // 切換智慧量化開關
+  if (toggleQuantize) {
+    toggleQuantize.addEventListener('click', () => {
+      isAutoQuantizeEnabled = !isAutoQuantizeEnabled;
+      toggleQuantize.className = `toggle-btn ${isAutoQuantizeEnabled ? 'active-cm' : 'inactive'}`;
+      toggleQuantize.textContent = isAutoQuantizeEnabled ? '⚡ 自動量化: 開' : '🔒 自動量化: 關';
+      if (selectGrid) {
+        selectGrid.disabled = !isAutoQuantizeEnabled;
+        selectGrid.style.opacity = isAutoQuantizeEnabled ? '1' : '0.5';
+      }
+    });
+  }
+
+  // 量化網格選擇
+  if (selectGrid) {
+    selectGrid.addEventListener('change', () => {
+      selectedQuantizeGrid = selectGrid.value as QuantizeGrid;
+    });
+  }
+
+  // 目標 Pad 變更
+  if (selectTargetPad) {
+    selectTargetPad.addEventListener('change', () => {
+      currentRecordPadNum = parseInt(selectTargetPad.value, 10) || 1;
+      const applyBtn = document.getElementById('btn-rec-apply');
+      if (applyBtn) {
+        applyBtn.textContent = `💾 寫入 Pad ${currentRecordPadNum}`;
+      }
+    });
+  }
+
+  // 長度小節變更
+  if (selectBars) {
+    selectBars.addEventListener('change', () => {
+      recordedBarsCount = parseInt(selectBars.value, 10) || 2;
+    });
+  }
+
+  // 渲染虛擬鋼琴琴鍵
+  renderVirtualPianoKeys();
+
+  // 電腦鍵盤演奏監聽 (A~K, W, E, T, Y, U)
+  window.addEventListener('keydown', (e) => {
+    if (!modal || modal.style.display === 'none') return;
+    const target = e.target as HTMLElement | null;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')) {
+      return;
+    }
+    const key = e.key.toLowerCase();
+    if (activeSimKeys.has(key)) return;
+    const match = PIANO_KEY_MAP.find(k => k.charKey === key);
+    if (match) {
+      e.preventDefault();
+      activeSimKeys.add(key);
+      midiManager.simulateNoteOn(match.pitch, 100);
+    }
+  });
+
+  window.addEventListener('keyup', (e) => {
+    if (!modal || modal.style.display === 'none') return;
+    const key = e.key.toLowerCase();
+    if (activeSimKeys.has(key)) {
+      activeSimKeys.delete(key);
+      const match = PIANO_KEY_MAP.find(k => k.charKey === key);
+      if (match) {
+        midiManager.simulateNoteOff(match.pitch);
+      }
+    }
+  });
+}
+
+function renderVirtualPianoKeys() {
+  const container = document.getElementById('sim-piano-keys');
+  if (!container || container.children.length > 0) return;
+
+  const whiteKeys = PIANO_KEY_MAP.filter(k => !k.isBlack);
+  const blackKeys = PIANO_KEY_MAP.filter(k => k.isBlack);
+
+  const wrapper = document.createElement('div');
+  wrapper.style.display = 'flex';
+  wrapper.style.position = 'relative';
+
+  whiteKeys.forEach(k => {
+    const el = document.createElement('div');
+    el.className = 'sim-key-white';
+    el.dataset.pitch = String(k.pitch);
+    el.dataset.key = k.charKey;
+    el.innerHTML = `
+      <span class="key-note">${k.noteName}</span>
+      <span class="key-hint">[${k.charKey.toUpperCase()}]</span>
+    `;
+    el.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      midiManager.simulateNoteOn(k.pitch, 100);
+    });
+    el.addEventListener('mouseup', () => midiManager.simulateNoteOff(k.pitch));
+    el.addEventListener('mouseleave', () => midiManager.simulateNoteOff(k.pitch));
+    wrapper.appendChild(el);
+  });
+
+  blackKeys.forEach(k => {
+    const el = document.createElement('div');
+    el.className = 'sim-key-black';
+    el.dataset.pitch = String(k.pitch);
+    el.dataset.key = k.charKey;
+    if (k.leftOffset !== undefined) {
+      el.style.left = `${k.leftOffset}px`;
+    }
+    el.innerHTML = `
+      <span class="key-note">${k.noteName}</span>
+      <span class="key-hint">[${k.charKey.toUpperCase()}]</span>
+    `;
+    el.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      midiManager.simulateNoteOn(k.pitch, 100);
+    });
+    el.addEventListener('mouseup', () => midiManager.simulateNoteOff(k.pitch));
+    el.addEventListener('mouseleave', () => midiManager.simulateNoteOff(k.pitch));
+    wrapper.appendChild(el);
+  });
+
+  container.appendChild(wrapper);
+}
+
+function openRecordModal(padNum: number = 1) {
+  initPadRecordModal();
+  const modal = document.getElementById('pad-record-modal');
+  if (!modal) return;
+
+  currentRecordPadNum = padNum;
+  recordedNotesBuffer = [];
+
+  // 目標 Pad 設定
+  const selectTargetPad = document.getElementById('rec-target-pad-select') as HTMLSelectElement | null;
+  if (selectTargetPad) selectTargetPad.value = String(padNum);
+
+  // 速度同步
+  const bpmInput = document.getElementById('rec-bpm-input') as HTMLInputElement | null;
+  if (bpmInput) {
+    bpmInput.value = String(currentParsed?.bpm || 120);
+  }
+
+  // 小節數同步
+  const selectBars = document.getElementById('rec-bars-select') as HTMLSelectElement | null;
+  if (selectBars) {
+    const existingBars = currentParsed ? YamahaPadModifier.getPadBarLength(currentParsed, padNum) : 2;
+    const matchedOpt = [1, 2, 4, 8].includes(existingBars) ? existingBars : 2;
+    selectBars.value = String(matchedOpt);
+    recordedBarsCount = matchedOpt;
+  }
+
+  // 重置 UI 狀態
+  resetRecorderUI();
+
+  // 掃描 MIDI 設備
+  midiManager.requestAccess().then(() => {
+    updateMidiDeviceStatusUI();
+  }).catch(() => {
+    updateMidiDeviceStatusUI();
+  });
+
+  // 綁定 MIDI 訊息監聽器
+  bindRecordMidiListeners();
+
+  modal.style.display = 'flex';
+}
+
+function updateMidiDeviceStatusUI() {
+  const label = document.getElementById('rec-midi-device-label');
+  if (!label) return;
+  const inDev = midiManager.getSelectedInput();
+  if (inDev) {
+    label.textContent = `🟢 ${inDev.name}`;
+    label.style.color = '#34d399';
+  } else {
+    label.textContent = '⚪ 未連線 (已啟用電腦鍵盤模擬)';
+    label.style.color = '#94a3b8';
+  }
+}
+
+function bindRecordMidiListeners() {
+  // 清理舊的監聽
+  recordMidiUnsubs.forEach(un => un());
+  recordMidiUnsubs = [];
+
+  // 1. Note 事件監聽
+  const unNote = midiManager.onNoteInput((type, pitch, velocity) => {
+    const keyEl = document.querySelector(`#sim-piano-keys [data-pitch="${pitch}"]`);
+    if (type === 'noteon') {
+      if (keyEl) keyEl.classList.add('active');
+      if (padRecorder.getState() === 'recording') {
+        padRecorder.handleNoteOn(pitch, velocity);
+        const countLabel = document.getElementById('rec-notes-counter-label');
+        if (countLabel) {
+          countLabel.textContent = `已捕捉 ${padRecorder.getRecordedNotes().length + 1} 個音符`;
+        }
+      }
+      // 即時發聲監聽
+      audioEngine.playAuditionNote(pitch, 0.35, { volume: Math.min(127, Math.max(30, velocity)) });
+    } else {
+      if (keyEl) keyEl.classList.remove('active');
+      if (padRecorder.getState() === 'recording') {
+        padRecorder.handleNoteOff(pitch);
+      }
+    }
+  });
+  recordMidiUnsubs.push(unNote);
+
+  // 2. 音色嗅探監聽 (Voice Sniffer)
+  const unVoice = midiManager.onVoiceInput((config) => {
+    const snifferLabel = document.getElementById('rec-voice-sniffer-label');
+    if (snifferLabel) {
+      const v = findYamahaVoice(config.msb, config.lsb, config.pc);
+      if (v) {
+        snifferLabel.textContent = `${v.name} (${v.chineseName || ''})`;
+      } else {
+        snifferLabel.textContent = `Bank ${config.msb}-${config.lsb} PC ${config.pc}`;
+      }
+    }
+  });
+  recordMidiUnsubs.push(unVoice);
+
+  // 3. 活動指示燈監聽
+  const unAct = midiManager.onMidiActivity(() => {
+    const led = document.getElementById('rec-midi-activity-led');
+    if (led) {
+      led.classList.add('active');
+      setTimeout(() => led.classList.remove('active'), 90);
+    }
+  });
+  recordMidiUnsubs.push(unAct);
+}
+
+function resetRecorderUI() {
+  const badge = document.getElementById('rec-status-badge');
+  const textEl = document.getElementById('rec-status-text');
+  const progBar = document.getElementById('rec-progress-bar');
+  const barBeatLabel = document.getElementById('rec-bar-beat-label');
+  const counterLabel = document.getElementById('rec-notes-counter-label');
+  const actionBtn = document.getElementById('btn-rec-action') as HTMLButtonElement | null;
+  const previewBtn = document.getElementById('btn-rec-preview') as HTMLButtonElement | null;
+  const applyBtn = document.getElementById('btn-rec-apply') as HTMLButtonElement | null;
+  const summaryEl = document.getElementById('rec-summary-text');
+
+  if (badge) badge.className = 'rec-status-badge status-idle';
+  if (textEl) textEl.textContent = '待命中 (請點擊下方開始錄音)';
+  if (progBar) progBar.style.width = '0%';
+  if (barBeatLabel) barBeatLabel.textContent = '小節 -- / --';
+  if (counterLabel) counterLabel.textContent = '已捕捉 0 個音符';
+
+  if (actionBtn) {
+    actionBtn.className = 'btn btn-record-primary';
+    actionBtn.textContent = isCountInEnabled ? '🔴 開始錄音 (1小節預備拍)' : '🔴 開始錄音 (無預備拍)';
+  }
+  if (previewBtn) previewBtn.style.display = 'none';
+  if (applyBtn) applyBtn.style.display = 'none';
+  if (summaryEl) summaryEl.textContent = '等待開始錄音...';
+
+  // 清除燈號
+  document.querySelectorAll('.beat-lamp').forEach(l => l.classList.remove('active-downbeat', 'active-weak'));
+}
+
+function closeRecordModal() {
+  const modal = document.getElementById('pad-record-modal');
+  if (modal) modal.style.display = 'none';
+
+  padRecorder.stop();
+  audioEngine.stop();
+
+  // 清除所有虛擬鋼琴按壓狀態
+  document.querySelectorAll('#sim-piano-keys .active').forEach(el => el.classList.remove('active'));
+  activeSimKeys.clear();
+
+  recordMidiUnsubs.forEach(un => un());
+  recordMidiUnsubs = [];
+}
+
+function startLiveRecording() {
+  const bpmInput = document.getElementById('rec-bpm-input') as HTMLInputElement | null;
+  const selectBars = document.getElementById('rec-bars-select') as HTMLSelectElement | null;
+  const actionBtn = document.getElementById('btn-rec-action') as HTMLButtonElement | null;
+  const previewBtn = document.getElementById('btn-rec-preview') as HTMLButtonElement | null;
+  const applyBtn = document.getElementById('btn-rec-apply') as HTMLButtonElement | null;
+  const summaryEl = document.getElementById('rec-summary-text');
+
+  const bpm = Math.max(30, Math.min(280, parseInt(bpmInput?.value || '120', 10) || 120));
+  const bars = Math.max(1, Math.min(16, parseInt(selectBars?.value || '2', 10) || 2));
+  recordedBarsCount = bars;
+  recordedNotesBuffer = [];
+
+  if (actionBtn) {
+    actionBtn.className = 'btn btn-record-stop';
+    actionBtn.textContent = '⏹ 停止錄音';
+  }
+  if (previewBtn) previewBtn.style.display = 'none';
+  if (applyBtn) applyBtn.style.display = 'none';
+  if (summaryEl) summaryEl.textContent = `錄音進行中 (長度: ${bars} 小節, 速度: ${bpm} BPM)...`;
+
+  padRecorder.start({
+    bpm,
+    bars,
+    countInBars: isCountInEnabled ? 1 : 0,
+    isAutoQuantize: isAutoQuantizeEnabled,
+    quantizeGrid: selectedQuantizeGrid,
+    onTick: (info) => {
+      // 1. 播放節拍器聲音 (強拍高音，弱拍低音)
+      audioEngine.playMetronomeClick(info.isDownbeat, 0.7);
+
+      // 2. 點亮對應節拍燈
+      document.querySelectorAll('.beat-lamp').forEach(l => l.classList.remove('active-downbeat', 'active-weak'));
+      const targetLamp = document.querySelector(`.beat-lamp-${info.beat}`);
+      if (targetLamp) {
+        targetLamp.classList.add(info.isDownbeat ? 'active-downbeat' : 'active-weak');
+        setTimeout(() => {
+          targetLamp.classList.remove('active-downbeat', 'active-weak');
+        }, 180);
+      }
+
+      // 3. 更新標籤與進度條
+      const badge = document.getElementById('rec-status-badge');
+      const textEl = document.getElementById('rec-status-text');
+      const barBeatLabel = document.getElementById('rec-bar-beat-label');
+      const progBar = document.getElementById('rec-progress-bar');
+
+      if (info.isCountIn) {
+        if (badge) badge.className = 'rec-status-badge status-countin';
+        if (textEl) textEl.textContent = `⏳ 預備拍倒數 (第 ${info.beat} 拍 / 共 4 拍)`;
+        if (barBeatLabel) barBeatLabel.textContent = `預備拍倒數: 第 ${info.beat} 拍`;
+      } else {
+        if (badge) badge.className = 'rec-status-badge status-recording';
+        if (textEl) textEl.textContent = `🔴 錄音中 (第 ${info.bar} 小節 / 第 ${info.beat} 拍)`;
+        if (barBeatLabel) barBeatLabel.textContent = `錄製進度: 第 ${info.bar} / ${bars} 小節 (第 ${info.beat} 拍)`;
+      }
+
+      if (progBar) {
+        progBar.style.width = `${(info.progress * 100).toFixed(1)}%`;
+      }
+    },
+    onStateChange: (state) => {
+      if (state === 'recording') {
+        const badge = document.getElementById('rec-status-badge');
+        if (badge) badge.className = 'rec-status-badge status-recording';
+      }
+    },
+    onFinish: (notes) => {
+      finishLiveRecording(notes, bars);
+    },
+  });
+}
+
+function stopLiveRecording() {
+  padRecorder.stop();
+}
+
+function finishLiveRecording(notes: RecordedNote[], bars: number) {
+  recordedNotesBuffer = notes;
+  const badge = document.getElementById('rec-status-badge');
+  const textEl = document.getElementById('rec-status-text');
+  const actionBtn = document.getElementById('btn-rec-action') as HTMLButtonElement | null;
+  const previewBtn = document.getElementById('btn-rec-preview') as HTMLButtonElement | null;
+  const applyBtn = document.getElementById('btn-rec-apply') as HTMLButtonElement | null;
+  const summaryEl = document.getElementById('rec-summary-text');
+  const progBar = document.getElementById('rec-progress-bar');
+  const barBeatLabel = document.getElementById('rec-bar-beat-label');
+  const counterLabel = document.getElementById('rec-notes-counter-label');
+
+  if (badge) badge.className = 'rec-status-badge status-finished';
+  if (textEl) textEl.textContent = `✅ 錄音完成 (共捕捉 ${notes.length} 顆音符)`;
+  if (progBar) progBar.style.width = '100%';
+  if (barBeatLabel) barBeatLabel.textContent = `錄製完畢 (共 ${bars} 小節)`;
+  if (counterLabel) counterLabel.textContent = `已捕捉 ${notes.length} 個音符`;
+
+  if (actionBtn) {
+    actionBtn.className = 'btn btn-record-primary';
+    actionBtn.textContent = '🔴 重新錄音';
+  }
+  if (previewBtn) previewBtn.style.display = 'inline-flex';
+  if (applyBtn) {
+    applyBtn.style.display = 'inline-flex';
+    applyBtn.textContent = `💾 寫入 Pad ${currentRecordPadNum}`;
+  }
+
+  if (summaryEl) {
+    const quantizeInfo = isAutoQuantizeEnabled ? `已智慧量化 (${selectedQuantizeGrid})` : '原始無量化';
+    summaryEl.textContent = `共捕捉 ${notes.length} 顆音符 | 長度: ${bars} 小節 | ${quantizeInfo}`;
+  }
+
+  // 熄滅所有節拍燈
+  document.querySelectorAll('.beat-lamp').forEach(l => l.classList.remove('active-downbeat', 'active-weak'));
+}
+
+function previewRecordedNotes() {
+  if (recordedNotesBuffer.length === 0) {
+    showStatus('目前尚無錄製音符可供試聽', true);
+    return;
+  }
+
+  const bpmInput = document.getElementById('rec-bpm-input') as HTMLInputElement | null;
+  const bpm = parseInt(bpmInput?.value || '120', 10) || 120;
+  const noteEvents = PadRecorder.toNoteEvents(recordedNotesBuffer);
+  const totalTicks = recordedBarsCount * 4 * 480;
+
+  audioEngine.playSequence(currentRecordPadNum, noteEvents, {
+    bpm,
+    division: 480,
+    beatsPerBar: 4,
+    loop: false,
+    gridStartTick: 0,
+    totalTicks,
+  });
+}
+
+function applyRecordedNotes() {
+  if (!currentParsed) {
+    showStatus('請先載入或建立 Yamaha PAD 專案', true);
+    return;
+  }
+
+  if (recordedNotesBuffer.length === 0) {
+    showStatus('錄製音符為空，請先進行錄音', true);
+    return;
+  }
+
+  const noteEvents = PadRecorder.toNoteEvents(recordedNotesBuffer);
+  const success = YamahaPadModifier.replacePadNotes(
+    currentParsed,
+    currentRecordPadNum,
+    noteEvents,
+    recordedBarsCount
+  );
+
+  if (success) {
+    markModified(`已將琴端即時錄音 (${noteEvents.length} 顆音符) 寫入 Pad ${currentRecordPadNum}`);
+    renderSections(currentParsed);
+    if (currentCanvasPadNum === currentRecordPadNum) {
+      refreshCurrentPadDetail();
+    }
+    showStatus(`✨ 成功將 ${noteEvents.length} 顆即時錄製音符套用至 Pad ${currentRecordPadNum}！`);
+    closeRecordModal();
+  } else {
+    showStatus(`寫入 Pad ${currentRecordPadNum} 失敗，請重試`, true);
+  }
 }
 
 // ========================================================
@@ -1161,11 +1702,21 @@ function initEvents() {
     });
   }
 
+  const btnTransportRecord = document.getElementById('btn-transport-record');
+  if (btnTransportRecord) {
+    btnTransportRecord.addEventListener('click', () => {
+      openRecordModal(currentCanvasPadNum || 1);
+    });
+  }
+
   // 初始化 Yamaha PSR-SX920 原廠音色庫搜尋彈窗
   initVoiceSearchModal();
 
   // Phase 2.3: 初始化 MIDI 匯入與切片分配精靈彈窗
   initMidiImportModal();
+
+  // Phase 2.7: 初始化琴端即時錄音視窗 (Live Pad Recorder)
+  initPadRecordModal();
 
   // Phase 2.2-F: 初始化 Web MIDI 實體琴直連控制
   setupWebMidiControls();
@@ -1723,6 +2274,7 @@ function renderSections(parsed: YamahaFileParsed) {
               ${iconOptionsHtml}
             </select>
             <button type="button" class="btn-open-voice-modal" data-pad="${padNum}" title="開啟 Yamaha PSR-SX920 原廠音色庫搜尋視窗">🔍 音色庫</button>
+            <button type="button" class="btn-open-record-modal" data-pad="${padNum}" title="開啟 PSR-SX920 琴端即時錄音視窗 (支援電腦鍵盤模擬)" style="background: linear-gradient(135deg, #ef4444, #dc2626); color: #fff; border: 1px solid #ef4444; border-radius: 4px; padding: 3px 8px; font-size: 0.72rem; cursor: pointer; font-weight: 600;">🔴 琴端錄音</button>
           </div>
         </div>
       `;
@@ -1742,6 +2294,15 @@ function renderSections(parsed: YamahaFileParsed) {
         btnOpenVoice.addEventListener('click', (e) => {
           e.stopPropagation();
           openVoiceModal(padNum);
+        });
+      }
+
+      // 0.6 琴端即時錄音按鈕事件
+      const btnOpenRecord = item.querySelector(`.btn-open-record-modal[data-pad="${padNum}"]`) as HTMLButtonElement | null;
+      if (btnOpenRecord) {
+        btnOpenRecord.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openRecordModal(padNum);
         });
       }
 

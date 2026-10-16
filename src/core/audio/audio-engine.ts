@@ -290,6 +290,32 @@ export class AudioEngine {
   }
 
   /**
+   * 播放錄音節拍器 Click 滴答聲 (Downbeat 第一拍高音 1200Hz, 弱拍 800Hz)
+   */
+  public playMetronomeClick(isDownbeat: boolean = false, volume: number = 0.6): void {
+    this.init();
+    if (!this.ctx) return;
+    if (this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
+
+    const osc = this.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = isDownbeat ? 'sine' : 'triangle';
+    osc.frequency.setValueAtTime(isDownbeat ? 1200 : 800, this.ctx.currentTime);
+
+    gain.gain.setValueAtTime(volume * 0.7, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + 0.05);
+
+    osc.connect(gain);
+    gain.connect(this.masterGain || this.ctx.destination);
+
+    osc.start(this.ctx.currentTime);
+    osc.stop(this.ctx.currentTime + 0.06);
+  }
+
+  /**
    * 播放指定音符序列
    */
   public playSequence(

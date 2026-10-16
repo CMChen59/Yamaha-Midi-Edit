@@ -587,5 +587,36 @@ describe('步驟 2.1: Pad 屬性與混音編輯雙向同步驗證 (PadModifier V
     const rePcs = reParsed.tracks[3].events.filter((e) => e.type === 'programChange');
     expect(rePcs.every((e) => e.program === 49)).toBe(true);
   });
+
+  it('能成功以全新音符序列整軌替換 Pad 音符 (replacePadNotes) 並保留原軌音色與控制器', () => {
+    const rawBuffer = new Uint8Array(fs.readFileSync(samplePath));
+    const parsed = YamahaParser.parse(rawBuffer, 'PAD');
+
+    // 原始 Track 1 有音符
+    const origNotes = parsed.tracks[1].events.filter((e) => e.type === 'noteOn' && (e.velocity ?? 0) > 0);
+    expect(origNotes.length).toBeGreaterThan(0);
+
+    // 準備新錄製的 2 顆音符
+    const recordedNotes = [
+      { note: 60, velocity: 100, startTick: 0, durationTick: 240 },
+      { note: 64, velocity: 90, startTick: 480, durationTick: 240 },
+    ];
+
+    const success = YamahaPadModifier.replacePadNotes(parsed, 1, recordedNotes, 2);
+    expect(success).toBe(true);
+
+    // 驗證重構二進位檔案後再次解析
+    const reBytes = YamahaWriter.write(parsed);
+    const reParsed = YamahaParser.parse(reBytes, 'PAD');
+
+    const newNoteOns = reParsed.tracks[1].events.filter((e) => e.type === 'noteOn' && (e.velocity ?? 0) > 0);
+    expect(newNoteOns.length).toBe(2);
+    expect(newNoteOns[0].noteNumber).toBe(60);
+    expect(newNoteOns[1].noteNumber).toBe(64);
+
+    // 驗證原有 Program Change 與 CC 依然保留
+    const pcs = reParsed.tracks[1].events.filter((e) => e.type === 'programChange');
+    expect(pcs.length).toBeGreaterThan(0);
+  });
 });
 
