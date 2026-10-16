@@ -15,6 +15,11 @@ import {
   type RecordedNote,
   type QuantizeGrid,
 } from '../core/writer/pad-recorder';
+import {
+  StepRecorder,
+  type StepResolution,
+  type StepRecordEntry,
+} from '../core/writer/step-recorder';
 import type { YamahaFileParsed, YamahaSection, MidiTrack } from '../core/models/types';
 import {
   findYamahaVoice,
@@ -339,6 +344,10 @@ const PIANO_KEY_MAP: Array<{
 ];
 
 let padRecorder: PadRecorder = new PadRecorder();
+let stepRecorder: StepRecorder = new StepRecorder();
+let activeRecordMode: 'A' | 'B' = 'A';
+let stepVelocityMode: 'as-played' | 'fixed' = 'as-played';
+let stepTargetBars: number = 2;
 let currentRecordPadNum: number = 1;
 let recordedNotesBuffer: RecordedNote[] = [];
 let isCountInEnabled: boolean = true;
@@ -369,10 +378,120 @@ function initPadRecordModal() {
   const selectTargetPad = document.getElementById('rec-target-pad-select') as HTMLSelectElement | null;
   const selectBars = document.getElementById('rec-bars-select') as HTMLSelectElement | null;
 
+  // 錄音模式分頁切換 (Mode A / Mode B)
+  const tabBtnModeA = document.getElementById('tab-btn-mode-a');
+  const tabBtnModeB = document.getElementById('tab-btn-mode-b');
+  if (tabBtnModeA) tabBtnModeA.addEventListener('click', () => switchRecordMode('A'));
+  if (tabBtnModeB) tabBtnModeB.addEventListener('click', () => switchRecordMode('B'));
+
+  // Mode B: 配置 stepRecorder 回呼
+  stepRecorder.configure({
+    onStepChange: (entry, currentTick) => {
+      updateModeBStepUI(entry, currentTick);
+    },
+    onPositionChange: (pos) => {
+      updateModeBPositionUI(pos);
+    },
+  });
+
+  // Mode B: 步進時值切換按鈕群
+  const stepResBtns = document.querySelectorAll('#step-res-group .step-res-btn');
+  stepResBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      stepResBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const res = (btn as HTMLElement).dataset.res as StepResolution;
+      if (res) {
+        stepRecorder.setResolution(res);
+      }
+    });
+  });
+
+  // Mode B: 力度模式切換
+  const stepToggleVelocity = document.getElementById('step-toggle-velocity');
+  if (stepToggleVelocity) {
+    stepToggleVelocity.addEventListener('click', () => {
+      stepVelocityMode = stepVelocityMode === 'as-played' ? 'fixed' : 'as-played';
+      stepRecorder.configure({ velocityMode: stepVelocityMode });
+      if (stepVelocityMode === 'as-played') {
+        stepToggleVelocity.className = 'toggle-btn active-rp';
+        stepToggleVelocity.textContent = '⚡ 力度: 實彈原音';
+      } else {
+        stepToggleVelocity.className = 'toggle-btn active-cm';
+        stepToggleVelocity.textContent = '🔒 力度: 固定 100';
+      }
+    });
+  }
+
+  // Mode B: 目標小節選擇
+  const stepBarsSelect = document.getElementById('step-bars-select') as HTMLSelectElement | null;
+  if (stepBarsSelect) {
+    stepBarsSelect.addEventListener('change', () => {
+      stepTargetBars = parseInt(stepBarsSelect.value, 10) || 2;
+    });
+  }
+
+  // Mode B: 步進控制按鈕 (休止符, 延長前音, 後退, 開頭, 清空)
+  const btnStepRest = document.getElementById('btn-step-rest');
+  if (btnStepRest) {
+    btnStepRest.addEventListener('click', () => {
+      stepRecorder.insertRest();
+    });
+  }
+
+  const btnStepTie = document.getElementById('btn-step-tie');
+  if (btnStepTie) {
+    btnStepTie.addEventListener('click', () => {
+      const ok = stepRecorder.tiePreviousNote();
+      if (!ok) {
+        showStatus('目前無前置音符可供延長 (Tie)', true);
+      }
+    });
+  }
+
+  const btnStepBack = document.getElementById('btn-step-back');
+  if (btnStepBack) {
+    btnStepBack.addEventListener('click', () => {
+      const ok = stepRecorder.stepBack();
+      if (!ok) {
+        showStatus('已經在開頭位置 (Tick 0)', true);
+      }
+    });
+  }
+
+  const btnStepRewind = document.getElementById('btn-step-rewind');
+  if (btnStepRewind) {
+    btnStepRewind.addEventListener('click', () => {
+      stepRecorder.seekToTick(0);
+      showStatus('步進游標已回到開頭 (Tick 0)');
+    });
+  }
+
+  const btnStepClear = document.getElementById('btn-step-clear');
+  if (btnStepClear) {
+    btnStepClear.addEventListener('click', () => {
+      stepRecorder.reset();
+      updateModeBStepUI();
+      updateModeBPositionUI(stepRecorder.getPosition());
+      showStatus('已清空所有步進輸入');
+    });
+  }
+
+  // Mode B: 試聽與寫入
+  const btnStepPreview = document.getElementById('btn-step-preview');
+  if (btnStepPreview) {
+    btnStepPreview.addEventListener('click', previewStepRecordedNotes);
+  }
+
+  const btnStepApply = document.getElementById('btn-step-apply');
+  if (btnStepApply) {
+    btnStepApply.addEventListener('click', applyStepRecordedNotes);
+  }
+
   if (btnClose) btnClose.addEventListener('click', closeRecordModal);
   if (btnCancel) btnCancel.addEventListener('click', closeRecordModal);
 
-  // 開始 / 停止 錄音動作按鈕
+  // 開始 / 停止 錄音動作按鈕 (Mode A)
   if (btnAction) {
     btnAction.addEventListener('click', () => {
       const state = padRecorder.getState();
@@ -384,14 +503,14 @@ function initPadRecordModal() {
     });
   }
 
-  // 試聽按鈕
+  // 試聽按鈕 (Mode A)
   if (btnPreview) {
     btnPreview.addEventListener('click', () => {
       previewRecordedNotes();
     });
   }
 
-  // 寫入 Pad
+  // 寫入 Pad (Mode A)
   if (btnApply) {
     btnApply.addEventListener('click', () => {
       applyRecordedNotes();
@@ -447,14 +566,18 @@ function initPadRecordModal() {
   if (selectTargetPad) {
     selectTargetPad.addEventListener('change', () => {
       currentRecordPadNum = parseInt(selectTargetPad.value, 10) || 1;
-      const applyBtn = document.getElementById('btn-rec-apply');
-      if (applyBtn) {
-        applyBtn.textContent = `💾 寫入 Pad ${currentRecordPadNum}`;
+      const applyBtnA = document.getElementById('btn-rec-apply');
+      if (applyBtnA) {
+        applyBtnA.textContent = `💾 寫入 Pad ${currentRecordPadNum}`;
+      }
+      const applyBtnB = document.getElementById('btn-step-apply');
+      if (applyBtnB) {
+        applyBtnB.textContent = `💾 寫入 Pad ${currentRecordPadNum}`;
       }
     });
   }
 
-  // 長度小節變更
+  // 長度小節變更 (Mode A)
   if (selectBars) {
     selectBars.addEventListener('change', () => {
       recordedBarsCount = parseInt(selectBars.value, 10) || 2;
@@ -464,7 +587,7 @@ function initPadRecordModal() {
   // 渲染虛擬鋼琴琴鍵
   renderVirtualPianoKeys();
 
-  // 電腦鍵盤演奏監聽 (A~K, W, E, T, Y, U)
+  // 電腦鍵盤演奏與控制監聽
   window.addEventListener('keydown', (e) => {
     if (!modal || modal.style.display === 'none') return;
     if (e.repeat) return; // 忽略作業系統長按自動連發，防止重複重疊發聲
@@ -472,6 +595,26 @@ function initPadRecordModal() {
     if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')) {
       return;
     }
+
+    // 模式 B 快捷鍵：Space 插入休止符, Backspace 撤銷, +/=/Shift+T 延長前音 (Tie)
+    if (activeRecordMode === 'B') {
+      if (e.code === 'Space' || e.key === ' ') {
+        e.preventDefault();
+        stepRecorder.insertRest();
+        return;
+      }
+      if (e.key === 'Backspace') {
+        e.preventDefault();
+        stepRecorder.stepBack();
+        return;
+      }
+      if (e.key === '+' || e.key === '=' || ((e.key === 't' || e.key === 'T') && (e.ctrlKey || e.altKey || e.shiftKey))) {
+        e.preventDefault();
+        stepRecorder.tiePreviousNote();
+        return;
+      }
+    }
+
     const key = e.key.toLowerCase();
     if (activeSimKeys.has(key)) return;
     const match = PIANO_KEY_MAP.find(k => k.charKey === key);
@@ -574,7 +717,27 @@ function openRecordModal(padNum: number = 1) {
     const matchedOpt = [1, 2, 4, 8].includes(existingBars) ? existingBars : 2;
     selectBars.value = String(matchedOpt);
     recordedBarsCount = matchedOpt;
+
+    const stepBarsSelect = document.getElementById('step-bars-select') as HTMLSelectElement | null;
+    if (stepBarsSelect) {
+      stepBarsSelect.value = String(matchedOpt);
+      stepTargetBars = matchedOpt;
+    }
   }
+
+  const applyBtnA = document.getElementById('btn-rec-apply');
+  if (applyBtnA) {
+    applyBtnA.textContent = `💾 寫入 Pad ${padNum}`;
+  }
+  const applyBtnB = document.getElementById('btn-step-apply');
+  if (applyBtnB) {
+    applyBtnB.textContent = `💾 寫入 Pad ${padNum}`;
+  }
+
+  // 重置 Mode B 步進狀態
+  stepRecorder.reset();
+  updateModeBStepUI();
+  updateModeBPositionUI(stepRecorder.getPosition());
 
   // 重置 UI 狀態
   resetRecorderUI();
@@ -615,12 +778,16 @@ function bindRecordMidiListeners() {
     const keyEl = document.querySelector(`#sim-piano-keys [data-pitch="${pitch}"]`);
     if (type === 'noteon') {
       if (keyEl) keyEl.classList.add('active');
-      if (padRecorder.getState() === 'recording') {
-        padRecorder.handleNoteOn(pitch, velocity);
-        const countLabel = document.getElementById('rec-notes-counter-label');
-        if (countLabel) {
-          countLabel.textContent = `已捕捉 ${padRecorder.getRecordedNotes().length + 1} 個音符`;
+      if (activeRecordMode === 'A') {
+        if (padRecorder.getState() === 'recording') {
+          padRecorder.handleNoteOn(pitch, velocity);
+          const countLabel = document.getElementById('rec-notes-counter-label');
+          if (countLabel) {
+            countLabel.textContent = `已捕捉 ${padRecorder.getRecordedNotes().length + 1} 個音符`;
+          }
         }
+      } else {
+        stepRecorder.handleNoteOn(pitch, velocity);
       }
       // 即時發聲監聽 (若有啟用電腦監聽)
       if (isAudioMonitorEnabled) {
@@ -628,8 +795,12 @@ function bindRecordMidiListeners() {
       }
     } else {
       if (keyEl) keyEl.classList.remove('active');
-      if (padRecorder.getState() === 'recording') {
-        padRecorder.handleNoteOff(pitch);
+      if (activeRecordMode === 'A') {
+        if (padRecorder.getState() === 'recording') {
+          padRecorder.handleNoteOff(pitch);
+        }
+      } else {
+        stepRecorder.handleNoteOff(pitch);
       }
     }
   });
@@ -694,6 +865,7 @@ function closeRecordModal() {
   if (modal) modal.style.display = 'none';
 
   padRecorder.stop();
+  stepRecorder.reset();
   audioEngine.stop();
 
   // 清除所有虛擬鋼琴按壓狀態
@@ -702,6 +874,188 @@ function closeRecordModal() {
 
   recordMidiUnsubs.forEach(un => un());
   recordMidiUnsubs = [];
+}
+
+// ==========================================
+// Mode B (單步步進輸入) 核心 UI 控制函式群
+// ==========================================
+
+function switchRecordMode(mode: 'A' | 'B') {
+  activeRecordMode = mode;
+
+  const tabA = document.getElementById('tab-btn-mode-a');
+  const tabB = document.getElementById('tab-btn-mode-b');
+  const panelA = document.getElementById('rec-mode-a-panel');
+  const panelB = document.getElementById('rec-mode-b-panel');
+  const actionsA = document.getElementById('rec-mode-a-actions');
+  const actionsB = document.getElementById('rec-mode-b-actions');
+  const subtitle = document.getElementById('rec-modal-subtitle');
+
+  if (mode === 'A') {
+    if (tabA) tabA.classList.add('active');
+    if (tabB) tabB.classList.remove('active');
+    if (panelA) panelA.style.display = 'block';
+    if (panelB) panelB.style.display = 'none';
+    if (actionsA) actionsA.style.display = 'flex';
+    if (actionsB) actionsB.style.display = 'none';
+    if (subtitle) {
+      subtitle.textContent = '模式 A：即時節拍器錄音與智慧量化對齊 (支援實體鍵盤 USB-MIDI 與電腦鍵盤模擬)';
+    }
+  } else {
+    // Mode B: 若正在進行即時錄音則停止
+    if (padRecorder.getState() === 'recording' || padRecorder.getState() === 'countingIn') {
+      stopLiveRecording();
+    }
+    if (tabA) tabA.classList.remove('active');
+    if (tabB) tabB.classList.add('active');
+    if (panelA) panelA.style.display = 'none';
+    if (panelB) panelB.style.display = 'block';
+    if (actionsA) actionsA.style.display = 'none';
+    if (actionsB) actionsB.style.display = 'flex';
+    if (subtitle) {
+      subtitle.textContent = '模式 B：單步步進輸入與和弦辨識 (依自身節奏輸入，支援休止符、延音 Tie 與單步撤銷)';
+    }
+
+    updateModeBStepUI();
+    updateModeBPositionUI(stepRecorder.getPosition());
+    const stepApply = document.getElementById('btn-step-apply');
+    if (stepApply) {
+      stepApply.textContent = `💾 寫入 Pad ${currentRecordPadNum}`;
+    }
+  }
+}
+
+function updateModeBStepUI(entry?: StepRecordEntry, _currentTick?: number) {
+  const chordBadge = document.getElementById('step-chord-badge');
+  const summaryBadge = document.getElementById('step-count-summary');
+  const history = stepRecorder.getHistory();
+  const allNotes = stepRecorder.getAllNoteEvents();
+
+  if (chordBadge) {
+    if (!entry) {
+      chordBadge.textContent = '♪ 最新輸入: 等待彈入...';
+    } else if (entry.type === 'rest') {
+      chordBadge.textContent = '♪ 最新輸入: ⏩ 休止符 (Rest)';
+    } else {
+      const chordName = entry.chordName || '音符';
+      const pitchNames = entry.notes.map(n => StepRecorder.noteNumberToName(n.note)).join(' + ');
+      chordBadge.textContent = `♪ 最新輸入: ${chordName} (${pitchNames})`;
+    }
+  }
+
+  if (summaryBadge) {
+    summaryBadge.textContent = `${history.length} 筆步進 (共 ${allNotes.length} 顆音符)`;
+  }
+
+  renderStepHistoryRoll();
+}
+
+function updateModeBPositionUI(pos?: { bar: number; beat: number; subBeat: number; tick: number; label: string }) {
+  const currentPos = pos || stepRecorder.getPosition();
+  const posBadge = document.getElementById('step-position-badge');
+  if (posBadge) {
+    posBadge.textContent = `📍 游標: ${currentPos.label} (Tick ${currentPos.tick})`;
+  }
+  renderStepHistoryRoll();
+}
+
+function renderStepHistoryRoll() {
+  const rollContainer = document.getElementById('step-history-roll');
+  if (!rollContainer) return;
+
+  const history = stepRecorder.getHistory();
+  rollContainer.innerHTML = '';
+
+  history.forEach((entry) => {
+    const card = document.createElement('div');
+    const pos = stepRecorder.getPosition(entry.startTick);
+
+    if (entry.type === 'rest') {
+      card.className = 'step-card rest';
+      card.innerHTML = `
+        <span class="step-card-tick">${pos.bar}.${pos.beat}</span>
+        <span class="step-card-text" style="color: #94a3b8;">休止</span>
+        <span class="step-card-dur">${entry.durationTick}t</span>
+      `;
+    } else {
+      const isTied = entry.durationTick > stepRecorder.getStepTicks();
+      card.className = `step-card notes ${isTied ? 'tied' : ''}`;
+      const chordTitle = entry.chordName || entry.notes.map(n => StepRecorder.noteNumberToName(n.note)).join('/');
+      card.innerHTML = `
+        <span class="step-card-tick">${pos.bar}.${pos.beat}</span>
+        <span class="step-card-text">${chordTitle}</span>
+        <span class="step-card-dur">${entry.durationTick}t${isTied ? ' (Tie)' : ''}</span>
+      `;
+    }
+    rollContainer.appendChild(card);
+  });
+
+  // 游標指示卡片
+  const curPos = stepRecorder.getPosition();
+  const cursorCard = document.createElement('div');
+  cursorCard.className = 'step-card-cursor';
+  cursorCard.innerHTML = `
+    <span class="step-card-tick">📍 第 ${curPos.bar}.${curPos.beat} 拍</span>
+    <span class="step-card-text">下一步</span>
+  `;
+  rollContainer.appendChild(cursorCard);
+
+  // 自動水平平滑滾動到最右端
+  rollContainer.scrollLeft = rollContainer.scrollWidth;
+}
+
+function previewStepRecordedNotes() {
+  const notes = stepRecorder.getAllNoteEvents();
+  if (notes.length === 0) {
+    showStatus('目前尚無步進輸入音符可供試聽', true);
+    return;
+  }
+
+  const bpmInput = document.getElementById('rec-bpm-input') as HTMLInputElement | null;
+  const bpm = parseInt(bpmInput?.value || '120', 10) || 120;
+  const totalTicks = stepTargetBars * 4 * 480;
+
+  audioEngine.playSequence(currentRecordPadNum, notes, {
+    bpm,
+    division: 480,
+    beatsPerBar: 4,
+    loop: false,
+    gridStartTick: 0,
+    totalTicks,
+  });
+  showStatus(`🔊 正在試聽 Pad ${currentRecordPadNum} 步進錄入旋律 (${notes.length} 顆音符)...`);
+}
+
+function applyStepRecordedNotes() {
+  if (!currentParsed) {
+    showStatus('請先載入或建立 Yamaha PAD 專案', true);
+    return;
+  }
+
+  const notes = stepRecorder.getAllNoteEvents();
+  if (notes.length === 0) {
+    showStatus('步進錄音為空，請先輸入音符或和弦', true);
+    return;
+  }
+
+  const success = YamahaPadModifier.replacePadNotes(
+    currentParsed,
+    currentRecordPadNum,
+    notes,
+    stepTargetBars
+  );
+
+  if (success) {
+    markModified(`已將單步步進輸入 (${notes.length} 顆音符) 寫入 Pad ${currentRecordPadNum}`);
+    renderSections(currentParsed);
+    if (currentCanvasPadNum === currentRecordPadNum) {
+      refreshCurrentPadDetail();
+    }
+    showStatus(`✨ 成功將 ${notes.length} 顆步進錄入音符套用至 Pad ${currentRecordPadNum}！`);
+    closeRecordModal();
+  } else {
+    showStatus(`寫入 Pad ${currentRecordPadNum} 失敗，請檢查專案狀態`, true);
+  }
 }
 
 function startLiveRecording() {

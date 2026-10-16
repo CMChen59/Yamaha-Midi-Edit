@@ -503,10 +503,20 @@
     <div class="modal-dialog record-modal-dialog">
       <div class="modal-header">
         <div>
-          <h3 class="modal-title">🎹 Yamaha PSR-SX920 琴端即時錄音 (Live Pad Recording)</h3>
-          <p class="modal-subtitle">模式 A：即時節拍器錄音與智慧量化對齊 (支援實體鍵盤 USB-MIDI 與電腦鍵盤模擬)</p>
+          <h3 class="modal-title">🎹 Yamaha PSR-SX920 琴端錄音工作台 (Pad Recorder Studio)</h3>
+          <p id="rec-modal-subtitle" class="modal-subtitle">模式 A：即時節拍器錄音與智慧量化對齊 (支援實體鍵盤 USB-MIDI 與電腦鍵盤模擬)</p>
         </div>
         <button type="button" id="btn-close-record-modal" class="modal-close-btn" title="關閉視窗">&times;</button>
+      </div>
+
+      <!-- 錄音模式分頁導覽列 (Mode A / Mode B Tab Switcher) -->
+      <div class="record-tabs-nav">
+        <button type="button" id="tab-btn-mode-a" class="record-tab-btn active">
+          🔴 模式 A：即時節拍器錄音 (Live Metronome)
+        </button>
+        <button type="button" id="tab-btn-mode-b" class="record-tab-btn">
+          🎹 模式 B：單步步進輸入 (Step Input)
+        </button>
       </div>
 
       <!-- 設備連線與目標打擊墊狀態列 -->
@@ -537,95 +547,179 @@
         </div>
       </div>
 
-      <!-- 錄音參數列 (BPM, Bars, 預備拍, 量化切換, 量化網格) -->
-      <div class="record-config-bar">
-        <div class="record-config-item">
-          <label for="rec-bpm-input">速度 BPM:</label>
-          <input type="number" id="rec-bpm-input" min="30" max="280" value="120" style="width: 58px;" />
+      <!-- 模式 A 主面板：即時節拍器錄音 (Live Recorder) -->
+      <div id="rec-mode-a-panel">
+        <!-- 錄音參數列 (BPM, Bars, 預備拍, 量化切換, 量化網格, 音量, 監聽) -->
+        <div class="record-config-bar">
+          <div class="record-config-item">
+            <label for="rec-bpm-input">速度 BPM:</label>
+            <input type="number" id="rec-bpm-input" min="30" max="280" value="120" style="width: 58px;" />
+          </div>
+
+          <div class="record-config-item">
+            <label for="rec-bars-select">長度 (小節):</label>
+            <select id="rec-bars-select">
+              <option value="1">1 小節</option>
+              <option value="2" selected>2 小節</option>
+              <option value="4">4 小節</option>
+              <option value="8">8 小節</option>
+            </select>
+          </div>
+
+          <div class="record-config-item">
+            <button type="button" id="rec-toggle-countin" class="toggle-btn active-rp" title="切換預備拍">
+              🔔 預備拍: 1 小節
+            </button>
+          </div>
+
+          <div class="record-config-item" style="border-left: 1px solid #2d3345; padding-left: 12px;">
+            <button type="button" id="rec-toggle-quantize" class="toggle-btn active-cm" title="切換是否啟用智慧量化">
+              ⚡ 自動量化: 開
+            </button>
+          </div>
+
+          <div class="record-config-item">
+            <label for="rec-grid-select">量化網格:</label>
+            <select id="rec-grid-select">
+              <option value="1/16" selected>1/16 (十六分音符 - 推薦)</option>
+              <option value="1/8">1/8 (八分音符)</option>
+              <option value="1/4">1/4 (四分音符)</option>
+              <option value="1/32">1/32 (三十二分音符)</option>
+              <option value="1/8T">1/8T (八分三連音)</option>
+              <option value="1/16T">1/16T (十六分三連音)</option>
+            </select>
+          </div>
+
+          <div class="record-config-item" style="border-left: 1px solid #2d3345; padding-left: 12px;">
+            <label for="rec-metronome-vol" title="節拍器音量">🔔 音量:</label>
+            <input type="range" id="rec-metronome-vol" min="0" max="100" value="50" style="width: 55px; height: 5px; accent-color: #f59e0b; cursor: pointer;" title="調整節拍器音量" />
+          </div>
+
+          <div class="record-config-item">
+            <button type="button" id="rec-toggle-monitor" class="toggle-btn active-rp" title="切換錄音時電腦是否發聲。使用實體琴演奏時建議關閉以防雙重發聲">
+              🔊 電腦監聽: 開
+            </button>
+          </div>
         </div>
 
-        <div class="record-config-item">
-          <label for="rec-bars-select">長度 (小節):</label>
-          <select id="rec-bars-select">
-            <option value="1">1 小節</option>
-            <option value="2" selected>2 小節</option>
-            <option value="4">4 小節</option>
-            <option value="8">8 小節</option>
-          </select>
-        </div>
+        <!-- 錄音視窗中央：節拍燈、狀態與進度 -->
+        <div class="record-center-display">
+          <!-- 狀態大指示藥丸 -->
+          <div id="rec-status-badge" class="rec-status-badge status-idle">
+            <span id="rec-status-text">待命中 (請點擊下方開始錄音)</span>
+          </div>
 
-        <div class="record-config-item">
-          <button type="button" id="rec-toggle-countin" class="toggle-btn active-rp" title="切換預備拍">
-            🔔 預備拍: 1 小節
-          </button>
-        </div>
+          <!-- 節拍燈號 (Beat Lamps: 1, 2, 3, 4) -->
+          <div class="beat-lamps-container">
+            <div class="beat-lamp beat-lamp-1" data-beat="1">
+              <span class="beat-number">1</span>
+              <span class="beat-sub">強拍</span>
+            </div>
+            <div class="beat-lamp beat-lamp-2" data-beat="2">
+              <span class="beat-number">2</span>
+              <span class="beat-sub">弱拍</span>
+            </div>
+            <div class="beat-lamp beat-lamp-3" data-beat="3">
+              <span class="beat-number">3</span>
+              <span class="beat-sub">次強</span>
+            </div>
+            <div class="beat-lamp beat-lamp-4" data-beat="4">
+              <span class="beat-number">4</span>
+              <span class="beat-sub">弱拍</span>
+            </div>
+          </div>
 
-        <div class="record-config-item" style="border-left: 1px solid #2d3345; padding-left: 12px;">
-          <button type="button" id="rec-toggle-quantize" class="toggle-btn active-cm" title="切換是否啟用智慧量化">
-            ⚡ 自動量化: 開
-          </button>
-        </div>
-
-        <div class="record-config-item">
-          <label for="rec-grid-select">量化網格:</label>
-          <select id="rec-grid-select">
-            <option value="1/16" selected>1/16 (十六分音符 - 推薦)</option>
-            <option value="1/8">1/8 (八分音符)</option>
-            <option value="1/4">1/4 (四分音符)</option>
-            <option value="1/32">1/32 (三十二分音符)</option>
-            <option value="1/8T">1/8T (八分三連音)</option>
-            <option value="1/16T">1/16T (十六分三連音)</option>
-          </select>
-        </div>
-
-        <div class="record-config-item" style="border-left: 1px solid #2d3345; padding-left: 12px;">
-          <label for="rec-metronome-vol" title="節拍器音量">🔔 音量:</label>
-          <input type="range" id="rec-metronome-vol" min="0" max="100" value="50" style="width: 55px; height: 5px; accent-color: #f59e0b; cursor: pointer;" title="調整節拍器音量" />
-        </div>
-
-        <div class="record-config-item">
-          <button type="button" id="rec-toggle-monitor" class="toggle-btn active-rp" title="切換錄音時電腦是否發聲。使用實體琴演奏時建議關閉以防雙重發聲">
-            🔊 電腦監聽: 開
-          </button>
+          <!-- 小節進度與進度條 -->
+          <div style="width: 100%; max-width: 480px; margin-top: 14px;">
+            <div style="display: flex; justify-content: space-between; font-size: 0.76rem; color: #94a3b8; margin-bottom: 4px;">
+              <span id="rec-bar-beat-label">小節 -- / --</span>
+              <span id="rec-notes-counter-label">已捕捉 0 個音符</span>
+            </div>
+            <div class="rec-progress-track">
+              <div id="rec-progress-bar" class="rec-progress-fill" style="width: 0%;"></div>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- 錄音視窗中央：節拍燈、狀態與進度 -->
-      <div class="record-center-display">
-        <!-- 狀態大指示藥丸 -->
-        <div id="rec-status-badge" class="rec-status-badge status-idle">
-          <span id="rec-status-text">待命中 (請點擊下方開始錄音)</span>
+      <!-- 模式 B 主面板：單步步進輸入錄音 (Step Input Recorder) -->
+      <div id="rec-mode-b-panel" style="display: none;">
+        <!-- 步進參數列 (時值、力度模式、目標小節長度) -->
+        <div class="record-config-bar">
+          <div class="record-config-item">
+            <span style="color: #94a3b8; font-size: 0.78rem;">步進時值:</span>
+            <div id="step-res-group" class="step-res-group">
+              <button type="button" class="step-res-btn" data-res="1/1">1/1 (全音)</button>
+              <button type="button" class="step-res-btn" data-res="1/2">1/2 (2拍)</button>
+              <button type="button" class="step-res-btn active" data-res="1/4">1/4 (1拍)</button>
+              <button type="button" class="step-res-btn" data-res="1/8">1/8 (半拍)</button>
+              <button type="button" class="step-res-btn" data-res="1/16">1/16 (1/4拍)</button>
+              <button type="button" class="step-res-btn" data-res="1/32">1/32</button>
+              <button type="button" class="step-res-btn" data-res="1/8T">1/8T (三連)</button>
+              <button type="button" class="step-res-btn" data-res="1/16T">1/16T</button>
+            </div>
+          </div>
+
+          <div class="record-config-item" style="border-left: 1px solid #2d3345; padding-left: 12px;">
+            <button type="button" id="step-toggle-velocity" class="toggle-btn active-rp" title="切換按鍵輸入時是記錄實際彈奏力度或固定 100">
+              ⚡ 力度: 實彈原音
+            </button>
+          </div>
+
+          <div class="record-config-item" style="border-left: 1px solid #2d3345; padding-left: 12px;">
+            <label for="step-bars-select">長度 (小節):</label>
+            <select id="step-bars-select">
+              <option value="1">1 小節</option>
+              <option value="2" selected>2 小節</option>
+              <option value="4">4 小節</option>
+              <option value="8">8 小節</option>
+            </select>
+          </div>
         </div>
 
-        <!-- 節拍燈號 (Beat Lamps: 1, 2, 3, 4) -->
-        <div class="beat-lamps-container">
-          <div class="beat-lamp beat-lamp-1" data-beat="1">
-            <span class="beat-number">1</span>
-            <span class="beat-sub">強拍</span>
+        <!-- 步進狀態指示與動作控制列 -->
+        <div class="step-action-bar">
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <div id="step-position-badge" class="step-pos-pill">📍 游標: 第 1 小節 第 1.1 拍 (Tick 0)</div>
+            <div id="step-chord-badge" class="step-chord-pill">♪ 最新輸入: 等待彈入...</div>
           </div>
-          <div class="beat-lamp beat-lamp-2" data-beat="2">
-            <span class="beat-number">2</span>
-            <span class="beat-sub">弱拍</span>
-          </div>
-          <div class="beat-lamp beat-lamp-3" data-beat="3">
-            <span class="beat-number">3</span>
-            <span class="beat-sub">次強</span>
-          </div>
-          <div class="beat-lamp beat-lamp-4" data-beat="4">
-            <span class="beat-number">4</span>
-            <span class="beat-sub">弱拍</span>
+
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <button type="button" id="btn-step-rest" class="btn btn-step-action" title="插入休止符並推進游標 1 步 (快捷鍵: 空白鍵 Space)">
+              ⏩ 休止符 (Space)
+            </button>
+            <button type="button" id="btn-step-tie" class="btn btn-step-action" title="將前一音符時值延長 1 步 (快捷鍵: T)">
+              ➕ 延長前音 (Tie / T)
+            </button>
+            <button type="button" id="btn-step-back" class="btn btn-step-action" title="倒退 1 步並撤銷前次輸入 (快捷鍵: Backspace)">
+              ◀ 後退 1 步 (⌫)
+            </button>
+            <button type="button" id="btn-step-rewind" class="btn btn-step-action" title="回到開頭 (Tick 0)">
+              ⏮ 回到開頭
+            </button>
+            <button type="button" id="btn-step-clear" class="btn btn-step-action btn-step-danger" title="清空全部已輸入的步進">
+              🗑️ 清空所有
+            </button>
           </div>
         </div>
 
-        <!-- 小節進度與進度條 -->
-        <div style="width: 100%; max-width: 480px; margin-top: 14px;">
-          <div style="display: flex; justify-content: space-between; font-size: 0.76rem; color: #94a3b8; margin-bottom: 4px;">
-            <span id="rec-bar-beat-label">小節 -- / --</span>
-            <span id="rec-notes-counter-label">已捕捉 0 個音符</span>
+        <!-- 步進音軌走帶 (Step Roll Strip) -->
+        <div class="step-history-container">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <span style="font-size: 0.76rem; color: #94a3b8; font-weight: 600;">🎞️ 步進錄音序列 (Step Roll Strip)：</span>
+            <span id="step-count-summary" style="font-size: 0.72rem; color: #38bdf8;">0 筆步進 (0 顆音符)</span>
           </div>
-          <div class="rec-progress-track">
-            <div id="rec-progress-bar" class="rec-progress-fill" style="width: 0%;"></div>
+          <div id="step-history-roll" class="step-roll-strip">
+            <div class="step-card-cursor">
+              <span class="step-card-tick">📍 游標</span>
+              <span class="step-card-text">下一步等待輸入</span>
+            </div>
           </div>
+        </div>
+
+        <!-- 快速鍵指南列 -->
+        <div class="step-shortcuts-hint">
+          ⌨️ 快速鍵：[空白鍵 Space] 插入休止符 ｜ [Backspace] 撤銷後退 ｜ [T] 延長前音 (Tie) ｜ [A~K / W,E,T,Y,U] 彈奏單音或多音和弦
         </div>
       </div>
 
@@ -633,7 +727,7 @@
       <div class="record-simulation-panel">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
           <span style="font-size: 0.78rem; color: #94a3b8; font-weight: 600;">
-            🎹 無琴測試模式：支援電腦鍵盤按鍵或滑鼠點擊發聲與錄製
+            🎹 鍵盤演奏區：支援琴端 USB-MIDI 即時彈奏、電腦鍵盤按鍵模擬或滑鼠點擊發聲
           </span>
           <span style="font-size: 0.72rem; color: #64748b;">(電腦鍵盤按鍵: A~K 為白鍵，W, E, T, Y, U 為黑鍵)</span>
         </div>
@@ -649,15 +743,28 @@
           <span id="rec-summary-text">等待開始錄音...</span>
         </div>
         <div style="display: flex; gap: 10px; align-items: center;">
-          <button type="button" id="btn-rec-action" class="btn btn-record-primary">
-            🔴 開始錄音 (1小節預備拍)
-          </button>
-          <button type="button" id="btn-rec-preview" class="btn btn-secondary" style="display: none; padding: 7px 14px;">
-            🔊 試聽錄音
-          </button>
-          <button type="button" id="btn-rec-apply" class="btn btn-primary" style="display: none; background: linear-gradient(135deg, #10b981, #059669); border: none; padding: 7px 16px;">
-            💾 寫入此 Pad
-          </button>
+          <!-- 模式 A 專屬按鈕 -->
+          <div id="rec-mode-a-actions" style="display: flex; gap: 10px; align-items: center;">
+            <button type="button" id="btn-rec-action" class="btn btn-record-primary">
+              🔴 開始錄音 (1小節預備拍)
+            </button>
+            <button type="button" id="btn-rec-preview" class="btn btn-secondary" style="display: none; padding: 7px 14px;">
+              🔊 試聽錄音
+            </button>
+            <button type="button" id="btn-rec-apply" class="btn btn-primary" style="display: none; background: linear-gradient(135deg, #10b981, #059669); border: none; padding: 7px 16px;">
+              💾 寫入此 Pad
+            </button>
+          </div>
+          <!-- 模式 B 專屬按鈕 -->
+          <div id="rec-mode-b-actions" style="display: none; gap: 10px; align-items: center;">
+            <button type="button" id="btn-step-preview" class="btn btn-secondary" style="padding: 7px 14px;">
+              🔊 試聽步進旋律
+            </button>
+            <button type="button" id="btn-step-apply" class="btn btn-primary" style="background: linear-gradient(135deg, #10b981, #059669); border: none; padding: 7px 16px;">
+              💾 寫入 Pad 1
+            </button>
+          </div>
+          <!-- 共用關閉按鈕 -->
           <button type="button" id="btn-rec-cancel" class="btn btn-secondary" style="padding: 7px 14px;">
             關閉
           </button>
