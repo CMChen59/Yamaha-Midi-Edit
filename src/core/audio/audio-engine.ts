@@ -16,6 +16,7 @@ export interface ChannelAudioParams {
   volume?: number;       // 0 ~ 127 (CC 7)
   pan?: number;          // 0 ~ 127, 64 is center (CC 10)
   reverb?: number;       // 0 ~ 127 (CC 91)
+  chorus?: number;       // 0 ~ 127 (CC 93)
   instrumentId?: string; // 預設樂器 ID (例如 'grand-piano', 'strings', 'pizzicato')
   msb?: number;          // Bank MSB (CC 0)
   lsb?: number;          // Bank LSB (CC 32)
@@ -111,6 +112,7 @@ export class AudioEngine {
   private masterGain: GainNode | null = null;
   private compressor: DynamicsCompressorNode | null = null;
   private convolver: ConvolverNode | null = null;
+  private chorusInput: GainNode | null = null;
   private isInitialized = false;
 
   // 播放走帶狀態
@@ -189,12 +191,59 @@ export class AudioEngine {
       this.convolver = null;
     }
 
-    // 混音主幹線連接
+    // 混音主幹線連接：混響
     if (this.convolver) {
       const reverbGain = this.ctx.createGain();
       reverbGain.gain.setValueAtTime(0.25, this.ctx.currentTime);
       this.convolver.connect(reverbGain);
       reverbGain.connect(this.compressor);
+    }
+
+    // 2.8-C: 建立輕量立體聲合唱效果器 (CC 93: Stereo Chorus Modulated Delay)
+    try {
+      this.chorusInput = this.ctx.createGain();
+
+      // 建立左右聲道微延遲 (Delay Lines: L=24ms, R=31ms)
+      const delayL = this.ctx.createDelay();
+      delayL.delayTime.setValueAtTime(0.024, this.ctx.currentTime);
+      const delayR = this.ctx.createDelay();
+      delayR.delayTime.setValueAtTime(0.031, this.ctx.currentTime);
+
+      // 建立雙路低頻震盪器 (LFO: ~1.2Hz 與 ~1.5Hz)，進行微頻率失諧震盪 (Chorus Shimmer)
+      const lfoL = this.ctx.createOscillator();
+      lfoL.type = 'sine';
+      lfoL.frequency.setValueAtTime(1.2, this.ctx.currentTime);
+      const lfoGainL = this.ctx.createGain();
+      lfoGainL.gain.setValueAtTime(0.0025, this.ctx.currentTime); // ~2.5ms 延遲調變深度
+      lfoL.connect(lfoGainL);
+      lfoGainL.connect(delayL.delayTime);
+
+      const lfoR = this.ctx.createOscillator();
+      lfoR.type = 'sine';
+      lfoR.frequency.setValueAtTime(1.5, this.ctx.currentTime);
+      const lfoGainR = this.ctx.createGain();
+      lfoGainR.gain.setValueAtTime(0.003, this.ctx.currentTime); // ~3.0ms 延遲調變深度
+      lfoR.connect(lfoGainR);
+      lfoGainR.connect(delayR.delayTime);
+
+      // 左右聲道立體聲合併
+      const merger = this.ctx.createChannelMerger(2);
+      delayL.connect(merger, 0, 0);
+      delayR.connect(merger, 0, 1);
+
+      this.chorusInput.connect(delayL);
+      this.chorusInput.connect(delayR);
+
+      // 合唱濕訊號輸出匯入動態壓縮器
+      const chorusOutputGain = this.ctx.createGain();
+      chorusOutputGain.gain.setValueAtTime(0.5, this.ctx.currentTime);
+      merger.connect(chorusOutputGain);
+      chorusOutputGain.connect(this.compressor);
+
+      lfoL.start();
+      lfoR.start();
+    } catch {
+      this.chorusInput = null;
     }
 
     this.masterGain.connect(this.compressor);
@@ -418,6 +467,7 @@ export class AudioEngine {
           volume: Math.round(((params.volume ?? 100) * this.backingVolume)),
           pan: params.pan ?? 64,
           reverb: params.reverb ?? 40,
+          chorus: params.chorus ?? 0,
         });
       }
     }
@@ -553,8 +603,13 @@ export class AudioEngine {
           pc: params.pc ?? 0,
         });
       }
-      if (params.volume !== undefined || params.pan !== undefined) {
-        midiManager.sendMixerControllers(ch, { volume: params.volume, pan: params.pan });
+      if (params.volume !== undefined || params.pan !== undefined || params.reverb !== undefined || params.chorus !== undefined) {
+        midiManager.sendMixerControllers(ch, {
+          volume: params.volume,
+          pan: params.pan,
+          reverb: params.reverb,
+          chorus: params.chorus,
+        });
       }
 
       midiManager.sendNoteOn(ch, note, vel);
@@ -633,7 +688,7 @@ export class AudioEngine {
 
     this.playbackStartTime = this.ctx.currentTime;
 
-    // 若 Web MIDI 啟用，在序列開始前預先發送當前 Pad 的音色 (Bank/PC) 與混音 (CC7/CC10)
+    // 若 Web MIDI 啟用，在序列開始前預先發送當前 Pad 的音色 (Bank/PC) 與混音 (CC7/CC10/CC91/CC93)
     if (midiManager.isMidiActive()) {
       const midiCh = options.channelParams?.channel ?? (padNum - 1);
       const params = options.channelParams || {};
@@ -648,6 +703,7 @@ export class AudioEngine {
         volume: params.volume ?? 100,
         pan: params.pan ?? 64,
         reverb: params.reverb ?? 40,
+        chorus: params.chorus ?? 0,
       });
     }
 
@@ -747,8 +803,20 @@ export class AudioEngine {
         panner.connect(revSend);
         revSend.connect(this.convolver);
       }
+      if (this.chorusInput && (params.chorus ?? 0) > 0) {
+        const choSend = ctx.createGain();
+        choSend.gain.setValueAtTime(((params.chorus ?? 0) / 127) * 0.65, startTime);
+        panner.connect(choSend);
+        choSend.connect(this.chorusInput);
+      }
     } else {
       channelGain.connect(targetBus);
+      if (this.chorusInput && (params.chorus ?? 0) > 0) {
+        const choSend = ctx.createGain();
+        choSend.gain.setValueAtTime(((params.chorus ?? 0) / 127) * 0.65, startTime);
+        channelGain.connect(choSend);
+        choSend.connect(this.chorusInput);
+      }
     }
 
     const freq = midiToFreq(note);

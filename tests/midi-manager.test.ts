@@ -97,18 +97,19 @@ describe('Phase 2.2-F: Web MIDI 實體琴硬體直連與發聲 (MidiManager Veri
     expect(sentMessages[2].data).toEqual([0xC0, 0]);      // PC = 0
   });
 
-  it('能正確組裝並傳送混音控制器參數 (Volume CC7, Pan CC10, Reverb CC91)', async () => {
+  it('能正確組裝並傳送混音控制器參數 (Volume CC7, Pan CC10, Reverb CC91, Chorus CC93)', async () => {
     await midiManager.requestAccess();
     sentMessages = [];
 
-    // 傳送 Channel 2 (ch=1) 的音量 105、聲相 80、混響 50
-    const success = midiManager.sendMixerControllers(1, { volume: 105, pan: 80, reverb: 50 });
+    // 傳送 Channel 2 (ch=1) 的音量 105、聲相 80、混響 50、合唱 64
+    const success = midiManager.sendMixerControllers(1, { volume: 105, pan: 80, reverb: 50, chorus: 64 });
     expect(success).toBe(true);
 
-    expect(sentMessages.length).toBe(3);
+    expect(sentMessages.length).toBe(4);
     expect(sentMessages[0].data).toEqual([0xB1, 7, 105]);  // CC 7 = 105
     expect(sentMessages[1].data).toEqual([0xB1, 10, 80]);   // CC 10 = 80
     expect(sentMessages[2].data).toEqual([0xB1, 91, 50]);  // CC 91 = 50
+    expect(sentMessages[3].data).toEqual([0xB1, 93, 64]);  // CC 93 = 64
   });
 
   it('能正確傳送 Note-On 與 Note-Off 音符事件', async () => {

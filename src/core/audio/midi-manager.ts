@@ -410,11 +410,11 @@ export class MidiManager {
   }
 
   /**
-   * 傳送混音控制器參數 (Volume, Pan, Reverb)
+   * 傳送混音控制器參數 (Volume CC7, Pan CC10, Reverb CC91, Chorus CC93)
    */
   public sendMixerControllers(
     channel: number,
-    params: { volume?: number; pan?: number; reverb?: number }
+    params: { volume?: number; pan?: number; reverb?: number; chorus?: number }
   ): boolean {
     if (!this.selectedOutput) return false;
     const ch = Math.max(0, Math.min(15, channel));
@@ -430,6 +430,10 @@ export class MidiManager {
     if (params.reverb !== undefined) {
       const rev = Math.max(0, Math.min(127, Math.round(params.reverb)));
       this.send([0xB0 | ch, 91, rev]); // CC 91: Reverb Send Level
+    }
+    if (params.chorus !== undefined) {
+      const cho = Math.max(0, Math.min(127, Math.round(params.chorus)));
+      this.send([0xB0 | ch, 93, cho]); // CC 93: Chorus Send Level
     }
     return true;
   }

@@ -72,6 +72,7 @@ export class YamahaPadModifier {
       volume?: number;
       pan?: number;
       reverb?: number;
+      chorus?: number;
       bankMsb?: number;
       bankLsb?: number;
       programChange?: number;
@@ -100,6 +101,11 @@ export class YamahaPadModifier {
     // 更新混響 (CC 91)
     if (params.reverb !== undefined) {
       this.updateOrInsertCC(track, targetChannel, 91, params.reverb);
+    }
+
+    // 更新合唱 (CC 93)
+    if (params.chorus !== undefined) {
+      this.updateOrInsertCC(track, targetChannel, 93, params.chorus);
     }
 
     // 更新 Bank MSB (CC 0)

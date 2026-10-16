@@ -849,6 +849,7 @@ function getPadBackingTrackItem(padNum: number): BackingTrackItem | null {
   let volume = 100;
   let pan = 64;
   let reverb = 40;
+  let chorus = 0;
 
   for (const ev of track.events) {
     if (ev.type === 'programChange' && ev.program !== undefined) currentPc = ev.program;
@@ -858,6 +859,7 @@ function getPadBackingTrackItem(padNum: number): BackingTrackItem | null {
       if (ev.controller === 7 && ev.value !== undefined) volume = ev.value;
       if (ev.controller === 10 && ev.value !== undefined) pan = ev.value;
       if (ev.controller === 91 && ev.value !== undefined) reverb = ev.value;
+      if (ev.controller === 93 && ev.value !== undefined) chorus = ev.value;
     }
   }
 
@@ -880,6 +882,7 @@ function getPadBackingTrackItem(padNum: number): BackingTrackItem | null {
       volume,
       pan,
       reverb,
+      chorus,
       instrumentId,
       msb: currentMsb,
       lsb: currentLsb,
@@ -3104,6 +3107,7 @@ function togglePadAudition(padNum: number) {
   let volume = 100;
   let pan = 64;
   let reverb = 40;
+  let chorus = 0;
 
   for (const ev of track.events) {
     if (ev.type === 'programChange' && ev.program !== undefined) currentPc = ev.program;
@@ -3113,6 +3117,7 @@ function togglePadAudition(padNum: number) {
       if (ev.controller === 7 && ev.value !== undefined) volume = ev.value;
       if (ev.controller === 10 && ev.value !== undefined) pan = ev.value;
       if (ev.controller === 91 && ev.value !== undefined) reverb = ev.value;
+      if (ev.controller === 93 && ev.value !== undefined) chorus = ev.value;
     }
   }
 
@@ -3154,6 +3159,7 @@ function togglePadAudition(padNum: number) {
       volume,
       pan,
       reverb,
+      chorus,
       instrumentId,
       msb: currentMsb,
       lsb: currentLsb,
@@ -6316,6 +6322,7 @@ function renderParts(parsed: YamahaFileParsed) {
       let vol = 100;
       let pan = 64;
       let reverb: number | undefined;
+      let chorus: number | undefined;
       let bankMsb: number | undefined;
       let bankLsb: number | undefined;
       let pc: number | undefined;
@@ -6328,6 +6335,7 @@ function renderParts(parsed: YamahaFileParsed) {
             if (ev.controller === 7 && ev.value !== undefined) vol = ev.value;
             if (ev.controller === 10 && ev.value !== undefined) pan = ev.value;
             if (ev.controller === 91 && ev.value !== undefined) reverb = ev.value;
+            if (ev.controller === 93 && ev.value !== undefined) chorus = ev.value;
             if (ev.controller === 0 && ev.value !== undefined) bankMsb = ev.value;
             if (ev.controller === 32 && ev.value !== undefined) bankLsb = ev.value;
           }
@@ -6383,6 +6391,12 @@ function renderParts(parsed: YamahaFileParsed) {
             <span class="rev-label-${padNum}" style="font-size: 0.8rem; width: 28px; text-align: right;">${reverb ?? 40}</span>
           </div>
         </td>
+        <td>
+          <div class="mixing-slider-container">
+            <input type="range" min="0" max="127" value="${chorus ?? 0}" class="mixing-slider cho-range-${padNum}" title="合唱深度 (CC93, 0~127)" />
+            <span class="cho-label-${padNum}" style="font-size: 0.8rem; width: 28px; text-align: right;">${chorus ?? 0}</span>
+          </div>
+        </td>
       `;
 
       // 監聽音量推桿事件
@@ -6416,6 +6430,17 @@ function renderParts(parsed: YamahaFileParsed) {
         YamahaPadModifier.setPadMixing(parsed, padNum, { reverb: val });
         midiManager.sendMixerControllers(padNum - 1, { reverb: val });
         markModified(`Pad ${padNum} 混響調整為: ${val}`);
+      });
+
+      // 監聽合唱推桿事件 (2.8-C)
+      const choRange = tr.querySelector(`.cho-range-${padNum}`) as HTMLInputElement;
+      const choLabel = tr.querySelector(`.cho-label-${padNum}`) as HTMLElement;
+      choRange.addEventListener('input', () => {
+        const val = parseInt(choRange.value, 10);
+        choLabel.textContent = `${val}`;
+        YamahaPadModifier.setPadMixing(parsed, padNum, { chorus: val });
+        midiManager.sendMixerControllers(padNum - 1, { chorus: val });
+        markModified(`Pad ${padNum} 合唱效果調整為: ${val}`);
       });
 
       // 監聽音色變更事件
@@ -6493,6 +6518,7 @@ function renderParts(parsed: YamahaFileParsed) {
         </td>
         <td>${pan === 64 ? 'C (置中)' : pan < 64 ? `L${64 - pan}` : `R${pan - 64}`}</td>
         <td>${part.reverb ?? '-'}</td>
+        <td>${part.chorus ?? '-'}</td>
       `;
       partsTbody.appendChild(tr);
     }
