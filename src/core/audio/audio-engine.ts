@@ -63,6 +63,9 @@ export interface BackingTrackOptions {
   division?: number;
   volumeRatio?: number; // 0.0 ~ 1.0 (預設 0.6)
   loop?: boolean;
+  beatsPerBar?: number;
+  onProgress?: (state: PlaybackState) => void;
+  onEnded?: () => void;
 }
 
 /**
@@ -381,7 +384,8 @@ export class AudioEngine {
 
     const bpm = options.bpm || 120;
     const division = options.division || 480;
-    const ticksPerBar = division * 4;
+    const beatsPerBar = options.beatsPerBar || 4;
+    const ticksPerBar = division * beatsPerBar;
 
     // 計算最長音軌小節數作為整組伴奏之循環長度
     let maxTotalTicks = ticksPerBar;
@@ -433,12 +437,31 @@ export class AudioEngine {
 
       if (!isLoop && elapsedSec >= loopDurationSec) {
         this.stopBackingTrack();
+        if (options.onEnded) options.onEnded();
         return;
       }
 
       if (isLoop && currentCycle > lastScheduledCycle) {
         lastScheduledCycle = currentCycle;
         this.scheduleBackingPass(currentCycle, loopDurationSec, sessionId, validTracks, bpm, division, maxTotalTicks);
+      }
+
+      const cycleElapsedSec = elapsedSec % loopDurationSec;
+      const relTick = Math.min(secondsToTicks(cycleElapsedSec, bpm, division), maxTotalTicks);
+      const currentBar = Math.floor(relTick / ticksPerBar) + 1;
+      const tickInBar = relTick % ticksPerBar;
+      const currentBeat = Math.floor(tickInBar / division) + 1;
+      const progress = Math.max(0, Math.min(1, relTick / maxTotalTicks));
+
+      if (options.onProgress) {
+        options.onProgress({
+          currentTick: relTick,
+          relTick,
+          currentBar,
+          currentBeat,
+          progress,
+          activeNoteNumbers: [],
+        });
       }
 
       if (this.backingPlaybackSessionId === sessionId && this.isBackingPlaying) {

@@ -2546,16 +2546,48 @@ function initEvents() {
     });
   }
 
+  // 2.8-A 合奏 Pad 選擇晶片 (P1 ~ P4) 點擊切換事件
+  const ensembleChips = document.querySelectorAll('.ensemble-pad-chip');
+  ensembleChips.forEach(chip => {
+    chip.addEventListener('click', () => {
+      const padNum = parseInt((chip as HTMLElement).dataset.pad || '0', 10);
+      if (padNum < 1 || padNum > 4) return;
+      if (chip.classList.contains('disabled')) {
+        showStatus(`Pad ${padNum} 目前無音符可供合奏播放`, true);
+        return;
+      }
+
+      if (ensembleSelectedPads.has(padNum)) {
+        ensembleSelectedPads.delete(padNum);
+        chip.classList.remove('active');
+      } else {
+        ensembleSelectedPads.add(padNum);
+        chip.classList.add('active');
+      }
+
+      updateEnsembleChipsUI();
+
+      // 若當前正在合奏中，即刻無縫刷新合奏軌道
+      if (isAllPadsPlaying) {
+        togglePlayAllPads(); // 停止目前合奏
+        if (ensembleSelectedPads.size > 0) {
+          togglePlayAllPads(); // 以新選取的 Pad 組合重新啟動
+        }
+      }
+    });
+  });
+
   const btnTransportStop = document.getElementById('btn-transport-stop');
   if (btnTransportStop) {
     btnTransportStop.addEventListener('click', () => {
       audioEngine.stop();
       audioEngine.stopBackingTrack();
       isAllPadsPlaying = false;
-      const btnAll = document.getElementById('btn-transport-play-all');
-      if (btnAll) {
-        btnAll.textContent = '🎼 4-Pad 合奏';
-        btnAll.classList.remove('playing');
+      updateEnsembleChipsUI();
+      const statusBadge = document.getElementById('transport-status-badge');
+      if (statusBadge) statusBadge.style.display = 'none';
+      if (currentCanvasRedrawWithPlayhead) {
+        currentCanvasRedrawWithPlayhead(null, []);
       }
       updateAuditionUIState(null);
     });
@@ -2894,9 +2926,60 @@ function updateAuditionUIState(playingPadNum: number | null) {
 }
 
 let isAllPadsPlaying: boolean = false;
+let ensembleSelectedPads: Set<number> = new Set([1, 2, 3, 4]);
 
 /**
- * 2.8-A 全打擊墊合奏播放切換 (Play All 4 Pads)
+ * 2.8-A 更新合奏 Pad 晶片選擇器 UI 狀態 (包含空音軌禁用與按鈕文字)
+ */
+function updateEnsembleChipsUI() {
+  const btnPlayAll = document.getElementById('btn-transport-play-all') as HTMLButtonElement | null;
+  const chips = document.querySelectorAll('.ensemble-pad-chip');
+
+  chips.forEach(chip => {
+    const p = parseInt((chip as HTMLElement).dataset.pad || '0', 10);
+    if (p < 1 || p > 4) return;
+
+    const track = currentParsed?.tracks[p];
+    const notes = track ? extractTrackNotes(track) : [];
+    const hasNotes = notes.length > 0;
+
+    if (!hasNotes) {
+      chip.classList.add('disabled');
+      chip.classList.remove('active');
+      ensembleSelectedPads.delete(p);
+      (chip as HTMLElement).title = `Pad ${p} (無音符)`;
+    } else {
+      chip.classList.remove('disabled');
+      if (ensembleSelectedPads.has(p)) {
+        chip.classList.add('active');
+        (chip as HTMLElement).title = `Pad ${p} 已加入合奏 (點擊排除)`;
+      } else {
+        chip.classList.remove('active');
+        (chip as HTMLElement).title = `Pad ${p} 未加入合奏 (點擊加入)`;
+      }
+    }
+  });
+
+  if (btnPlayAll) {
+    if (isAllPadsPlaying) {
+      btnPlayAll.textContent = '⏹ 停止合奏';
+      btnPlayAll.classList.add('playing');
+    } else {
+      btnPlayAll.classList.remove('playing');
+      const count = ensembleSelectedPads.size;
+      if (count === 4) {
+        btnPlayAll.textContent = '🎼 4-Pad 合奏';
+      } else if (count > 0) {
+        btnPlayAll.textContent = `🎼 合奏 (${count}軌)`;
+      } else {
+        btnPlayAll.textContent = '🎼 合奏 (未選)';
+      }
+    }
+  }
+}
+
+/**
+ * 2.8-A 全打擊墊自選合奏播放切換 (Play Selected Ensemble Pads)
  */
 function togglePlayAllPads() {
   if (!currentParsed) {
@@ -2904,18 +2987,17 @@ function togglePlayAllPads() {
     return;
   }
 
-  const btnPlayAll = document.getElementById('btn-transport-play-all') as HTMLButtonElement | null;
   const statusBadge = document.getElementById('transport-status-badge');
 
   if (isAllPadsPlaying || audioEngine.isBackingTrackPlaying()) {
     audioEngine.stop();
     audioEngine.stopBackingTrack();
     isAllPadsPlaying = false;
-    if (btnPlayAll) {
-      btnPlayAll.textContent = '🎼 4-Pad 合奏';
-      btnPlayAll.classList.remove('playing');
-    }
+    updateEnsembleChipsUI();
     if (statusBadge) statusBadge.style.display = 'none';
+    if (currentCanvasRedrawWithPlayhead) {
+      currentCanvasRedrawWithPlayhead(null, []);
+    }
     showStatus('已停止合奏播放');
     return;
   }
@@ -2924,40 +3006,69 @@ function togglePlayAllPads() {
   audioEngine.stop();
   updateAuditionUIState(null);
 
-  // 收集所有具有音符的 Pads (1~4)
+  // 收集使用者選取且具有音符的 Pads
   const allTracks: BackingTrackItem[] = [];
-  for (let p = 1; p <= 4; p++) {
-    const item = getPadBackingTrackItem(p);
-    if (item) allTracks.push(item);
+  for (const p of [1, 2, 3, 4]) {
+    if (ensembleSelectedPads.has(p)) {
+      const item = getPadBackingTrackItem(p);
+      if (item) allTracks.push(item);
+    }
   }
 
   if (allTracks.length === 0) {
-    showStatus('目前專案中所有 Pad 皆無音符可供合奏', true);
+    showStatus('請至少選取一個具備音符的 Pad 進行合奏 (點擊 P1~P4 晶片按鈕切換)', true);
     return;
   }
 
+  const division = currentParsed.division || 480;
+  const beatsPerBar = currentParsed.timeSignature?.numerator || 4;
+  const ticksPerBar = division * beatsPerBar;
   const bpmInput = document.getElementById('input-playback-bpm') as HTMLInputElement | null;
   const bpm = bpmInput ? parseInt(bpmInput.value, 10) || currentParsed.bpm || 120 : currentParsed.bpm || 120;
-  const division = currentParsed.division || 480;
+
+  // 計算合奏總長度小節數
+  let maxTotalTicks = ticksPerBar;
+  for (const track of allTracks) {
+    if (track.totalTicks && track.totalTicks > 0) {
+      maxTotalTicks = Math.max(maxTotalTicks, track.totalTicks);
+    }
+  }
+  const totalBars = Math.max(1, Math.round(maxTotalTicks / ticksPerBar));
 
   isAllPadsPlaying = true;
-  if (btnPlayAll) {
-    btnPlayAll.textContent = '⏹ 停止合奏';
-    btnPlayAll.classList.add('playing');
-  }
-  if (statusBadge) {
-    statusBadge.style.display = 'inline-block';
-    statusBadge.textContent = `🎼 4-Pad 合奏中 (${allTracks.map(t => `Pad ${t.padNum}`).join('+')})`;
-  }
+  updateEnsembleChipsUI();
+
+  const activePadList = allTracks.map(t => `P${t.padNum}`).join('+');
 
   audioEngine.startBackingTrack(allTracks, {
     bpm,
     division,
+    beatsPerBar,
     volumeRatio: 1.0,
     loop: true,
+    onProgress: (state: PlaybackState) => {
+      // 即時小節與拍子狀態標籤更新 (清楚呈現目前播放至第幾小節第幾拍)
+      if (statusBadge) {
+        statusBadge.style.display = 'inline-block';
+        statusBadge.textContent = `🎼 合奏 [${activePadList}]: 第 ${state.currentBar} / ${totalBars} 小節 第 ${state.currentBeat} 拍`;
+      }
+
+      // 畫布聯動：若目前鋼琴卷軸畫面所顯示的 Pad 參與了合奏，同步繪製走帶游標 (Playhead cursor)！
+      if (currentActivePadNum !== null && ensembleSelectedPads.has(currentActivePadNum) && currentCanvasRedrawWithPlayhead) {
+        currentCanvasRedrawWithPlayhead(state.relTick, []);
+      }
+    },
+    onEnded: () => {
+      isAllPadsPlaying = false;
+      updateEnsembleChipsUI();
+      if (statusBadge) statusBadge.style.display = 'none';
+      if (currentCanvasRedrawWithPlayhead) {
+        currentCanvasRedrawWithPlayhead(null, []);
+      }
+    }
   });
 
-  showStatus(`🎼 正在播放 4-Pad 全軌合奏 (${allTracks.length} 個 Pad 同步發聲)...`);
+  showStatus(`🎼 正在播放 ${allTracks.length} 個 Pad 合奏 (${activePadList} 同步發聲)...`);
 }
 
 /**
@@ -2969,11 +3080,7 @@ function togglePadAudition(padNum: number) {
   if (isAllPadsPlaying) {
     audioEngine.stopBackingTrack();
     isAllPadsPlaying = false;
-    const btnAll = document.getElementById('btn-transport-play-all');
-    if (btnAll) {
-      btnAll.textContent = '🎼 4-Pad 合奏';
-      btnAll.classList.remove('playing');
-    }
+    updateEnsembleChipsUI();
   }
 
   if (audioEngine.isPlaying() && audioEngine.getPlayingPadNum() === padNum) {
@@ -3339,6 +3446,8 @@ function renderSections(parsed: YamahaFileParsed) {
 
       sectionsList.appendChild(item);
     }
+    // 2.8-A 同步更新合奏晶片選擇狀態
+    updateEnsembleChipsUI();
   } else {
     sectionsList.className = 'section-grid';
     // STY 模式：傳統伴奏積木
