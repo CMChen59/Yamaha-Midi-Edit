@@ -202,12 +202,37 @@ flowchart TD
 
 ---
 
+### 階段 3.2：外部 MIDI 匯入分流與 8 聲部智慧映射精靈 (Import Router & 8-Part Intelligent Mapper) - 【✅ 已完工】
+- **需求與成果實現**：
+  1. **外部 MIDI 匯入分流導航 (Import Mode Router, `#midi-mode-router-modal`)**：
+     - 拖入或選取 `.mid` / `.midi` 檔案時，主動喚醒分流引導視窗：
+       - `[🎛️ 轉為 Multi Pad 打擊墊 (.PAD)]`：進入 4-Pad 獨立短句切片與即時拍擊觸發精靈。
+       - `[🎼 轉為 Yamaha Style 伴奏 (.STY)]`：進入 8 聲部智慧伴奏映射精靈。
+     - 徹底杜絕格式混淆，為 Multi Pad 與 Style 伴奏雙軌工作流建立清晰入口。
+  2. **8 聲部智慧特徵分析與推薦演算法 (`StyleImporter.analyzeForStyle`)**：
+     - 自動解析各音軌音樂特徵（音符數、通道、PC 音色、平均音高、平均時值、同發多音比率 Polyphony Ratio）。
+     - 智慧樂器分類：鼓組 (Drums)、打擊樂 (Percussion)、低音 (Bass)、鋼琴鍵盤 (Piano)、吉他 (Guitar)、弦樂 (Strings)、長音 (Pad)、銅管 (Brass)、木管 (Reed)、主奏 (Lead)。
+     - 智慧裁決分配防衝突演算法：
+       - `MIDI Ch 10` 或鼓組 -> 主爵士鼓組 `Rhythm 2`；次打擊樂 -> `Rhythm 1`。
+       - 低音音色與音域 (PC 32~39 或 Avg Pitch <= 48) -> 低音貝斯 `Bass`。
+       - 和弦同發演奏 (Polyphony Ratio >= 0.25) -> 節奏主和弦 `Chord 1`；次和弦/管樂組 -> `Chord 2`。
+       - 長音與鋪底音色 -> 長音背景 `Pad`。
+       - 分解琶音 (Arpeggio) 或單音主奏短句 -> 對位短句 `Phrase 1`；副裝飾句 -> `Phrase 2`。
+  3. **8 聲部可視化映射調整介面 (`#style-import-modal`)**：
+     - 左欄呈現來源 MIDI 軌道卡片、樂器分類標籤、音符數、推薦聲部與單軌即時試聽按鈕 (`[▶ 試聽]`)。
+     - 右欄呈現 Yamaha 8 伴奏聲部卡片（Rhythm 1~2, Bass, Chord 1~2, Pad, Phrase 1~2），提供來源下拉選單、智慧推薦已套用標籤、`-36~+36` 移調數值與 `[-12] [0] [+12]` 快捷鍵、單軌試聽按鈕。
+     - 支援一鍵快速動作：`[⚡ 8 聲部智慧推薦一鍵映射]`、`[🔄 全部清空]`。
+  4. **標準 Style 伴奏合成與即時載入工作區 (`executeStyleImport`)**：
+     - 依據選定小節切片（如 1~4 小節或 1~8 小節）與聲部映射，呼叫 `StyleImporter.synthesizeStyleFromImport`。
+     - 精確生成符合 Yamaha SFF2 CASM 規範之 SMF 0 單軌 Style 檔案，並直接無縫載入主畫面（支援 CASM 檢視、段落標記、走帶與聲部混音）。
+  5. **單元測試 100% 通過 (`tests/style-importer.test.ts`)**：
+     - 涵蓋特徵剖析、8 聲部防衝突分配、伴奏合成二進位 Roundtrip 回讀、自訂移調與控制器覆寫。
+     - 全專案 18 組測試檔共 96/96 項測試全數綠燈通過。
+
+---
+
 ### 後續執行階段規劃：
-- **階段 3.2 (進行中)**：外部 MIDI 匯入分流與 8 聲部智慧映射精靈 (Import Router & 8-Part Intelligent Mapper)
-  - 拖入 `.mid` 時彈出分流選擇：`[🎛️ 轉為 Multi Pad 打擊墊]` vs `[🎼 轉為 Yamaha Style 伴奏風格]`。
-  - 分析外部 MIDI 軌道特徵（音色 PC、Channel、音高音域、打擊樂 Channel 10 等），自動智慧推薦映射至 8 聲部伴奏軌。
-  - 提供可拖曳/下拉調度之聲部映射對照介面。
-- **階段 3.3**：曲式多段落視覺化切片與 C 調基準校正 (Section Slicer & Source Chord Normalization)
+- **階段 3.3 (即將執行)**：曲式多段落視覺化切片與 C 調基準校正 (Section Slicer & Source Chord Normalization)
   - 視覺化小節切片工具：圈選特定小節指派為 Main A~D, Fill In, Intro, Ending。
   - C 調基準校正演算法：自動將來源片段轉調為 Yamaha 原廠要求的標準 C 調基準（CMaj/C7/Cmin），確保 CASM 在琴端左手換和弦時音準 100% 正確。
 - **階段 3.4**：Style Studio 伴奏編輯介面、合奏走帶試聽與 PSR-SX920 實機導出驗證 (UI, Web Audio Playback & Physical Hardware Export)

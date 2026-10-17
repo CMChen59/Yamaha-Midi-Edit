@@ -1857,6 +1857,34 @@ body {
   border-bottom: 1px solid #1e222d;
 }
 
+/* Phase 3.2: MIDI Import Mode Router & Style Import Wizard */
+.router-card:hover {
+  transform: translateY(-2px);
+  border-color: #38bdf8 !important;
+  box-shadow: 0 4px 20px rgba(56, 189, 248, 0.2) !important;
+}
 
+.style-part-card {
+  background: #14161f;
+  border: 1px solid #282c39;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 0.2s;
+}
 
+.style-part-card:hover {
+  border-color: #4f46e5;
+}
 
+.style-track-card {
+  background: #181b25;
+  border: 1px solid #282c39;
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}

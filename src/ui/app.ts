@@ -7,6 +7,16 @@ import {
   type MidiSourceAnalysis,
   type PadAssignmentOption,
 } from '../core/writer/midi-importer';
+import {
+  StyleImporter,
+  type StyleSourceAnalysis,
+  type StylePartMappingItem,
+} from '../core/writer/style-importer';
+import { YamahaStyleSynthesizer } from '../core/writer/style-synthesizer';
+import {
+  type StylePartId,
+  type StyleSectionType,
+} from '../core/models/style-types';
 import { audioEngine, ticksToSeconds } from '../core/audio/audio-engine';
 import { midiManager, MidiDeviceInfo } from '../core/audio/midi-manager';
 import type { NoteEvent, PlaybackState, BackingTrackItem } from '../core/audio/audio-engine';
@@ -2193,6 +2203,467 @@ function initMidiImportModal() {
   }
 }
 
+// ==========================================
+// Phase 3.2: 外部 MIDI 匯入分流導航 (Import Mode Router)
+// ==========================================
+
+let pendingMidiBytes: Uint8Array | null = null;
+let pendingMidiFileName: string = '';
+
+function openMidiModeRouterModal(bytes: Uint8Array, fileName: string) {
+  pendingMidiBytes = bytes;
+  pendingMidiFileName = fileName;
+
+  const modal = document.getElementById('midi-mode-router-modal');
+  const subtitle = document.getElementById('midi-router-subtitle');
+  if (subtitle) {
+    subtitle.textContent = `來源檔案：${escapeHtml(fileName)} (${bytes.length} Bytes)`;
+  }
+  if (modal) {
+    modal.style.display = 'flex';
+  }
+}
+
+function closeMidiModeRouterModal() {
+  const modal = document.getElementById('midi-mode-router-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+function initMidiModeRouterModal() {
+  const modal = document.getElementById('midi-mode-router-modal');
+  if (!modal) return;
+
+  const btnClose = document.getElementById('btn-close-midi-router-modal');
+  const btnCancel = document.getElementById('btn-cancel-midi-router');
+  const btnChoosePad = document.getElementById('btn-router-choose-pad');
+  const btnChooseStyle = document.getElementById('btn-router-choose-style');
+
+  btnClose?.addEventListener('click', closeMidiModeRouterModal);
+  btnCancel?.addEventListener('click', closeMidiModeRouterModal);
+
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      closeMidiModeRouterModal();
+    }
+  });
+
+  btnChoosePad?.addEventListener('click', () => {
+    closeMidiModeRouterModal();
+    if (pendingMidiBytes) {
+      openMidiImportModal(pendingMidiBytes, pendingMidiFileName);
+    }
+  });
+
+  btnChooseStyle?.addEventListener('click', () => {
+    closeMidiModeRouterModal();
+    if (pendingMidiBytes) {
+      openStyleImportModal(pendingMidiBytes, pendingMidiFileName);
+    }
+  });
+}
+
+// ==========================================
+// Phase 3.2: Yamaha Style 8 聲部智慧映射與合成精靈 (Style Import Wizard)
+// ==========================================
+
+let currentStyleAnalysis: StyleSourceAnalysis | null = null;
+let currentStyleMappings: StylePartMappingItem[] = [];
+let currentStyleAuditionTrackIndex: number | null = null;
+
+const STYLE_PART_ORDER: { id: StylePartId; title: string; defaultCh: number; color: string; icon: string }[] = [
+  { id: 'Rhythm1', title: 'Rhythm 1 (次打擊樂)', defaultCh: 9, color: '#f97316', icon: '🪘' },
+  { id: 'Rhythm2', title: 'Rhythm 2 (主爵士鼓組)', defaultCh: 10, color: '#ef4444', icon: '🥁' },
+  { id: 'Bass', title: 'Bass (低音貝斯)', defaultCh: 11, color: '#f59e0b', icon: '🎸' },
+  { id: 'Chord1', title: 'Chord 1 (節奏主和弦)', defaultCh: 12, color: '#3b82f6', icon: '🎹' },
+  { id: 'Chord2', title: 'Chord 2 (副和弦/管樂組)', defaultCh: 13, color: '#06b6d4', icon: '🎺' },
+  { id: 'Pad', title: 'Pad (長音弦樂背景)', defaultCh: 14, color: '#a855f7', icon: '🎻' },
+  { id: 'Phrase1', title: 'Phrase 1 (對位旋律/琶音)', defaultCh: 15, color: '#10b981', icon: '✨' },
+  { id: 'Phrase2', title: 'Phrase 2 (副裝飾旋律)', defaultCh: 16, color: '#14b8a6', icon: '🎵' },
+];
+
+function openStyleImportModal(bytes: Uint8Array, fileName: string) {
+  const modal = document.getElementById('style-import-modal');
+  if (!modal) return;
+
+  try {
+    currentStyleAnalysis = StyleImporter.analyzeForStyle(bytes, fileName);
+  } catch (err: any) {
+    alert(`分析外部 MIDI 伴奏結構失敗: ${err.message}`);
+    return;
+  }
+
+  // 1. 設定副標題摘要
+  const subtitle = document.getElementById('style-import-subtitle');
+  if (subtitle) {
+    subtitle.textContent = `來源檔案: ${fileName} | ${currentStyleAnalysis.division} PPQ | ${currentStyleAnalysis.bpm} BPM | ${currentStyleAnalysis.timeSignature.numerator}/${currentStyleAnalysis.timeSignature.denominator} 拍 | 共 ${currentStyleAnalysis.totalMeasures} 小節 (${currentStyleAnalysis.tracks.length} 軌)`;
+  }
+
+  // 2. 初始化名稱與速度
+  const projNameInput = document.getElementById('style-import-proj-name') as HTMLInputElement | null;
+  const bpmInput = document.getElementById('style-import-bpm') as HTMLInputElement | null;
+  const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
+  const endBarInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
+
+  if (projNameInput) {
+    const baseName = fileName.replace(/\.[^/.]+$/, '');
+    projNameInput.value = `${baseName} Style`;
+  }
+  if (bpmInput) {
+    bpmInput.value = `${currentStyleAnalysis.bpm}`;
+  }
+  if (startBarInput) {
+    startBarInput.value = '1';
+  }
+  if (endBarInput) {
+    endBarInput.value = `${Math.min(8, Math.max(4, currentStyleAnalysis.totalMeasures))}`;
+  }
+
+  // 3. 套用 8 聲部初始推薦映射
+  resetStyleMappingsToSmartRecommendation();
+
+  // 4. 渲染左側來源音軌特徵與右側 8 聲部映射網格
+  renderStyleSourceTracksList();
+  renderStylePartMappingsGrid();
+
+  // 5. 顯示彈窗
+  modal.style.display = 'flex';
+}
+
+function closeStyleImportModal() {
+  const modal = document.getElementById('style-import-modal');
+  if (modal) modal.style.display = 'none';
+
+  if (currentStyleAuditionTrackIndex !== null) {
+    audioEngine.stop();
+    currentStyleAuditionTrackIndex = null;
+  }
+}
+
+function resetStyleMappingsToSmartRecommendation() {
+  if (!currentStyleAnalysis) return;
+  currentStyleMappings = STYLE_PART_ORDER.map((part) => {
+    const recommendedTrackIdx = currentStyleAnalysis?.autoMapping[part.id] ?? null;
+    return {
+      partId: part.id,
+      sourceTrackIndex: recommendedTrackIdx,
+      transposeShift: 0,
+    };
+  });
+}
+
+function renderStyleSourceTracksList() {
+  const container = document.getElementById('style-source-tracks-list');
+  const badge = document.getElementById('style-tracks-summary-badge');
+  if (!container || !currentStyleAnalysis) return;
+
+  if (badge) {
+    badge.textContent = `${currentStyleAnalysis.styleTracks.length} 軌`;
+  }
+
+  container.innerHTML = '';
+  currentStyleAnalysis.styleTracks.forEach((track) => {
+    const card = document.createElement('div');
+    card.className = 'style-track-card';
+
+    const hasNotes = track.notes.length > 0;
+    const isAuditioning = currentStyleAuditionTrackIndex === track.trackIndex;
+
+    const categoryIcons: Record<string, string> = {
+      drums: '🥁 爵士鼓組',
+      percussion: '🪘 打擊樂器',
+      bass: '🎸 貝斯低音',
+      piano: '🎹 鋼琴鍵盤',
+      guitar: '🎸 吉他',
+      strings: '🎻 弦樂群',
+      pad: '🌌 長音背景 Pad',
+      brass: '🎺 銅管群',
+      reed: '🎷 木管/薩克斯',
+      lead: '✨ 主奏旋律',
+      other: '🎼 其他樂器',
+    };
+    const catLabel = categoryIcons[track.detectedCategory] || '🎼 其他';
+
+    card.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
+        <div style="flex: 1; min-width: 0;">
+          <div style="font-size: 0.82rem; font-weight: 700; color: ${hasNotes ? '#f8fafc' : '#64748b'}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+            <span style="color: #6366f1;">[軌 ${track.trackIndex + 1}]</span> ${escapeHtml(track.name)}
+          </div>
+          <div style="font-size: 0.72rem; color: #94a3b8; display: flex; gap: 6px; margin-top: 2px; flex-wrap: wrap;">
+            <span class="badge" style="background: #1e293b; color: #cbd5e1; padding: 1px 5px; font-size: 0.68rem;">${catLabel}</span>
+            <span>Ch ${track.channel + 1}</span>
+            <span>${track.noteCount} 音符</span>
+            ${track.programChange !== undefined ? `<span>PC ${track.programChange}</span>` : ''}
+          </div>
+          ${
+            hasNotes
+              ? `<div style="font-size: 0.7rem; color: #38bdf8; margin-top: 3px; line-height: 1.3;">
+                  💡 推薦：${track.recommendedPart || '留空'}
+                  <span style="color: #64748b;">(${track.recommendationReason})</span>
+                </div>`
+              : `<div style="font-size: 0.7rem; color: #64748b; margin-top: 2px;">(無音符事件)</div>`
+          }
+        </div>
+        <div>
+          ${
+            hasNotes
+              ? `<button type="button" class="btn-audition btn-style-audition-track ${isAuditioning ? 'playing' : ''}" data-track="${track.trackIndex}" style="padding: 2px 8px; font-size: 0.74rem;">
+                  ${isAuditioning ? '⏹ 停止' : '▶ 試聽'}
+                </button>`
+              : ''
+          }
+        </div>
+      </div>
+    `;
+
+    const btnAudition = card.querySelector('.btn-style-audition-track') as HTMLButtonElement | null;
+    if (btnAudition) {
+      btnAudition.addEventListener('click', () => {
+        toggleStyleTrackAudition(track.trackIndex);
+      });
+    }
+
+    container.appendChild(card);
+  });
+}
+
+function toggleStyleTrackAudition(trackIndex: number) {
+  if (!currentStyleAnalysis) return;
+  const track = currentStyleAnalysis.tracks.find((t) => t.trackIndex === trackIndex);
+  if (!track || track.noteCount === 0) return;
+
+  if (currentStyleAuditionTrackIndex === trackIndex) {
+    audioEngine.stop();
+    currentStyleAuditionTrackIndex = null;
+    renderStyleSourceTracksList();
+    renderStylePartMappingsGrid();
+    return;
+  }
+
+  audioEngine.stop();
+  currentStyleAuditionTrackIndex = trackIndex;
+  renderStyleSourceTracksList();
+  renderStylePartMappingsGrid();
+
+  audioEngine.playSequence(track.trackIndex + 1, track.notes, {
+    bpm: currentStyleAnalysis.bpm,
+    division: currentStyleAnalysis.division,
+    loop: false,
+    gridStartTick: 0,
+    totalTicks: track.totalTicks,
+    channelParams: {
+      msb: track.bankMsb ?? 0,
+      lsb: track.bankLsb ?? 112,
+      pc: track.programChange ?? 0,
+      channel: track.channel,
+    },
+    onEnded: () => {
+      currentStyleAuditionTrackIndex = null;
+      renderStyleSourceTracksList();
+      renderStylePartMappingsGrid();
+    },
+  });
+}
+
+function renderStylePartMappingsGrid() {
+  const container = document.getElementById('style-parts-mapping-grid');
+  if (!container || !currentStyleAnalysis) return;
+
+  container.innerHTML = '';
+
+  STYLE_PART_ORDER.forEach((part) => {
+    const mapping = currentStyleMappings.find((m) => m.partId === part.id);
+    const assignedTrackIdx = mapping?.sourceTrackIndex ?? null;
+    const assignedTrack = assignedTrackIdx !== null ? currentStyleAnalysis?.tracks.find((t) => t.trackIndex === assignedTrackIdx) : null;
+    const isAuditioning = assignedTrackIdx !== null && currentStyleAuditionTrackIndex === assignedTrackIdx;
+
+    const card = document.createElement('div');
+    card.className = 'style-part-card';
+    card.style.borderLeft = `3px solid ${part.color}`;
+
+    // 構建來源音軌下拉選單選項
+    let optionsHtml = `<option value="-1">(無 / 留空不指派)</option>`;
+    currentStyleAnalysis?.styleTracks.forEach((t) => {
+      if (t.notes.length === 0) return; // 忽略無音符的導引軌
+      const isSelected = assignedTrackIdx === t.trackIndex ? 'selected' : '';
+      optionsHtml += `<option value="${t.trackIndex}" ${isSelected}>[軌道 ${t.trackIndex + 1}] ${escapeHtml(t.name)} (Ch ${t.channel + 1}, ${t.noteCount} 音符)</option>`;
+    });
+
+    const smartTrackIdx = currentStyleAnalysis?.autoMapping[part.id];
+    const isAutoMatched = smartTrackIdx !== undefined && smartTrackIdx === assignedTrackIdx;
+
+    card.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <span style="font-size: 1rem;">${part.icon}</span>
+          <span style="font-size: 0.82rem; font-weight: 700; color: ${part.color};">${part.title}</span>
+        </div>
+        <span class="badge" style="background: #1e222d; color: #94a3b8; font-size: 0.68rem; padding: 2px 6px;">
+          MIDI Ch ${part.defaultCh}
+        </span>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 4px;">
+        <label style="font-size: 0.72rem; color: #94a3b8;">來源 MIDI 音軌：</label>
+        <select class="style-part-source-select" data-part="${part.id}" style="background: #11131a; border: 1px solid #333846; border-radius: 4px; color: ${assignedTrack ? '#f8fafc' : '#64748b'}; padding: 4px 6px; font-size: 0.78rem;">
+          ${optionsHtml}
+        </select>
+      </div>
+
+      ${
+        isAutoMatched
+          ? `<div style="font-size: 0.68rem; color: #34d399; display: flex; align-items: center; gap: 4px;">
+              <span>⚡ 智慧推薦已套用</span>
+            </div>`
+          : ''
+      }
+
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 2px; padding-top: 6px; border-top: 1px dashed #262936;">
+        <div style="display: flex; align-items: center; gap: 4px;">
+          <span style="font-size: 0.7rem; color: #94a3b8;">移調：</span>
+          <input type="number" class="style-part-shift-input" data-part="${part.id}" value="${mapping?.transposeShift || 0}" min="-36" max="36" style="width: 44px; background: #11131a; border: 1px solid #333846; border-radius: 3px; color: #fff; padding: 2px 4px; font-size: 0.72rem; text-align: center;" />
+          <button type="button" class="btn-shift-quick" data-part="${part.id}" data-val="-12" style="background: #1e222d; border: 1px solid #333846; border-radius: 3px; color: #94a3b8; padding: 2px 4px; font-size: 0.65rem; cursor: pointer;">-12</button>
+          <button type="button" class="btn-shift-quick" data-part="${part.id}" data-val="0" style="background: #1e222d; border: 1px solid #333846; border-radius: 3px; color: #94a3b8; padding: 2px 4px; font-size: 0.65rem; cursor: pointer;">0</button>
+          <button type="button" class="btn-shift-quick" data-part="${part.id}" data-val="12" style="background: #1e222d; border: 1px solid #333846; border-radius: 3px; color: #94a3b8; padding: 2px 4px; font-size: 0.65rem; cursor: pointer;">+12</button>
+        </div>
+
+        <div>
+          ${
+            assignedTrack
+              ? `<button type="button" class="btn-audition btn-style-audition-part ${isAuditioning ? 'playing' : ''}" data-track="${assignedTrack.trackIndex}" style="padding: 2px 6px; font-size: 0.7rem;">
+                  ${isAuditioning ? '⏹ 停止' : '▶ 試聽'}
+                </button>`
+              : `<span style="font-size: 0.68rem; color: #64748b;">(未指定)</span>`
+          }
+        </div>
+      </div>
+    `;
+
+    // 監聽下拉選單變更
+    const sel = card.querySelector('.style-part-source-select') as HTMLSelectElement | null;
+    sel?.addEventListener('change', () => {
+      const trackIdx = parseInt(sel.value, 10);
+      if (mapping) {
+        mapping.sourceTrackIndex = trackIdx >= 0 ? trackIdx : null;
+      }
+      renderStylePartMappingsGrid();
+    });
+
+    // 監聽移調數值變更
+    const shiftInput = card.querySelector('.style-part-shift-input') as HTMLInputElement | null;
+    shiftInput?.addEventListener('change', () => {
+      const shiftVal = parseInt(shiftInput.value || '0', 10);
+      if (mapping) {
+        mapping.transposeShift = shiftVal;
+      }
+    });
+
+    // 監聽快捷移調按鈕
+    card.querySelectorAll('.btn-shift-quick').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const val = parseInt((btn as HTMLElement).dataset.val || '0', 10);
+        if (mapping && shiftInput) {
+          mapping.transposeShift = val;
+          shiftInput.value = `${val}`;
+        }
+      });
+    });
+
+    // 監聽試聽按鈕
+    const btnPartAudition = card.querySelector('.btn-style-audition-part') as HTMLButtonElement | null;
+    btnPartAudition?.addEventListener('click', () => {
+      if (assignedTrack) {
+        toggleStyleTrackAudition(assignedTrack.trackIndex);
+      }
+    });
+
+    container.appendChild(card);
+  });
+}
+
+function initStyleImportModal() {
+  const modal = document.getElementById('style-import-modal');
+  if (!modal) return;
+
+  const btnClose = document.getElementById('btn-close-style-import-modal');
+  const btnCancel = document.getElementById('btn-cancel-style-import');
+  const btnSmartAssign = document.getElementById('btn-style-smart-assign');
+  const btnClearAssign = document.getElementById('btn-style-clear-assign');
+  const btnConfirm = document.getElementById('btn-confirm-style-import');
+
+  btnClose?.addEventListener('click', closeStyleImportModal);
+  btnCancel?.addEventListener('click', closeStyleImportModal);
+
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      closeStyleImportModal();
+    }
+  });
+
+  btnSmartAssign?.addEventListener('click', () => {
+    resetStyleMappingsToSmartRecommendation();
+    renderStylePartMappingsGrid();
+    showStatus('⚡ 已重新套用 8 聲部智慧推薦映射！');
+  });
+
+  btnClearAssign?.addEventListener('click', () => {
+    currentStyleMappings.forEach((m) => {
+      m.sourceTrackIndex = null;
+    });
+    renderStylePartMappingsGrid();
+    showStatus('🔄 已清空所有聲部來源映射。');
+  });
+
+  btnConfirm?.addEventListener('click', () => {
+    if (!currentStyleAnalysis) return;
+
+    const projNameInput = document.getElementById('style-import-proj-name') as HTMLInputElement | null;
+    const bpmInput = document.getElementById('style-import-bpm') as HTMLInputElement | null;
+    const targetSectionSelect = document.getElementById('style-import-target-section') as HTMLSelectElement | null;
+    const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
+    const endBarInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
+
+    const projectName = projNameInput?.value.trim() || 'My Style';
+    const bpm = Math.max(30, Math.min(300, parseInt(bpmInput?.value || '120', 10)));
+    const targetSection = (targetSectionSelect?.value || 'Main A') as StyleSectionType;
+    const startBar = Math.max(1, parseInt(startBarInput?.value || '1', 10));
+    const endBar = Math.max(startBar, parseInt(endBarInput?.value || '4', 10));
+
+    // 檢查是否有至少一個聲部有指派
+    const activeAssignments = currentStyleMappings.filter((m) => m.sourceTrackIndex !== null);
+    if (activeAssignments.length === 0) {
+      alert('請至少為一個伴奏聲部指派來源 MIDI 軌道！');
+      return;
+    }
+
+    showStatus(`正在將外部 MIDI 8 聲部合成為 Yamaha Style: ${projectName}...`);
+
+    try {
+      const styleProject = StyleImporter.synthesizeStyleFromImport(currentStyleAnalysis, {
+        projectName,
+        bpm,
+        timeSignature: currentStyleAnalysis.timeSignature,
+        startBar,
+        endBar,
+        targetSection,
+        partMappings: currentStyleMappings,
+      });
+
+      closeStyleImportModal();
+
+      // 序列化為 .sty 二進位 Uint8Array 並載入至工作區
+      const binaryBytes = YamahaStyleSynthesizer.serializeToStyleFile(styleProject);
+      renderParsed(binaryBytes, `${projectName}.sty`, 'STY');
+      markModified(`從外部 MIDI [${currentStyleAnalysis.fileName}] 成功合成 Yamaha SFF2 Style 伴奏專案`);
+
+      showStatus(`✨ 成功將外部 MIDI 合成為 Yamaha Style 伴奏專案: ${projectName}.sty`);
+    } catch (err: any) {
+      alert(`合成 Yamaha Style 專案失敗: ${err.message}`);
+      showStatus(`合成失敗: ${err.message}`, true);
+    }
+  });
+}
+
 function auditionSingleVoice(voice: YamahaVoice) {
   let pitch = 60; // C4
   let isDrum = false;
@@ -2648,6 +3119,10 @@ function initEvents() {
   // Phase 2.3: 初始化 MIDI 匯入與切片分配精靈彈窗
   initMidiImportModal();
 
+  // Phase 3.2: 初始化 MIDI 匯入分流導航與 Style 伴奏精靈彈窗
+  initMidiModeRouterModal();
+  initStyleImportModal();
+
   // Phase 2.7: 初始化琴端即時錄音視窗 (Live Pad Recorder)
   initPadRecordModal();
 
@@ -2796,9 +3271,9 @@ async function handleFile(file: File) {
     const bytes = new Uint8Array(buffer);
     const ext = file.name.split('.').pop()?.toUpperCase();
 
-    // Phase 2.3: 偵測到 .mid / .midi 檔案時開啟切片分配精靈
+    // Phase 2.3 & 3.2: 偵測到 .mid / .midi 檔案時開啟分流導航精靈
     if (ext === 'MID' || ext === 'MIDI') {
-      openMidiImportModal(bytes, file.name);
+      openMidiModeRouterModal(bytes, file.name);
       return;
     }
 
@@ -2810,7 +3285,7 @@ async function handleFile(file: File) {
   }
 }
 
-// Phase 2.3: 載入伺服器端示範 MIDI 檔案
+// Phase 2.3 & 3.2: 載入伺服器端示範 MIDI 檔案
 async function loadSampleMidi(url: string, filename: string) {
   showStatus(`正在載入示範 MIDI: ${filename}...`);
   try {
@@ -2826,7 +3301,7 @@ async function loadSampleMidi(url: string, filename: string) {
     } catch {
       bytes = MidiImporter.createDemoGrooveMidi();
     }
-    openMidiImportModal(bytes, filename);
+    openMidiModeRouterModal(bytes, filename);
   } catch (err: any) {
     showStatus(`無法載入示範 MIDI: ${err.message}`, true);
     alert(`無法載入示範 MIDI: ${err.message}`);
