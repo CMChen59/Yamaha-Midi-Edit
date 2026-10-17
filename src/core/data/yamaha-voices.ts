@@ -226,3 +226,108 @@ export function findYamahaVoice(msb: number, lsb: number, pc: number): YamahaVoi
   // 3. 通用備用：僅 PC 相同 (相容 GM/XG 標準樂器)
   return pcMap.get(pc);
 }
+
+/**
+ * 智慧解析試聽樂器聲音物理/諧波合成模型 (相容 Yamaha PSR-SX920 1,500+ 音色庫、General MIDI 128 樂器家族與原廠伴奏通道)
+ */
+export function resolveAuditionInstrumentId(
+  msb: number = 0,
+  lsb: number = 0,
+  pc: number = 0,
+  ch?: number
+): { instrumentId: string; isDrum: boolean } {
+  // 1. 優先在 Yamaha PSR-SX920 原廠 1,500+ 音色庫中精確查找
+  const yVoice = findYamahaVoice(msb, lsb, pc);
+  const isDrumCategory = yVoice?.category === 'Drums' || yVoice?.category === 'Percussion';
+
+  // 2. 打擊樂器 / 鼓組判定
+  // 判定原則：
+  // a. Bank MSB 為 127 (標準鼓組) 或 126 (SFX Kit)
+  // b. PC >= 120 (GM 打擊音效)
+  // c. 音色庫分類明確為 Drums 或 Percussion
+  // d. 僅在 MIDI Ch 10 (channel index 9, 即 Main Rhythm) 且非明確指定為旋律音色 (msb !== 0) 時預設為鼓組
+  // 注意：MIDI Ch 9 (channel index 8, 即 Sub Rhythm) 在 Yamaha 伴奏中經常擔任跳躍撥弦 (Pizzicato)、敲擊樂或打擊旋律，絕不能強制設為鼓組！
+  const isDrum = msb === 127 || msb === 126 || pc >= 120 || isDrumCategory || (ch === 9 && msb !== 0);
+
+  if (isDrum) {
+    return { instrumentId: 'standard-drum-kit', isDrum: true };
+  }
+
+  // 3. 依據 Yamaha 原廠音色分類對應合成器聲音模型
+  if (yVoice) {
+    if (yVoice.category === 'Bass') {
+      return { instrumentId: 'electric-bass', isDrum: false };
+    }
+    if (yVoice.category === 'Guitar') {
+      return { instrumentId: 'steel_guitar', isDrum: false };
+    }
+    if (yVoice.category === 'Strings') {
+      return { instrumentId: yVoice.id.includes('pizz') ? 'pizzicato' : 'strings', isDrum: false };
+    }
+    if (yVoice.category === 'Saxophone') {
+      return { instrumentId: 'wind_sax', isDrum: false };
+    }
+    if (yVoice.category === 'Brass') {
+      return { instrumentId: 'brass', isDrum: false };
+    }
+    if (yVoice.category === 'Woodwind') {
+      return { instrumentId: 'flute', isDrum: false };
+    }
+    if (yVoice.category === 'Synth' || yVoice.category === 'Pad') {
+      return { instrumentId: 'synth_pad', isDrum: false };
+    }
+    if (yVoice.category === 'Piano' || yVoice.category === 'E.Piano' || yVoice.category === 'Organ' || yVoice.category === 'Accordion') {
+      return { instrumentId: 'grand-piano', isDrum: false };
+    }
+  }
+
+  // 4. 通用 General MIDI (GM) 128 種樂器家族全覆蓋分類
+  if (pc >= 24 && pc <= 31) {
+    // 吉他類 (Nylon, Steel, Jazz, Clean, Muted, Overdrive, Distortion, Harmonics)
+    return { instrumentId: 'steel_guitar', isDrum: false };
+  }
+  if (pc >= 32 && pc <= 39) {
+    // 貝斯類 (Acoustic, Finger, Pick, Fretless, Slap 1/2, Synth Bass 1/2)
+    return { instrumentId: 'electric-bass', isDrum: false };
+  }
+  if (pc === 45) {
+    // 撥弦 (Pizzicato Strings)
+    return { instrumentId: 'pizzicato', isDrum: false };
+  }
+  if ((pc >= 40 && pc <= 44) || (pc >= 46 && pc <= 55)) {
+    // 弦樂獨奏與弦樂合奏群 (Violin, Viola, Cello, Strings, Synth Strings, Choir, Voice)
+    return { instrumentId: 'strings', isDrum: false };
+  }
+  if (pc >= 56 && pc <= 63) {
+    // 銅管組 (Trumpet, Trombone, Tuba, French Horn, Brass Section, Synth Brass)
+    return { instrumentId: 'brass', isDrum: false };
+  }
+  if (pc >= 64 && pc <= 71) {
+    // 簧樂/薩克斯風組 (Soprano, Alto, Tenor, Baritone, Oboe, Clarinet, etc.)
+    return { instrumentId: 'wind_sax', isDrum: false };
+  }
+  if (pc >= 72 && pc <= 79) {
+    // 管樂/長笛組 (Piccolo, Flute, Recorder, Pan Flute, Whistle, Ocarina)
+    return { instrumentId: 'flute', isDrum: false };
+  }
+  if (pc >= 80 && pc <= 87) {
+    // 合成主奏 (Synth Lead: Square, Sawtooth, etc.)
+    return { instrumentId: 'synth_lead', isDrum: false };
+  }
+  if (pc >= 88 && pc <= 95) {
+    // 鋪底音色 (Synth Pad: Warm Pad, Poly Synth, Bowed Pad, etc.)
+    return { instrumentId: 'synth_pad', isDrum: false };
+  }
+  if (pc >= 8 && pc <= 15) {
+    // 鐵琴/木琴/鍾琴 (Chromatic Percussion)
+    return { instrumentId: 'pizzicato', isDrum: false };
+  }
+
+  // 5. 通用 Bass 通道回退 (MIDI Ch 11, index 10)
+  if (ch === 10 || ch === 1) {
+    return { instrumentId: 'electric-bass', isDrum: false };
+  }
+
+  return { instrumentId: 'grand-piano', isDrum: false };
+}
+

@@ -40,7 +40,9 @@ export class YamahaStyleModifier {
     const track0 = parsed.tracks[0];
     if (!track0 || !track0.events) return false;
 
-    const isDrum = channel === 8 || channel === 9;
+    // 僅 MIDI Ch 10 (channel index 9, 即 Rhythm 2 Main Drums) 為強制鼓組保護聲部
+    // MIDI Ch 9 (channel index 8, 即 Rhythm 1 Sub Rhythm) 在 Yamaha 伴奏中經常擔任跳躍撥弦 (Pizzicato)、敲擊樂或打擊旋律，不可強制鎖定為 127
+    const isDrum = channel === 9;
 
     // 1. 更新或建立 parsed.parts 中的聲部條目
     let part = parsed.parts.find((p) => p.channel === channel);
@@ -75,7 +77,7 @@ export class YamahaStyleModifier {
       part.chorus = Math.max(0, Math.min(127, Math.round(params.chorus)));
     }
     if (params.bankMsb !== undefined) {
-      // 鼓組聲部 (Ch 8/9) Bank MSB 強制保護為 127 (標準鼓組) 或 126 (SFX Kit)，杜絕琴端誤判為鋼琴或自動靜音
+      // 鼓組聲部 (Ch 10, Rhythm 2) Bank MSB 強制保護為 127 (標準鼓組) 或 126 (SFX Kit)，杜絕琴端誤判為鋼琴或自動靜音
       const safeMsb = isDrum && params.bankMsb !== 126 && params.bankMsb !== 127 ? 127 : params.bankMsb;
       part.bankMsb = Math.max(0, Math.min(127, safeMsb));
     }

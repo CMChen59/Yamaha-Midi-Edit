@@ -3,6 +3,7 @@ import { YamahaStyleSynthesizer } from '../src/core/writer/style-synthesizer';
 import { YamahaStyleModifier } from '../src/core/writer/style-modifier';
 import { StyleRemixer } from '../src/core/writer/style-remixer';
 import { YamahaParser } from '../src/core/parser/yamaha-parser';
+import { resolveAuditionInstrumentId } from '../src/core/data/yamaha-voices';
 
 describe('Phase 4.1: YamahaStyleModifier 伴奏風格 8 聲部混音與音色修改引擎', () => {
   it('能即時修改 STY 聲部的音量、聲相、殘響與合唱參數，並同步至 Track 0 事件與 rawChunk', () => {
@@ -165,7 +166,48 @@ describe('Phase 4.1: YamahaStyleModifier 伴奏風格 8 聲部混音與音色修
     const padPart = realSty.parts.find((p) => p.channel === 4);
     expect(padPart?.programChange).toBe(25); // part 本身記錄最新狀態
   });
+
+  it('Ch 8 (Ch 9, Sub Rhythm) 允許旋律音色 (如跳躍撥弦 Pizzicato / 鋼琴 / 長笛)，不被強制鎖定為鼓組 MSB 127', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const sampleStyPath = path.resolve(__dirname, '../public/samples/4006_SX900.T547.sty');
+    const sampleStyBuffer = fs.readFileSync(sampleStyPath);
+    const realSty = YamahaParser.parse(new Uint8Array(sampleStyBuffer), 'STY');
+
+    // 1. 驗證 4006 原檔中的 Ch 8 (Sub Rhythm, 螢幕顯示 Ch 9)：
+    // 原檔為 Bank 0-113, PC 75 (跳躍撥弦 Pizzicato Strings)，演奏音符 71, 74, 75 等高音旋律跑動
+    const resOrig = resolveAuditionInstrumentId(0, 113, 75, 8);
+    expect(resOrig.isDrum).toBe(false);
+    expect(resOrig.instrumentId).toBe('pizzicato');
+
+    // 2. 將 Ch 8 更換為長笛 (Sweet! Flute, Bank 0-112, PC 73)
+    const ok = YamahaStyleModifier.setPartMixing(realSty, 8, {
+      bankMsb: 0,
+      bankLsb: 112,
+      programChange: 73,
+    });
+    expect(ok).toBe(true);
+
+    const ch8Part = realSty.parts.find((p) => p.channel === 8);
+    // Bank MSB 應保持為 0，不可被錯誤的鼓組保護強制修改為 127
+    expect(ch8Part?.bankMsb).toBe(0);
+    expect(ch8Part?.bankLsb).toBe(112);
+    expect(ch8Part?.programChange).toBe(73);
+
+    // 3. 驗證試聽模型精準解析為長笛 (Flute)，而非打擊樂器鼓組
+    const resFlute = resolveAuditionInstrumentId(ch8Part!.bankMsb!, ch8Part!.bankLsb!, ch8Part!.programChange!, 8);
+    expect(resFlute.isDrum).toBe(false);
+    expect(resFlute.instrumentId).toBe('flute');
+
+    // 4. 對照測試：真正的鼓組聲部 Ch 9 (螢幕顯示 Ch 10, Main Rhythm)
+    // 若設定為標準鼓組 (127-0-0)
+    const resDrum = resolveAuditionInstrumentId(127, 0, 0, 9);
+    expect(resDrum.isDrum).toBe(true);
+    expect(resDrum.instrumentId).toBe('standard-drum-kit');
+  });
 });
+
+
 
 
 

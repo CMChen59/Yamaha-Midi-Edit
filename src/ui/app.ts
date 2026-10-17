@@ -44,6 +44,7 @@ import type { YamahaFileParsed, YamahaSection, MidiTrack } from '../core/models/
 import {
   findYamahaVoice,
   searchYamahaVoices,
+  resolveAuditionInstrumentId,
   YAMAHA_SX920_VOICES,
   VOICE_CATEGORIES,
   VOICE_SUITABILITY_FILTERS,
@@ -212,110 +213,7 @@ const STY_PART_META: Record<number, { id: StylePartId; name: string; shortName: 
   15: { id: 'Phrase2', name: 'Phrase 2', shortName: 'Phrase 2', icon: '🎷', color: '#e11d48', bg: 'rgba(225,29,72,0.15)', border: 'rgba(225,29,72,0.35)' },
 };
 
-/**
- * 智慧解析試聽樂器聲音模型 (相容 Yamaha PSR-SX920 1,500+ 音色庫、General MIDI 128 樂器家族與原廠標準聲部)
- */
-export function resolveAuditionInstrumentId(
-  msb: number = 0,
-  lsb: number = 0,
-  pc: number = 0,
-  ch?: number
-): { instrumentId: string; isDrum: boolean } {
-  // 1. 打擊樂器 / 鼓組判定 (MIDI Ch 10 即 ch 9，或 ch 8，或 MSB 126/127，或 PC >= 120)
-  const isDrum = (ch !== undefined && (ch === 8 || ch === 9)) || msb === 127 || msb === 126 || pc >= 120;
-  if (isDrum) {
-    return { instrumentId: 'standard-drum-kit', isDrum: true };
-  }
 
-  // 2. 優先在 Yamaha PSR-SX920 原廠 1,500+ 音色庫中精確查找
-  const yVoice = findYamahaVoice(msb, lsb, pc);
-  if (yVoice) {
-    if (yVoice.category === 'Drums' || yVoice.category === 'Percussion') {
-      return { instrumentId: 'standard-drum-kit', isDrum: true };
-    }
-    if (yVoice.category === 'Bass') {
-      return { instrumentId: 'electric-bass', isDrum: false };
-    }
-    if (yVoice.category === 'Guitar') {
-      return { instrumentId: 'steel_guitar', isDrum: false };
-    }
-    if (yVoice.category === 'Strings') {
-      return { instrumentId: yVoice.id.includes('pizz') ? 'pizzicato' : 'strings', isDrum: false };
-    }
-    if (yVoice.category === 'Saxophone') {
-      return { instrumentId: 'wind_sax', isDrum: false };
-    }
-    if (yVoice.category === 'Brass') {
-      return { instrumentId: 'brass', isDrum: false };
-    }
-    if (yVoice.category === 'Woodwind') {
-      return { instrumentId: 'flute', isDrum: false };
-    }
-    if (yVoice.category === 'Synth' || yVoice.category === 'Pad') {
-      return { instrumentId: 'synth_pad', isDrum: false };
-    }
-    if (yVoice.category === 'Piano' || yVoice.category === 'E.Piano' || yVoice.category === 'Organ' || yVoice.category === 'Accordion') {
-      return { instrumentId: 'grand-piano', isDrum: false };
-    }
-  }
-
-  // 3. 通用 General MIDI (GM) 128 種樂器家族全覆蓋分類
-  if (pc >= 24 && pc <= 31) {
-    // 吉他類 (Nylon, Steel, Jazz, Clean, Muted, Overdrive, Distortion, Harmonics)
-    return { instrumentId: 'steel_guitar', isDrum: false };
-  }
-  if (pc >= 32 && pc <= 39) {
-    // 貝斯類 (Acoustic, Finger, Pick, Fretless, Slap 1/2, Synth Bass 1/2)
-    return { instrumentId: 'electric-bass', isDrum: false };
-  }
-  if (pc === 45) {
-    // 撥弦 (Pizzicato Strings)
-    return { instrumentId: 'pizzicato', isDrum: false };
-  }
-  if ((pc >= 40 && pc <= 44) || (pc >= 46 && pc <= 55)) {
-    // 弦樂獨奏與弦樂合奏群 (Violin, Viola, Cello, Strings, Synth Strings, Choir, Voice)
-    return { instrumentId: 'strings', isDrum: false };
-  }
-  if (pc >= 56 && pc <= 63) {
-    // 銅管組 (Trumpet, Trombone, Tuba, French Horn, Brass Section, Synth Brass)
-    return { instrumentId: 'brass', isDrum: false };
-  }
-  if (pc >= 64 && pc <= 71) {
-    // 簧樂/薩克斯風組 (Soprano, Alto, Tenor, Baritone, Oboe, Clarinet, etc.)
-    return { instrumentId: 'wind_sax', isDrum: false };
-  }
-  if (pc >= 72 && pc <= 79) {
-    // 管樂/長笛組 (Piccolo, Flute, Recorder, Pan Flute, Whistle, Ocarina)
-    return { instrumentId: 'flute', isDrum: false };
-  }
-  if (pc >= 80 && pc <= 87) {
-    // 合成主奏 (Synth Lead: Square, Sawtooth, etc.)
-    return { instrumentId: 'synth_lead', isDrum: false };
-  }
-  if (pc >= 88 && pc <= 95) {
-    // 鋪底音色 (Synth Pad: Warm Pad, Poly Synth, Bowed Pad, etc.)
-    return { instrumentId: 'synth_pad', isDrum: false };
-  }
-  if (pc >= 8 && pc <= 15) {
-    // 鐵琴/木琴/鍾琴 (Chromatic Percussion)
-    return { instrumentId: 'pizzicato', isDrum: false };
-  }
-
-  // 4. PRESET_INSTRUMENTS 比對 (備用相容)
-  const matched = PRESET_INSTRUMENTS.find(i => i.pc === pc && (msb === 0 || i.msb === msb))
-    || PRESET_INSTRUMENTS.find(i => i.pc === pc);
-  if (matched) {
-    return { instrumentId: matched.id, isDrum: false };
-  }
-
-  // 5. 聲部預設回退
-  if (ch !== undefined) {
-    const meta = STY_PART_META[ch];
-    if (meta?.id === 'Bass') return { instrumentId: 'electric-bass', isDrum: false };
-  }
-
-  return { instrumentId: 'grand-piano', isDrum: false };
-}
 
 let stylePartMuteState: Record<number, boolean> = {};
 let stylePartSoloChannel: number | null = null;
@@ -4598,7 +4496,7 @@ function applyVoiceToPad(padNum: number, voice: YamahaVoice) {
 function applyVoiceToStylePart(channel: number, voice: YamahaVoice) {
   if (!currentParsed || currentParsed.format !== 'STY') return;
 
-  const isDrum = channel === 8 || channel === 9;
+  const isDrum = channel === 9 || voice.category === 'Drums' || voice.category === 'Percussion';
   const meta = STY_PART_META[channel];
   const partName = meta?.name || `伴奏聲部 (Ch ${channel + 1})`;
 
@@ -4609,7 +4507,8 @@ function applyVoiceToStylePart(channel: number, voice: YamahaVoice) {
     if (!confirmApply) return;
   }
 
-  // 鼓組聲部 (Ch 8/9) Bank MSB 自動保護 (127: Drum Kit, 126: SFX Kit)
+  // 僅當選用鼓組/擊樂音色，或對 Ch 10 (Main Rhythm) 套用鼓組時，才保護 Bank MSB (127: Drum Kit, 126: SFX Kit)
+  // 若為 Ch 9 (Sub Rhythm) 選取旋律樂器 (如 Pizzicato Strings、吉他、木琴等)，完全尊重樂器原本的 Bank MSB
   let msb = voice.msb;
   if (isDrum && msb !== 126 && msb !== 127) {
     msb = 127;
@@ -5908,8 +5807,8 @@ function toggleStySectionAudition(sectionName: string) {
 
     // 取得該通道在此段落的音色、音量與聲相設定 (優先使用本段專屬 override)
     const override = StyleRemixer.getSectionChannelOverride(currentParsed, range.startTick, range.endTick, ch);
-    const msb = override.bankMsb ?? part.bankMsb ?? (ch === 8 || ch === 9 ? 127 : 0);
-    const lsb = override.bankLsb ?? part.bankLsb ?? 0;
+    const msb = override.bankMsb ?? part.bankMsb ?? (ch === 9 ? 127 : 0);
+    const lsb = override.bankLsb ?? part.bankLsb ?? (ch === 9 ? 0 : 112);
     const pc = override.pc ?? part.programChange ?? 0;
     const vol = override.volume ?? part.volume ?? 100;
     const pan = override.pan ?? part.pan ?? 64;
@@ -9863,8 +9762,8 @@ function renderParts(parsed: YamahaFileParsed) {
       const pan = part.pan ?? 64;
       const reverb = part.reverb ?? 40;
       const chorus = part.chorus ?? 0;
-      const bankMsb = part.bankMsb ?? (ch === 8 || ch === 9 ? 127 : 0);
-      const bankLsb = part.bankLsb ?? (ch === 8 || ch === 9 ? 0 : 112);
+      const bankMsb = part.bankMsb ?? (ch === 9 ? 127 : 0);
+      const bankLsb = part.bankLsb ?? (ch === 9 ? 0 : 112);
       const pc = part.programChange ?? 0;
 
       const isMuted = !!stylePartMuteState[ch];
