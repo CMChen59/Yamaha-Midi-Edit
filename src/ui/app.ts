@@ -214,6 +214,8 @@ const STY_PART_META: Record<number, { id: StylePartId; name: string; shortName: 
 
 let stylePartMuteState: Record<number, boolean> = {};
 let stylePartSoloChannel: number | null = null;
+// 段落專屬靜音狀態：styleSectionPartMuteState[sectionName][channel] = boolean
+let styleSectionPartMuteState: Record<string, Record<number, boolean>> = {};
 
 function getStylePartDisplayName(channel: number): string {
   const meta = STY_PART_META[channel];
@@ -5340,6 +5342,7 @@ function renderParsed(bytes: Uint8Array, filename: string, format: 'STY' | 'PAD'
     updateAuditionUIState(null);
     stylePartMuteState = {};
     stylePartSoloChannel = null;
+    styleSectionPartMuteState = {};
     const bpmInput = document.getElementById('input-playback-bpm') as HTMLInputElement | null;
     const styBpmInput = document.getElementById('sty-playback-bpm') as HTMLInputElement | null;
     if (bpmInput && currentParsed.bpm) {
@@ -5765,10 +5768,11 @@ function toggleStySectionAudition(sectionName: string) {
   for (const part of currentParsed.parts) {
     const ch = part.channel;
 
-    // 伴奏聲部 Mute / Solo 過濾 (直接對應混音台各列的 channel)
+    // 伴奏聲部 Mute / Solo 過濾 (支援全域 Solo、全域 Mute 與此段落專屬 Mute)
+    const isSectionMuted = !!(styleSectionPartMuteState[sectionName]?.[ch]);
     if (stylePartSoloChannel !== null) {
       if (ch !== stylePartSoloChannel) continue;
-    } else if (stylePartMuteState[ch]) {
+    } else if (stylePartMuteState[ch] || isSectionMuted) {
       continue;
     }
 
@@ -9998,20 +10002,81 @@ function updateStyPartsSectionLinkage(parsed: YamahaFileParsed, sectionName: str
 
     const totalNotes = countPartTotalNotes(parsed, ch);
     const secNotes = range ? StyleRemixer.countNotesInChannel(parsed, range.startTick, range.endTick, ch) : totalNotes;
+    const isSectionMuted = sectionName ? !!styleSectionPartMuteState[sectionName]?.[ch] : false;
+    const melodyAnalysis = sectionName && range ? StyleRemixer.analyzeSectionChannelMelody(parsed, range.startTick, range.endTick, ch) : { isMelody: false, noteCount: 0 };
+
+    // 智能主旋律/導奏提示徽章 (Right 1 屬性)
+    let melodyBadge = tr.querySelector('.badge-melody-indicator');
+    if (melodyAnalysis.isMelody) {
+      if (!melodyBadge) {
+        const badgeContainer = tr.querySelector('.part-badge')?.parentElement;
+        if (badgeContainer) {
+          melodyBadge = document.createElement('span');
+          melodyBadge.className = 'badge-melody-indicator';
+          badgeContainer.appendChild(melodyBadge);
+        }
+      }
+      if (melodyBadge) {
+        melodyBadge.innerHTML = `💡 導奏主旋律 (${melodyAnalysis.pitchRangeStr})`;
+        melodyBadge.setAttribute('title', `音域: ${melodyAnalysis.pitchRangeStr}，平均音高: ${melodyAnalysis.avgPitch}。此段落包含主旋律/導奏，可點擊本段靜音將其關閉以方便右手彈奏。`);
+      }
+    } else if (melodyBadge) {
+      melodyBadge.remove();
+    }
 
     const noteCell = tr.querySelector('.part-notes-cell') || tr.cells[1];
     if (noteCell) {
       if (sectionName && range) {
-        const activeHtml = secNotes > 0
-          ? `<span class="part-section-active-badge">🟢 本段: ♪ ${secNotes} 音符 (演奏中)</span>`
-          : `<span class="part-section-silent-badge">⚪ 本段: 0 音符 (未演奏)</span>`;
+        let activeHtml = '';
+        if (secNotes > 0) {
+          if (isSectionMuted) {
+            activeHtml = `<button type="button" class="btn-sty-section-mute active-section-mute" data-channel="${ch}" title="目前在 [${escapeHtml(sectionName)}] 設為靜音。點擊恢復發聲">🔴 本段靜音 (不發聲)</button>`;
+          } else {
+            activeHtml = `<button type="button" class="btn-sty-section-mute" data-channel="${ch}" title="目前在 [${escapeHtml(sectionName)}] 正常發聲。點擊可在此段落靜音 (不影響其他段落)">🟢 本段發聲 (♪ ${secNotes} 音符)</button>`;
+          }
+        } else {
+          activeHtml = `<span class="part-section-silent-badge">⚪ 本段: 0 音符 (未演奏)</span>`;
+        }
+
         noteCell.innerHTML = `
-          <div style="display: flex; flex-direction: column; gap: 3px;">
+          <div style="display: flex; flex-direction: column; gap: 4px;">
             <span style="color: #94a3b8; font-family: monospace; font-weight: 600;">Ch ${ch + 1}</span>
             ${activeHtml}
             <span class="part-total-notes-badge">全曲總計: ${totalNotes} 音符</span>
           </div>
         `;
+
+        // 監聽段落專屬靜音開關點擊事件
+        const btnSecMute = noteCell.querySelector(`.btn-sty-section-mute[data-channel="${ch}"]`) as HTMLButtonElement | null;
+        if (btnSecMute) {
+          btnSecMute.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (!sectionName) return;
+            if (!styleSectionPartMuteState[sectionName]) {
+              styleSectionPartMuteState[sectionName] = {};
+            }
+            styleSectionPartMuteState[sectionName][ch] = !styleSectionPartMuteState[sectionName][ch];
+            const nowMuted = styleSectionPartMuteState[sectionName][ch];
+
+            // 實體琴即時同步音量
+            const inputEl = tr.querySelector(`.vol-range-sty-${ch}`) as HTMLInputElement | null;
+            const v = inputEl ? parseInt(inputEl.value, 10) || 100 : 100;
+            midiManager.sendMixerControllers(ch, { volume: nowMuted ? 0 : v });
+
+            // 重新更新表格視覺連動
+            updateStyPartsSectionLinkage(parsed, sectionName);
+
+            // 若當前正處於試聽該段落中，即時重啟試聽以立即聽到靜音效果
+            if (currentAuditionStySection === sectionName) {
+              restartCurrentStySectionAudition();
+            }
+
+            const meta = STY_PART_META[ch];
+            const partDesc = meta ? `${meta.icon} ${meta.name}` : `Ch ${ch + 1}`;
+            markModified(`已將伴奏聲部 ${partDesc} 在段落 [${sectionName}] 設為 ${nowMuted ? '🔴 靜音 (本段不發聲)' : '🟢 恢復發聲'}`);
+            showStatus(`已將伴奏聲部 ${partDesc} 在段落 [${sectionName}] 設為 ${nowMuted ? '🔴 靜音 (本段不發聲)' : '🟢 恢復發聲'}`);
+          });
+        }
       } else {
         noteCell.innerHTML = `
           <div style="display: flex; flex-direction: column; gap: 2px;">
@@ -10025,10 +10090,11 @@ function updateStyPartsSectionLinkage(parsed: YamahaFileParsed, sectionName: str
     }
 
     if (sectionName && range) {
-      tr.classList.toggle('part-active-in-section', secNotes > 0);
+      tr.classList.toggle('part-active-in-section', secNotes > 0 && !isSectionMuted);
       tr.classList.toggle('part-silent-in-section', secNotes === 0);
+      tr.classList.toggle('row-section-muted', isSectionMuted);
     } else {
-      tr.classList.remove('part-active-in-section', 'part-silent-in-section');
+      tr.classList.remove('part-active-in-section', 'part-silent-in-section', 'row-section-muted');
     }
 
     // 檢查是否有段落專屬音色或音量覆寫

@@ -59,6 +59,17 @@ export interface StyleRemixOptions {
   sections: StyleRemixSectionSpec[];
 }
 
+export interface SectionMelodyAnalysis {
+  isMelody: boolean;
+  noteCount: number;
+  minPitch?: number;
+  maxPitch?: number;
+  avgPitch?: number;
+  pitchRangeStr?: string;
+  highNoteRatio?: number;
+  reason?: string;
+}
+
 export class StyleRemixer {
   /**
    * 取得指定 Style 中所有真正的音樂段落 (過濾 SFF2, SInt, RP*, CM*, N*, I* 等標頭與控制標籤)
@@ -269,6 +280,65 @@ export class StyleRemixer {
     }
 
     return notes;
+  }
+
+  /**
+   * 將 MIDI Note Number 轉為音名字串 (如 60 -> C3, 72 -> C4)
+   */
+  public static midiNoteToName(note: number): string {
+    const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    const octave = Math.floor(note / 12) - 1;
+    return `${noteNames[note % 12]}${octave}`;
+  }
+
+  /**
+   * 智能分析指定段落與通道是否具有導奏/主旋律 (Lead / Right 1) 音符特徵
+   */
+  public static analyzeSectionChannelMelody(
+    parsed: YamahaFileParsed,
+    startTick: number,
+    endTick: number,
+    channel: number
+  ): SectionMelodyAnalysis {
+    const part = parsed.parts.find(p => p.channel === channel);
+    const override = this.getSectionChannelOverride(parsed, startTick, endTick, channel);
+    const msb = override.bankMsb ?? part?.bankMsb;
+    const partName = part?.partName || '';
+
+    // 排除鼓組/打擊樂通道
+    const isDrum = channel === 8 || channel === 9 || msb === 127 || msb === 126 || partName.includes('Rhythm') || partName.includes('Drum');
+    if (isDrum) {
+      return { isMelody: false, noteCount: 0, reason: '打擊樂聲部' };
+    }
+
+    const notes = this.extractSectionChannelNotes(parsed, startTick, endTick, channel);
+    if (notes.length < 8) {
+      return { isMelody: false, noteCount: notes.length, reason: '音符數量過少' };
+    }
+
+    const pitches = notes.map(n => n.note);
+    const minPitch = Math.min(...pitches);
+    const maxPitch = Math.max(...pitches);
+    const avgPitch = Math.round(pitches.reduce((a, b) => a + b, 0) / pitches.length);
+    const highNotes = pitches.filter(p => p >= 65).length; // F4 及以上
+    const highRatio = highNotes / notes.length;
+
+    const ticks = new Set(notes.map(n => n.startTick));
+    const polyphonyRatio = ticks.size / notes.length;
+
+    // 旋律判定門檻：非打擊樂、音符數 >= 8、高音佔比 >= 65%、平均音高 >= 66 (F#4)、單音旋律性 (polyphonyRatio >= 0.70)
+    const isMelody = highRatio >= 0.65 && avgPitch >= 66 && polyphonyRatio >= 0.70;
+
+    return {
+      isMelody,
+      noteCount: notes.length,
+      minPitch,
+      maxPitch,
+      avgPitch,
+      pitchRangeStr: `${this.midiNoteToName(minPitch)} ~ ${this.midiNoteToName(maxPitch)}`,
+      highNoteRatio: highRatio,
+      reason: isMelody ? '偵測到高音導奏主旋律 (Right 1 屬性)' : '伴奏和弦/低音織體',
+    };
   }
 
   /**
