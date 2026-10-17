@@ -5702,33 +5702,43 @@ function toggleStySectionAudition(sectionName: string) {
   const timeSig = currentParsed.timeSignature || { numerator: 4, denominator: 4 };
   const totalTicks = Math.max(division * 4, range.endTick - range.startTick);
 
-  // 提取該段落中所有 8 聲部的音符與音色
+  // 提取該段落中所有伴奏聲部的音符與音色 (直接對應混音台聲部通道與 Mute/Solo 狀態)
   const backingItems: BackingTrackItem[] = [];
-  const partKeys: StylePartId[] = [
-    'Rhythm1', 'Rhythm2', 'Bass', 'Chord1', 'Chord2', 'Pad', 'Phrase1', 'Phrase2'
-  ];
 
-  for (const partId of partKeys) {
-    const def = DEFAULT_STYLE_PARTS[partId];
-    // 伴奏聲部 Mute / Solo 過濾
+  for (const part of currentParsed.parts) {
+    const ch = part.channel;
+
+    // 伴奏聲部 Mute / Solo 過濾 (直接對應混音台各列的 channel)
     if (stylePartSoloChannel !== null) {
-      if (def.channel !== stylePartSoloChannel) continue;
-    } else if (stylePartMuteState[def.channel]) {
+      if (ch !== stylePartSoloChannel) continue;
+    } else if (stylePartMuteState[ch]) {
       continue;
     }
 
-    const notes = StyleRemixer.extractSectionPartNotes(currentParsed, sectionName, partId);
+    const notes = StyleRemixer.extractSectionChannelNotes(currentParsed, range.startTick, range.endTick, ch);
     if (notes.length === 0) continue;
 
-    const voice = StyleRemixer.extractPartVoiceConfig(currentParsed, partId);
-    const isDrum = partId === 'Rhythm1' || partId === 'Rhythm2';
+    // 取得該通道在此段落的音色、音量與聲相設定 (優先使用本段專屬 override)
+    const override = StyleRemixer.getSectionChannelOverride(currentParsed, range.startTick, range.endTick, ch);
+    const msb = override.bankMsb ?? part.bankMsb ?? (ch === 8 || ch === 9 ? 127 : 0);
+    const lsb = override.bankLsb ?? part.bankLsb ?? 0;
+    const pc = override.pc ?? part.programChange ?? 0;
+    const vol = override.volume ?? part.volume ?? 100;
+    const pan = override.pan ?? part.pan ?? 64;
+    const reverb = part.reverb ?? 40;
+    const chorus = part.chorus ?? 0;
 
-    let matchedInst = PRESET_INSTRUMENTS.find(i => i.pc === voice.pc && (voice.msb === 0 || i.msb === voice.msb));
-    if (!matchedInst) matchedInst = PRESET_INSTRUMENTS.find(i => i.pc === voice.pc);
-    const instId = isDrum ? 'standard-drum-kit' : (matchedInst ? matchedInst.id : (partId === 'Bass' ? 'electric-bass' : 'grand-piano'));
+    // 判定是否為打擊樂器 (MIDI Ch 10 即 ch 9 固定為鼓組，或 Bank MSB 為 127/126)
+    const isDrum = ch === 9 || msb === 127 || msb === 126;
+
+    let matchedInst = PRESET_INSTRUMENTS.find(i => i.pc === pc && (msb === 0 || i.msb === msb));
+    if (!matchedInst) matchedInst = PRESET_INSTRUMENTS.find(i => i.pc === pc);
+    const meta = STY_PART_META[ch];
+    const defaultInst = meta?.id === 'Bass' ? 'electric-bass' : 'grand-piano';
+    const instId = isDrum ? 'standard-drum-kit' : (matchedInst ? matchedInst.id : defaultInst);
 
     backingItems.push({
-      padNum: def.channel,
+      padNum: ch + 1,
       notes: notes.map(n => ({
         note: n.note,
         velocity: n.velocity,
@@ -5737,15 +5747,15 @@ function toggleStySectionAudition(sectionName: string) {
       })),
       totalTicks,
       channelParams: {
-        volume: voice.volume ?? def.volume,
-        pan: voice.pan ?? def.pan,
-        reverb: voice.reverb ?? def.reverb,
-        chorus: voice.chorus ?? def.chorus,
+        volume: vol,
+        pan,
+        reverb,
+        chorus,
         instrumentId: instId,
-        msb: isDrum ? 127 : (voice.msb ?? def.msb),
-        lsb: isDrum ? 0 : (voice.lsb ?? def.lsb),
-        pc: voice.pc ?? def.pc,
-        channel: def.channel,
+        msb,
+        lsb,
+        pc,
+        channel: ch,
         isDrum,
       }
     });

@@ -213,6 +213,65 @@ export class StyleRemixer {
   }
 
   /**
+   * 從 Track 0 提取指定段落時間軸範圍內、指定 channel 的所有 Note 事件 (相對段落開頭的 Tick)
+   */
+  public static extractSectionChannelNotes(
+    parsed: YamahaFileParsed,
+    startTick: number,
+    endTick: number,
+    channel: number
+  ): Array<{ note: number; velocity: number; startTick: number; durationTick: number }> {
+    const track0 = parsed.tracks[0];
+    if (!track0) return [];
+
+    const notes: Array<{ note: number; velocity: number; startTick: number; durationTick: number }> = [];
+    let curTick = 0;
+    const activeNotes = new Map<number, { tick: number; velocity: number }>();
+
+    for (const ev of track0.events) {
+      curTick += ev.delta;
+
+      if (ev.channel === channel) {
+        if (ev.type === 'noteOn' && ev.noteNumber !== undefined && (ev.velocity ?? 0) > 0) {
+          if (curTick >= startTick && curTick < endTick) {
+            activeNotes.set(ev.noteNumber, { tick: curTick, velocity: ev.velocity! });
+          }
+        } else if (
+          (ev.type === 'noteOff' || (ev.type === 'noteOn' && ev.velocity === 0)) &&
+          ev.noteNumber !== undefined
+        ) {
+          const startInfo = activeNotes.get(ev.noteNumber);
+          if (startInfo) {
+            const relTick = startInfo.tick - startTick;
+            const duration = Math.max(12, curTick - startInfo.tick);
+            notes.push({
+              note: ev.noteNumber,
+              velocity: startInfo.velocity,
+              startTick: relTick,
+              durationTick: duration,
+            });
+            activeNotes.delete(ev.noteNumber);
+          }
+        }
+      }
+    }
+
+    // 若有未關閉的 NoteOff，在段落結束點閉合
+    for (const [noteNumber, startInfo] of activeNotes.entries()) {
+      const relTick = startInfo.tick - startTick;
+      const duration = Math.max(12, endTick - startInfo.tick);
+      notes.push({
+        note: noteNumber,
+        velocity: startInfo.velocity,
+        startTick: relTick,
+        durationTick: duration,
+      });
+    }
+
+    return notes;
+  }
+
+  /**
    * 從 Style 中提取指定段落與指定伴奏聲部 (8 大聲部) 的所有音符事件
    */
   public static extractSectionPartNotes(
@@ -228,57 +287,14 @@ export class StyleRemixer {
     if (!partDef) return [];
     const targetChannel = this.resolveSourceChannel(parsed, sectionName, partId, overrideChannel);
 
-    const track0 = parsed.tracks[0];
-    if (!track0) return [];
-
-    const notes: StyleNoteEvent[] = [];
-    let curTick = 0;
-    // 追蹤發聲中的音符 Map<noteNumber, { startTick, velocity }>
-    const activeNotes = new Map<number, { tick: number; velocity: number }>();
-
-    for (const ev of track0.events) {
-      curTick += ev.delta;
-
-      if (ev.channel === targetChannel) {
-        if (ev.type === 'noteOn' && ev.noteNumber !== undefined && (ev.velocity ?? 0) > 0) {
-          if (curTick >= range.startTick && curTick < range.endTick) {
-            activeNotes.set(ev.noteNumber, { tick: curTick, velocity: ev.velocity! });
-          }
-        } else if (
-          (ev.type === 'noteOff' || (ev.type === 'noteOn' && ev.velocity === 0)) &&
-          ev.noteNumber !== undefined
-        ) {
-          const startInfo = activeNotes.get(ev.noteNumber);
-          if (startInfo) {
-            const relTick = startInfo.tick - range.startTick;
-            const duration = Math.max(12, curTick - startInfo.tick);
-            notes.push({
-              partId,
-              note: ev.noteNumber,
-              velocity: startInfo.velocity,
-              startTick: relTick,
-              durationTick: duration,
-            });
-            activeNotes.delete(ev.noteNumber);
-          }
-        }
-      }
-    }
-
-    // 若有未關閉的 NoteOff，在段落結束點閉合
-    for (const [noteNumber, startInfo] of activeNotes.entries()) {
-      const relTick = startInfo.tick - range.startTick;
-      const duration = Math.max(12, range.endTick - startInfo.tick);
-      notes.push({
-        partId,
-        note: noteNumber,
-        velocity: startInfo.velocity,
-        startTick: relTick,
-        durationTick: duration,
-      });
-    }
-
-    return notes;
+    const channelNotes = this.extractSectionChannelNotes(parsed, range.startTick, range.endTick, targetChannel);
+    return channelNotes.map((n) => ({
+      partId,
+      note: n.note,
+      velocity: n.velocity,
+      startTick: n.startTick,
+      durationTick: n.durationTick,
+    }));
   }
 
   /**
