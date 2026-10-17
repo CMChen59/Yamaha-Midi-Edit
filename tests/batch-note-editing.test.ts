@@ -130,4 +130,34 @@ describe('模組 2.8-E: 多音符選取與批次修改 (Batch Note Editing)', ()
       expect(exists).toBe(false);
     }
   });
+
+  it('能成功將自訂力度數值 (Custom Velocity) 一次性套用至多顆選取音符', () => {
+    const rawBuffer = new Uint8Array(fs.readFileSync(samplePath));
+    const parsed = YamahaParser.parse(rawBuffer, 'PAD');
+
+    const origNotes = extractNotes(parsed.tracks[1]);
+    const selectedTargets = origNotes.slice(0, 3);
+    const customVel = 77;
+
+    const updatedCount = YamahaPadModifier.batchUpdateNotes(
+      parsed,
+      1,
+      selectedTargets.map(t => ({
+        target: { note: t.note, startTick: t.startTick, oldDurationTick: t.durationTick },
+        updates: { velocity: customVel }
+      }))
+    );
+
+    expect(updatedCount).toBe(3);
+
+    const modifiedBytes = YamahaWriter.write(parsed);
+    const reParsed = YamahaParser.parse(modifiedBytes, 'PAD');
+    const reNotes = extractNotes(reParsed.tracks[1]);
+
+    for (const t of selectedTargets) {
+      const matched = reNotes.find(n => n.startTick === t.startTick && n.note === t.note);
+      expect(matched).toBeDefined();
+      expect(matched?.velocity).toBe(customVel);
+    }
+  });
 });

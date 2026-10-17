@@ -6131,12 +6131,26 @@ function updateBatchInspectorUI() {
   const singleInspector = document.getElementById('single-note-inspector');
   const multiInspector = document.getElementById('multi-note-inspector');
   const batchTitle = document.getElementById('batch-note-title');
+  const batchVelInput = document.getElementById('batch-vel-input') as HTMLInputElement | null;
 
   if (inspectorBar) inspectorBar.style.display = 'flex';
   if (singleInspector) singleInspector.style.display = 'none';
   if (multiInspector) multiInspector.style.display = 'flex';
   if (batchTitle) {
     batchTitle.textContent = `已選取 ${selectedNoteBoxes.length} 顆音符`;
+  }
+
+  // 同步批次力度數值輸入框：若選取音符力度全數相同則顯示數值，否則提示多種力度
+  if (batchVelInput && selectedNoteBoxes.length > 0) {
+    const firstVel = selectedNoteBoxes[0].velocity;
+    const allSame = selectedNoteBoxes.every(b => b.velocity === firstVel);
+    if (allSame) {
+      batchVelInput.value = `${firstVel}`;
+      batchVelInput.placeholder = '1~127';
+    } else {
+      batchVelInput.value = '';
+      batchVelInput.placeholder = '多種力度';
+    }
   }
 }
 
@@ -6184,27 +6198,27 @@ function deselectNote() {
 
 function auditionSelectedNote(note: number, durTicks: number, velocity: number) {
   const durSec = Math.max(0.1, Math.min(2.0, ticksToSeconds(durTicks, 120, currentTicksPerBeat)));
-  audioEngine.playAuditionNote(note, durSec, {
-    ...currentCanvasPadInstrument,
-    volume: velocity,
-  });
+  audioEngine.playAuditionPhrase([
+    { note, startSec: 0, durationSec: durSec, velocity }
+  ], currentCanvasPadInstrument);
 }
 
 function auditionSelectedNotes(boxes: RenderedNoteBox[]) {
-  if (boxes.length === 0) return;
+  if (!boxes || boxes.length === 0) return;
   const sorted = [...boxes].sort((a, b) => a.startTick - b.startTick);
   const baseTick = sorted[0].startTick;
-  for (const b of sorted) {
+  const phrase = sorted.map(b => {
     const offsetTicks = Math.max(0, b.startTick - baseTick);
     const offsetSec = ticksToSeconds(offsetTicks, 120, currentTicksPerBeat);
-    const durSec = Math.max(0.1, Math.min(2.0, ticksToSeconds(b.durationTick, 120, currentTicksPerBeat)));
-    setTimeout(() => {
-      audioEngine.playAuditionNote(b.note, durSec, {
-        ...currentCanvasPadInstrument,
-        volume: b.velocity,
-      });
-    }, Math.min(offsetSec * 1000, 3000));
-  }
+    const durSec = Math.max(0.1, Math.min(2.5, ticksToSeconds(b.durationTick, 120, currentTicksPerBeat)));
+    return {
+      note: b.note,
+      startSec: offsetSec,
+      durationSec: durSec,
+      velocity: b.velocity,
+    };
+  });
+  audioEngine.playAuditionPhrase(phrase, currentCanvasPadInstrument);
 }
 
 function refreshCurrentPadDetail() {
@@ -6404,14 +6418,13 @@ function initNoteInspectorEvents() {
   // 多音符批次工具列 (Multi-Note Batch Bar) 事件綁定
   // ==========================================
 
-  // 1. 批次力度增減 (-10 / +10)
-  const btnBatchVelMinus10 = document.getElementById('btn-batch-vel-minus10');
-  if (btnBatchVelMinus10) {
-    btnBatchVelMinus10.addEventListener('click', () => {
-      if (!currentParsed || selectedNoteBoxes.length === 0) return;
-      pushUndoSnapshot(`批次調整 Pad ${currentCanvasPadNum} 力度 -10`);
+  // 1. 批次力度增減 (-10 / +10)、自訂數值輸入與範本預設
+  const applyBatchVelocity = (val: number, isRelative: boolean = false) => {
+    if (!currentParsed || selectedNoteBoxes.length === 0) return;
+
+    if (isRelative) {
       const updates = selectedNoteBoxes.map(b => {
-        const newVel = Math.max(1, Math.min(127, b.velocity - 10));
+        const newVel = Math.max(1, Math.min(127, b.velocity + val));
         b.velocity = newVel;
         return {
           target: { note: b.note, startTick: b.startTick, oldDurationTick: b.durationTick },
@@ -6419,27 +6432,57 @@ function initNoteInspectorEvents() {
         };
       });
       YamahaPadModifier.batchUpdateNotes(currentParsed, currentCanvasPadNum, updates);
-      markModified(`已批次將 Pad ${currentCanvasPadNum} 的 ${selectedNoteBoxes.length} 顆音符力度 -10`);
-      refreshCurrentPadDetail();
-    });
+      markModified(`已批次將 Pad ${currentCanvasPadNum} 的 ${selectedNoteBoxes.length} 顆音符力度 ${val > 0 ? '+' : ''}${val}`);
+    } else {
+      const targetVel = Math.max(1, Math.min(127, Math.round(val)));
+      const updates = selectedNoteBoxes.map(b => {
+        b.velocity = targetVel;
+        return {
+          target: { note: b.note, startTick: b.startTick, oldDurationTick: b.durationTick },
+          updates: { velocity: targetVel }
+        };
+      });
+      YamahaPadModifier.batchUpdateNotes(currentParsed, currentCanvasPadNum, updates);
+      markModified(`已批次將 Pad ${currentCanvasPadNum} 的 ${selectedNoteBoxes.length} 顆音符力度設為 ${targetVel}`);
+    }
+
+    refreshCurrentPadDetail();
+    auditionSelectedNotes(selectedNoteBoxes);
+  };
+
+  const btnBatchVelMinus10 = document.getElementById('btn-batch-vel-minus10');
+  if (btnBatchVelMinus10) {
+    btnBatchVelMinus10.addEventListener('click', () => applyBatchVelocity(-10, true));
   }
 
   const btnBatchVelPlus10 = document.getElementById('btn-batch-vel-plus10');
   if (btnBatchVelPlus10) {
-    btnBatchVelPlus10.addEventListener('click', () => {
-      if (!currentParsed || selectedNoteBoxes.length === 0) return;
-      pushUndoSnapshot(`批次調整 Pad ${currentCanvasPadNum} 力度 +10`);
-      const updates = selectedNoteBoxes.map(b => {
-        const newVel = Math.max(1, Math.min(127, b.velocity + 10));
-        b.velocity = newVel;
-        return {
-          target: { note: b.note, startTick: b.startTick, oldDurationTick: b.durationTick },
-          updates: { velocity: newVel }
-        };
-      });
-      YamahaPadModifier.batchUpdateNotes(currentParsed, currentCanvasPadNum, updates);
-      markModified(`已批次將 Pad ${currentCanvasPadNum} 的 ${selectedNoteBoxes.length} 顆音符力度 +10`);
-      refreshCurrentPadDetail();
+    btnBatchVelPlus10.addEventListener('click', () => applyBatchVelocity(10, true));
+  }
+
+  const batchVelInput = document.getElementById('batch-vel-input') as HTMLInputElement | null;
+  const btnBatchVelApply = document.getElementById('btn-batch-vel-apply');
+
+  const commitCustomBatchVelocity = () => {
+    if (!batchVelInput) return;
+    const rawVal = parseInt(batchVelInput.value, 10);
+    if (isNaN(rawVal) || rawVal < 1 || rawVal > 127) {
+      showStatus('⚠️ 請輸入 1 ~ 127 之間的有效力度數值 (Velocity)', true);
+      return;
+    }
+    applyBatchVelocity(rawVal, false);
+  };
+
+  if (btnBatchVelApply) {
+    btnBatchVelApply.addEventListener('click', commitCustomBatchVelocity);
+  }
+
+  if (batchVelInput) {
+    batchVelInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commitCustomBatchVelocity();
+      }
     });
   }
 
@@ -6449,22 +6492,12 @@ function initNoteInspectorEvents() {
     selectBatchVelPreset.addEventListener('change', () => {
       const val = parseInt(selectBatchVelPreset.value, 10);
       if (isNaN(val) || !currentParsed || selectedNoteBoxes.length === 0) return;
-      pushUndoSnapshot(`批次設定 Pad ${currentCanvasPadNum} 力度為 ${val}`);
-      const updates = selectedNoteBoxes.map(b => {
-        b.velocity = val;
-        return {
-          target: { note: b.note, startTick: b.startTick, oldDurationTick: b.durationTick },
-          updates: { velocity: val }
-        };
-      });
-      YamahaPadModifier.batchUpdateNotes(currentParsed, currentCanvasPadNum, updates);
-      markModified(`已批次將 Pad ${currentCanvasPadNum} 的 ${selectedNoteBoxes.length} 顆音符力度統一設為 ${val}`);
+      applyBatchVelocity(val, false);
       selectBatchVelPreset.value = '';
-      refreshCurrentPadDetail();
     });
   }
 
-  // 3. 批次移調
+    // 3. 批次移調
   const shiftBatchNotesPitch = (semiDelta: number) => {
     if (!currentParsed || selectedNoteBoxes.length === 0) return;
     const wouldOverflow = selectedNoteBoxes.some(b => b.note + semiDelta < 0 || b.note + semiDelta > 127);
@@ -6472,7 +6505,6 @@ function initNoteInspectorEvents() {
       showStatus('移調將超出 MIDI 音高範圍 (0~127)，已自動取消操作', true);
       return;
     }
-    pushUndoSnapshot(`批次移調 Pad ${currentCanvasPadNum} (${semiDelta > 0 ? '+' : ''}${semiDelta} 半音)`);
     const updates = selectedNoteBoxes.map(b => {
       const newNote = b.note + semiDelta;
       const target = { note: b.note, startTick: b.startTick, oldDurationTick: b.durationTick };
@@ -6500,7 +6532,6 @@ function initNoteInspectorEvents() {
   // 4. 批次音長縮放 (50%, 80%, 100%, 120%)
   const scaleBatchNotesDuration = (ratio: number, desc: string) => {
     if (!currentParsed || selectedNoteBoxes.length === 0) return;
-    pushUndoSnapshot(`批次縮放 Pad ${currentCanvasPadNum} 音長 (${desc})`);
     const updates = selectedNoteBoxes.map(b => {
       const newDur = Math.max(12, Math.round(b.durationTick * ratio));
       const target = { note: b.note, startTick: b.startTick, oldDurationTick: b.durationTick };
@@ -6532,7 +6563,6 @@ function initNoteInspectorEvents() {
       showStatus('平移將超出開頭 (Tick 0)，已自動取消操作', true);
       return;
     }
-    pushUndoSnapshot(`批次平移 Pad ${currentCanvasPadNum} 位置 (${tickDelta > 0 ? '+' : ''}${tickDelta} Ticks)`);
     const updates = selectedNoteBoxes.map(b => {
       const newStart = b.startTick + tickDelta;
       const target = { note: b.note, startTick: b.startTick, oldDurationTick: b.durationTick };
@@ -6561,11 +6591,10 @@ function initNoteInspectorEvents() {
   if (btnBatchQuantize) {
     btnBatchQuantize.addEventListener('click', () => {
       if (!currentParsed || selectedNoteBoxes.length === 0) return;
-      const selectGridEl = document.getElementById('opt-quantize-grid') as HTMLSelectElement | null;
+      const selectGridEl = document.getElementById('select-roll-quantize-grid') as HTMLSelectElement | null;
       const grid = (selectGridEl ? selectGridEl.value : '1/16') as QuantizeGrid;
-      pushUndoSnapshot(`批次量化 Pad ${currentCanvasPadNum} (${grid})`);
       const updates = selectedNoteBoxes.map(b => {
-        const newStart = PadRecorder.snapTickToGrid(b.startTick, currentTicksPerBeat, grid);
+        const newStart = PadRecorder.snapTickToGrid(b.startTick, grid, currentTicksPerBeat);
         const target = { note: b.note, startTick: b.startTick, oldDurationTick: b.durationTick };
         b.startTick = newStart;
         return {
@@ -6590,7 +6619,6 @@ function initNoteInspectorEvents() {
     if (!currentParsed || selectedNoteBoxes.length === 0) return;
     const count = selectedNoteBoxes.length;
     if (!confirm(`確定要刪除選取的 ${count} 顆音符嗎？`)) return;
-    pushUndoSnapshot(`批次刪除 Pad ${currentCanvasPadNum} 的 ${count} 顆音符`);
     const targets = selectedNoteBoxes.map(b => ({ note: b.note, startTick: b.startTick, oldDurationTick: b.durationTick }));
     const deletedCount = YamahaPadModifier.batchDeleteNotes(currentParsed, currentCanvasPadNum, targets);
     markModified(`已批次刪除 Pad ${currentCanvasPadNum} 的 ${deletedCount} 顆音符`);

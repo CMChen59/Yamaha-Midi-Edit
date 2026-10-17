@@ -581,20 +581,26 @@ export class AudioEngine {
   }
 
   /**
-   * 試聽單一音符/音色 (例如在音色庫彈奏預聽)
+   * 試聽多顆音符 (支援和弦同發與小節短句依時序排程發聲)
+   * 包含單次音色切換防抖，杜絕 Yamaha 實體合成器因多重 Program Change 導致之斷音
    */
-  public playAuditionNote(note: number = 60, durationSec: number = 0.6, params: ChannelAudioParams = {}) {
+  public playAuditionPhrase(
+    notes: { note: number; startSec: number; durationSec: number; velocity: number }[],
+    params: ChannelAudioParams = {}
+  ) {
     this.init();
-    const ch = params.channel ?? ((this.currentPadNum ?? 1) - 1);
-    const vel = params.volume ?? 100;
+    if (notes.length === 0) return;
 
-    // 1. 若 Web Audio 路由啟用，發動瀏覽器諧波合成
-    if (midiManager.isAudioActive() && this.ctx) {
-      const now = this.ctx.currentTime;
-      this.triggerVoice(note, vel, now, durationSec, params);
+    // 清除先前未完成的試聽定時器，避免快速連續點擊時音符重疊混亂
+    for (const tid of this.scheduledTimerIds) {
+      clearTimeout(tid);
     }
+    this.scheduledTimerIds = [];
 
-    // 2. 若 Web MIDI 路由啟用，向實體琴發送 Bank Select, PC, Volume, Note-On
+    const ch = params.channel ?? ((this.currentPadNum ?? 1) - 1);
+
+    // 1. 若 Web MIDI 路由啟用，發送單次音色切換指令 (Bank Select MSB + LSB + PC)
+    // 避免多顆音符同時觸發多重 Program Change 造成 Yamaha SX920 合成器引擎重置與斷音
     if (midiManager.isMidiActive()) {
       if (params.msb !== undefined || params.lsb !== undefined || params.pc !== undefined) {
         midiManager.sendVoiceChange(ch, {
@@ -603,21 +609,53 @@ export class AudioEngine {
           pc: params.pc ?? 0,
         });
       }
-      if (params.volume !== undefined || params.pan !== undefined || params.reverb !== undefined || params.chorus !== undefined) {
+      if (params.pan !== undefined || params.reverb !== undefined || params.chorus !== undefined) {
         midiManager.sendMixerControllers(ch, {
-          volume: params.volume,
           pan: params.pan,
           reverb: params.reverb,
           chorus: params.chorus,
         });
       }
-
-      midiManager.sendNoteOn(ch, note, vel);
-      const onTimer = setTimeout(() => {
-        midiManager.sendNoteOff(ch, note);
-      }, durationSec * 1000);
-      this.scheduledTimerIds.push(onTimer);
     }
+
+    // 2. 排程發聲
+    for (const n of notes) {
+      const delayMs = Math.max(0, n.startSec * 1000);
+      const durSec = Math.max(0.1, Math.min(3.0, n.durationSec));
+      const vel = Math.max(1, Math.min(127, Math.round(n.velocity)));
+
+      const timer = setTimeout(() => {
+        // Web Audio 路由啟用時發聲
+        if (midiManager.isAudioActive() && this.ctx) {
+          const now = this.ctx.currentTime;
+          this.triggerVoice(n.note, vel, now, durSec, {
+            ...params,
+            volume: 100, // 通道音量基準固定為 100，動態強弱完全由 note velocity 控制
+          });
+        }
+
+        // Web MIDI Note-On / Note-Off
+        if (midiManager.isMidiActive()) {
+          midiManager.sendNoteOn(ch, n.note, vel);
+          const offTimer = setTimeout(() => {
+            midiManager.sendNoteOff(ch, n.note);
+          }, durSec * 1000);
+          this.scheduledTimerIds.push(offTimer as any);
+        }
+      }, delayMs);
+
+      this.scheduledTimerIds.push(timer as any);
+    }
+  }
+
+  /**
+   * 試聽單一音符/音色 (例如在音色庫彈奏預聽)
+   */
+  public playAuditionNote(note: number = 60, durationSec: number = 0.6, params: ChannelAudioParams = {}) {
+    const vel = params.volume ?? 100;
+    this.playAuditionPhrase([
+      { note, startSec: 0, durationSec, velocity: vel }
+    ], params);
   }
 
   /**

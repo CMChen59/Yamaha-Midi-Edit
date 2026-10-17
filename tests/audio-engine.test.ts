@@ -77,5 +77,27 @@ describe('Web Audio 試聽引擎單元測試 (Audio Engine)', () => {
       engine.startBackingTrack([], { bpm: 120 });
       expect(engine.isBackingTrackPlaying()).toBe(false);
     });
+
+    it('2.8-E: playAuditionPhrase 多音符短句與和弦試聽安全穩定 (Multi-Note & Chord Audition)', () => {
+      // 1. 空清單安全返回
+      expect(() => engine.playAuditionPhrase([])).not.toThrow();
+
+      // 2. 和弦音符 (多顆同時同拍起音) 呼叫安全無拋錯
+      expect(() => {
+        engine.playAuditionPhrase([
+          { note: 60, startSec: 0, durationSec: 0.5, velocity: 80 },
+          { note: 64, startSec: 0, durationSec: 0.5, velocity: 85 },
+          { note: 67, startSec: 0, durationSec: 0.5, velocity: 90 },
+        ], { channel: 0, msb: 104, lsb: 1, pc: 0 });
+      }).not.toThrow();
+
+      // 3. 單音 playAuditionNote 能安全調用
+      expect(() => {
+        engine.playAuditionNote(62, 0.4, { channel: 0, msb: 104, lsb: 1, pc: 0, volume: 100 });
+      }).not.toThrow();
+
+      // 4. 調用 stop() 清理定時器
+      expect(() => engine.stop()).not.toThrow();
+    });
   });
 });
