@@ -6393,10 +6393,8 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection | null 
   mountPianoRollContainer('PAD');
   container.style.display = 'block';
 
-  // 僅在切換不同 Pad 時才重設視野起始小節，編輯同一個 Pad 時保留當前檢視小節
+  // 保持使用者的視野模式 (4 小節標準視野或全景自適應)，切換 Pad 或編輯音符時不強制重設
   if (currentCanvasPadNum !== padNum) {
-    rollViewMode = 'all';
-    rollStartBar = 1;
     selectedRulerBar = null;
   }
   resetHoverInfo();
@@ -6539,9 +6537,7 @@ function showStyPartNotesDetail(parsed: YamahaFileParsed, sectionName: string, c
   mountPianoRollContainer('STY');
   container.style.display = 'block';
 
-  // 伴奏段落預設使用全景自適應檢視 (顯示該段落全部小節，如 Intro A 10 小節)
-  rollViewMode = 'all';
-  rollStartBar = 1;
+  // 保持使用者的視野模式 (4 小節標準視野或全景自適應)，編輯音符與調整參數時由使用者自行決定
   selectedRulerBar = null;
   currentActiveStyPartChannel = channel;
   currentCanvasPadNum = channel + 1;
