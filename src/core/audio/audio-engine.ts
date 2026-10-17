@@ -33,6 +33,7 @@ export interface PlaybackOptions {
   gridStartTick: number; // 小節起點基準 Tick
   totalTicks: number;    // 總播放長度 (小節數 * 每小節 Tick 數)
   channelParams?: ChannelAudioParams;
+  startOffsetTick?: number; // 支援自指定 Tick / 小節起跳播放
   onProgress?: (state: PlaybackState) => void;
   onEnded?: () => void;
 }
@@ -65,6 +66,7 @@ export interface BackingTrackOptions {
   volumeRatio?: number; // 0.0 ~ 1.0 (預設 0.6)
   loop?: boolean;
   beatsPerBar?: number;
+  startOffsetTick?: number; // 支援自指定 Tick / 小節起跳播放
   onProgress?: (state: PlaybackState) => void;
   onEnded?: () => void;
 }
@@ -449,7 +451,9 @@ export class AudioEngine {
     }
 
     const loopDurationSec = ticksToSeconds(maxTotalTicks, bpm, division);
-    this.backingStartTime = this.ctx.currentTime;
+    const startOffsetTick = options.startOffsetTick ? Math.max(0, Math.min(options.startOffsetTick, maxTotalTicks - 1)) : 0;
+    const startOffsetSec = ticksToSeconds(startOffsetTick, bpm, division);
+    this.backingStartTime = this.ctx.currentTime - startOffsetSec;
 
     // 若 Web MIDI 開啟，為各伴奏音軌發送 Voice Change 與 Mixer Controllers
     if (midiManager.isMidiActive()) {
@@ -503,6 +507,16 @@ export class AudioEngine {
       const currentBeat = Math.floor(tickInBar / division) + 1;
       const progress = Math.max(0, Math.min(1, relTick / maxTotalTicks));
 
+      // 步驟 3.4: 即時偵測當前發聲中的音符號碼清單，供鋼琴卷軸與琴鍵同步發光
+      const activeNotes = new Set<number>();
+      for (const track of validTracks) {
+        for (const n of track.notes) {
+          if (relTick >= n.startTick && relTick < (n.startTick + n.durationTick)) {
+            activeNotes.add(n.note);
+          }
+        }
+      }
+
       if (options.onProgress) {
         options.onProgress({
           currentTick: relTick,
@@ -510,7 +524,7 @@ export class AudioEngine {
           currentBar,
           currentBeat,
           progress,
-          activeNoteNumbers: [],
+          activeNoteNumbers: Array.from(activeNotes),
         });
       }
 
@@ -553,15 +567,22 @@ export class AudioEngine {
         const noteStartTime = passStartTime + noteOffsetSec;
         const noteStopTime = noteStartTime + noteDurSec;
 
+        const now = this.ctx.currentTime;
+        if (noteStopTime <= now) {
+          continue; // 此音符在起點前已結束
+        }
+
+        const effectiveStartTime = Math.max(now, noteStartTime);
+        const effectiveDurSec = Math.max(0.02, noteStopTime - effectiveStartTime);
+
         // Web Audio 觸發 (走專屬 backingGain)
         if (midiManager.isAudioActive()) {
-          this.triggerVoice(n.note, n.velocity, noteStartTime, noteDurSec, params, this.backingGain);
+          this.triggerVoice(n.note, n.velocity, effectiveStartTime, effectiveDurSec, params, this.backingGain);
         }
 
         // Web MIDI 實體琴轉發
         if (midiManager.isMidiActive()) {
-          const now = this.ctx.currentTime;
-          const delayMs = Math.max(0, (noteStartTime - now) * 1000);
+          const delayMs = Math.max(0, (effectiveStartTime - now) * 1000);
           const stopDelayMs = Math.max(0, (noteStopTime - now) * 1000);
 
           const onTimer = setTimeout(() => {
@@ -723,8 +744,10 @@ export class AudioEngine {
     const division = options.division || 96;
     const totalTicks = Math.max(options.totalTicks, 1);
     const loopDurationSec = ticksToSeconds(totalTicks, bpm, division);
+    const startOffsetTick = options.startOffsetTick ? Math.max(0, Math.min(options.startOffsetTick, totalTicks - 1)) : 0;
+    const startOffsetSec = ticksToSeconds(startOffsetTick, bpm, division);
 
-    this.playbackStartTime = this.ctx.currentTime;
+    this.playbackStartTime = this.ctx.currentTime - startOffsetSec;
 
     // 若 Web MIDI 啟用，在序列開始前預先發送當前 Pad 的音色 (Bank/PC) 與混音 (CC7/CC10/CC91/CC93)
     if (midiManager.isMidiActive()) {
@@ -777,16 +800,23 @@ export class AudioEngine {
       const noteStartTime = passStartTime + noteOffsetSec;
       const noteStopTime = noteStartTime + noteDurSec;
 
+      const now = this.ctx.currentTime;
+      if (noteStopTime <= now) {
+        continue; // 此音符在起點前已結束
+      }
+
+      const effectiveStartTime = Math.max(now, noteStartTime);
+      const effectiveDurSec = Math.max(0.02, noteStopTime - effectiveStartTime);
+
       // 若 Web Audio 路由開啟：觸發音符發聲
       if (midiManager.isAudioActive()) {
-        this.triggerVoice(n.note, n.velocity, noteStartTime, noteDurSec, params);
+        this.triggerVoice(n.note, n.velocity, effectiveStartTime, effectiveDurSec, params);
       }
 
       // 若 Web MIDI 路由開啟：轉發至實體琴
       if (midiManager.isMidiActive()) {
         const midiCh = params.channel ?? ((this.currentPadNum ?? 1) - 1);
-        const now = this.ctx.currentTime;
-        const delayMs = Math.max(0, (noteStartTime - now) * 1000);
+        const delayMs = Math.max(0, (effectiveStartTime - now) * 1000);
         const stopDelayMs = Math.max(0, (noteStopTime - now) * 1000);
 
         const onTimer = setTimeout(() => {

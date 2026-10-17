@@ -5626,7 +5626,7 @@ function togglePlayAllPads() {
 /**
  * 切換單一 Pad 的即時試聽發聲
  */
-function togglePadAudition(padNum: number) {
+function togglePadAudition(padNum: number, startBar?: number) {
   if (!currentParsed) return;
 
   if (isAllPadsPlaying) {
@@ -5635,7 +5635,7 @@ function togglePadAudition(padNum: number) {
     updateEnsembleChipsUI();
   }
 
-  if (audioEngine.isPlaying() && audioEngine.getPlayingPadNum() === padNum) {
+  if (audioEngine.isPlaying() && audioEngine.getPlayingPadNum() === padNum && startBar === undefined) {
     audioEngine.stop();
     updateAuditionUIState(null);
     return;
@@ -5684,6 +5684,7 @@ function togglePadAudition(padNum: number) {
   const gridStartTick = firstNoteTick >= padLoopTicks ? Math.floor(firstNoteTick / ticksPerBar) * ticksPerBar : 0;
   const totalBars = Math.max(explicitBars, Math.ceil((lastNoteTick - gridStartTick) / ticksPerBar));
   const totalTicks = totalBars * ticksPerBar;
+  const startOffsetTick = (startBar !== undefined && startBar > 1) ? Math.min((startBar - 1) * ticksPerBar, totalTicks - 1) : 0;
 
   const bpmInput = document.getElementById('input-playback-bpm') as HTMLInputElement | null;
   const bpm = bpmInput ? parseInt(bpmInput.value, 10) || currentParsed.bpm || 120 : currentParsed.bpm || 120;
@@ -5703,6 +5704,7 @@ function togglePadAudition(padNum: number) {
     loop: isRepeat,
     gridStartTick,
     totalTicks,
+    startOffsetTick,
     channelParams: {
       volume,
       pan,
@@ -5788,10 +5790,10 @@ function updateStySectionCardsSelection() {
   });
 }
 
-function toggleStySectionAudition(sectionName: string) {
+function toggleStySectionAudition(sectionName: string, startBar?: number) {
   if (!currentParsed || currentParsed.format !== 'STY') return;
 
-  if (currentAuditionStySection === sectionName && (audioEngine.isPlaying() || audioEngine.isBackingTrackPlaying())) {
+  if (currentAuditionStySection === sectionName && (audioEngine.isPlaying() || audioEngine.isBackingTrackPlaying()) && startBar === undefined) {
     audioEngine.stopBackingTrack();
     audioEngine.stop();
     currentAuditionStySection = null;
@@ -5885,12 +5887,16 @@ function toggleStySectionAudition(sectionName: string) {
   const bpmInput = document.getElementById('input-playback-bpm') as HTMLInputElement | null;
   const bpm = styBpmInput ? (parseInt(styBpmInput.value, 10) || currentParsed.bpm || 120) : (bpmInput ? (parseInt(bpmInput.value, 10) || currentParsed.bpm || 120) : (currentParsed.bpm || 120));
 
+  const ticksPerBar = Math.round(division * timeSig.numerator * (4 / timeSig.denominator));
+  const startOffsetTick = (startBar !== undefined && startBar > 1) ? Math.min((startBar - 1) * ticksPerBar, totalTicks - 1) : 0;
+
   audioEngine.startBackingTrack(backingItems, {
     bpm,
     division,
     beatsPerBar: timeSig.numerator,
     volumeRatio: 1.0,
     loop: true,
+    startOffsetTick,
     onProgress: (state) => {
       if (currentCanvasRedrawWithPlayhead) {
         currentCanvasRedrawWithPlayhead(state.relTick, state.activeNoteNumbers);
@@ -5905,7 +5911,8 @@ function toggleStySectionAudition(sectionName: string) {
     },
   });
 
-  showStatus(`▶ 正在試聽 STY 伴奏段落: [${sectionName}] (${range.measureCount} 小節，共 ${backingItems.length} 個發聲聲部)...`);
+  const startMsg = startBar && startBar > 1 ? ` (自第 ${startBar} 小節起奏)` : '';
+  showStatus(`▶ 正在試聽 STY 伴奏段落: [${sectionName}]${startMsg} (${range.measureCount} 小節，共 ${backingItems.length} 個發聲聲部)...`);
 }
 
 function updateStySectionAuditionButtons() {
@@ -6810,7 +6817,10 @@ let resizingPreviewDuration: { startTick: number; note: number; durationTick: nu
 let currentPlotW = 1000;
 let currentWindowTotalTicks = 384;
 let currentWindowStartTick = 0;
+let currentDisplayMinNote = 48;
 let currentDisplayMaxNote = 72;
+let pressedPianoKeyNote: number | null = null;
+let isPianoKeyAuditioning = false;
 let currentSemitoneH = 15;
 let isDrawMode = false;
 let isCreationControlsBound = false;
@@ -6889,6 +6899,8 @@ function drawNoteRoll(
   const maxNote = hasNotes ? Math.max(...notes.map(n => n.note)) : 72; // C5
   const displayMinNote = hasNotes ? Math.max(0, minNote - 1) : 48;
   const displayMaxNote = hasNotes ? Math.min(127, maxNote + 1) : 72;
+  currentDisplayMinNote = displayMinNote;
+  currentDisplayMaxNote = displayMaxNote;
   const noteRange = Math.max(displayMaxNote - displayMinNote + 1, 8);
 
   // 依音域跨度動態自適應畫布高度，保證每個半音至少有約 12.5px 舒適垂直空間，讓所有黑白鍵音名 100% 完整排下
@@ -7179,27 +7191,46 @@ function drawNoteRoll(
       const isBlack = [1, 3, 6, 8, 10].includes(n % 12);
       const isC = n % 12 === 0;
       const hasNotesOnPitch = activePitches.has(n);
+      const isPressed = pressedPianoKeyNote === n;
+      const isSoundingInRoll = (playheadRelTick !== null && playheadRelTick !== undefined && notes.some(note =>
+        note.note === n &&
+        playheadRelTick >= (note.startTick - gridStartTick) &&
+        playheadRelTick < (note.startTick + note.durationTick - gridStartTick)
+      )) || (currentActiveNoteNumbers.includes(n));
+      const isKeyActive = isPressed || isSoundingInRoll;
 
       // A. 繪製精緻鋼琴琴鍵紋理 (Mini Piano Keys)
       const keyW = scaleW - 6;
       if (isBlack) {
         // 黑鍵短塊 (Raised Black Key)
-        ctx.fillStyle = '#1a1c24';
+        ctx.fillStyle = isPressed ? '#38bdf8' : (isSoundingInRoll ? '#f59e0b' : '#1a1c24');
         ctx.fillRect(2, rowY + 1, keyW * 0.62, Math.max(semitoneH - 1, 2));
-        ctx.strokeStyle = '#2d3345';
-        ctx.lineWidth = 0.5;
+        ctx.strokeStyle = isKeyActive ? '#ffffff' : '#2d3345';
+        ctx.lineWidth = isKeyActive ? 1.5 : 0.5;
         ctx.strokeRect(2, rowY + 1, keyW * 0.62, Math.max(semitoneH - 1, 2));
       } else {
         // 白鍵底色 (White Key)
-        ctx.fillStyle = isC ? '#232938' : '#1c202a';
+        ctx.fillStyle = isPressed ? '#60a5fa' : (isSoundingInRoll ? '#fbbf24' : (isC ? '#232938' : '#1c202a'));
         ctx.fillRect(2, rowY + 1, keyW, Math.max(semitoneH - 1, 2));
-        ctx.strokeStyle = isC ? 'rgba(56, 189, 248, 0.4)' : '#292d3b';
-        ctx.lineWidth = isC ? 1 : 0.5;
+        ctx.strokeStyle = isKeyActive ? '#ffffff' : (isC ? 'rgba(56, 189, 248, 0.4)' : '#292d3b');
+        ctx.lineWidth = isKeyActive ? 1.5 : (isC ? 1 : 0.5);
         ctx.strokeRect(2, rowY + 1, keyW, Math.max(semitoneH - 1, 2));
       }
 
-      // B. 100% 完整音名標示 (黑鍵、白鍵與半音全數顯示，徹底消除黑色空白不一致現象)
-      if (isC) {
+      // 發聲光暈效果
+      if (isKeyActive) {
+        ctx.save();
+        ctx.shadowColor = isPressed ? '#38bdf8' : '#facc15';
+        ctx.shadowBlur = 10;
+        ctx.strokeRect(2, rowY + 1, isBlack ? keyW * 0.62 : keyW, Math.max(semitoneH - 1, 2));
+        ctx.restore();
+      }
+
+      // B. 100% 完整音名標示
+      if (isKeyActive) {
+        ctx.fillStyle = isBlack && !isSoundingInRoll && !isPressed ? '#ffffff' : '#0f172a';
+        ctx.font = 'bold 9.5px sans-serif';
+      } else if (isC) {
         ctx.fillStyle = '#38bdf8';
         ctx.font = 'bold 9.5px sans-serif';
       } else if (hasNotesOnPitch) {
@@ -7363,16 +7394,16 @@ function drawNoteRoll(
         ctx.beginPath();
         ctx.moveTo(playheadX, rulerH);
         ctx.lineTo(playheadX, h);
-        ctx.strokeStyle = '#22c55e';
+        ctx.strokeStyle = '#ef4444';
         ctx.lineWidth = 2;
-        ctx.shadowColor = '#22c55e';
+        ctx.shadowColor = '#f87171';
         ctx.shadowBlur = 8;
         ctx.stroke();
         ctx.restore();
 
         // 頂部時間軸尺規上的倒三角形游標標記
         ctx.save();
-        ctx.fillStyle = '#22c55e';
+        ctx.fillStyle = '#ef4444';
         ctx.beginPath();
         ctx.moveTo(playheadX - 6, 2);
         ctx.lineTo(playheadX + 6, 2);
@@ -7420,7 +7451,7 @@ function drawNoteRoll(
   };
 
   currentCanvasRedraw = () => redraw(hoveredNoteBox, currentPlayheadRelTick, currentActiveNoteNumbers);
-  currentCanvasRedrawWithPlayhead = (relTick, activeNotes) => redraw(hoveredNoteBox, relTick, activeNotes);
+  currentCanvasRedrawWithPlayhead = (relTick, activeNotes) => redraw(hoveredNoteBox, relTick, activeNotes || []);
   redraw(null, currentPlayheadRelTick, currentActiveNoteNumbers);
 
   // 註冊滑鼠懸停檢視事件
@@ -7635,9 +7666,9 @@ function drawVelocityLane(
       ctx.beginPath();
       ctx.moveTo(playheadX, 0);
       ctx.lineTo(playheadX, h);
-      ctx.strokeStyle = '#22c55e';
+      ctx.strokeStyle = '#ef4444';
       ctx.lineWidth = 1.5;
-      ctx.shadowColor = '#22c55e';
+      ctx.shadowColor = '#f87171';
       ctx.shadowBlur = 6;
       ctx.stroke();
       ctx.restore();
@@ -8942,6 +8973,37 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
     const mouseX = (e.clientX - rect.left) * scaleX;
     const mouseY = (e.clientY - rect.top) * scaleY;
 
+    const scaleW = 54;
+    const rulerH = 26;
+
+    // 步驟 3.4-A: 滑鼠懸停於左側琴鍵欄 (Mini Piano Keys) 互動與試聽
+    if (mouseX <= scaleW && mouseY >= rulerH && mouseY <= canvas.height) {
+      canvas.style.cursor = 'pointer';
+      const effectiveSemitoneH = currentSemitoneH > 0 ? currentSemitoneH : 15;
+      const semitoneIndex = Math.floor((mouseY - rulerH) / effectiveSemitoneH);
+      const noteNum = Math.max(currentDisplayMinNote, Math.min(currentDisplayMaxNote, currentDisplayMaxNote - semitoneIndex));
+
+      if (hoveredNoteBox) {
+        hoveredNoteBox = null;
+        if (currentCanvasRedraw) currentCanvasRedraw();
+      }
+
+      if (isPianoKeyAuditioning) {
+        if (pressedPianoKeyNote !== noteNum) {
+          pressedPianoKeyNote = noteNum;
+          audioEngine.playAuditionNote(noteNum, 0.45, currentCanvasPadInstrument);
+          if (currentCanvasRedraw) currentCanvasRedraw();
+        }
+      }
+
+      if (hoverInfoEl) {
+        const isBlack = [1, 3, 6, 8, 10].includes(noteNum % 12);
+        hoverInfoEl.innerHTML = `🎹 琴鍵試聽: <strong>${midiNoteToName(noteNum)}</strong> (${noteNum}) ${isBlack ? '[黑鍵]' : '[白鍵]'} ｜ 點擊或上下拖曳琴鍵可即時試聽音色`;
+        hoverInfoEl.style.backgroundColor = 'rgba(56, 189, 248, 0.16)';
+      }
+      return;
+    }
+
     // 搜尋滑鼠游標正下方的音符方塊 (反向搜尋以最上層音符優先)
     const reversedBoxes = [...lastRenderedNoteBoxes].reverse();
     const edgeHit = reversedBoxes.find(b => isMouseNearRightEdge(b, mouseX, mouseY));
@@ -8989,6 +9051,22 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
     const scaleY = canvas.height / rect.height;
     const mouseX = (e.clientX - rect.left) * scaleX;
     const mouseY = (e.clientY - rect.top) * scaleY;
+
+    const scaleW = 54;
+    const rulerH = 26;
+
+    // 步驟 3.4-A: 點擊左側琴鍵即時觸發音色試聽 (Piano Roll Key Audition)
+    if (mouseX <= scaleW && mouseY >= rulerH && mouseY <= canvas.height) {
+      const effectiveSemitoneH = currentSemitoneH > 0 ? currentSemitoneH : 15;
+      const semitoneIndex = Math.floor((mouseY - rulerH) / effectiveSemitoneH);
+      const noteNum = Math.max(currentDisplayMinNote, Math.min(currentDisplayMaxNote, currentDisplayMaxNote - semitoneIndex));
+      isPianoKeyAuditioning = true;
+      pressedPianoKeyNote = noteNum;
+      audioEngine.playAuditionNote(noteNum, 0.5, currentCanvasPadInstrument);
+      if (currentCanvasRedraw) currentCanvasRedraw();
+      e.preventDefault();
+      return;
+    }
 
     const reversedBoxes = [...lastRenderedNoteBoxes].reverse();
     const edgeHit = reversedBoxes.find(b => isMouseNearRightEdge(b, mouseX, mouseY));
@@ -9153,6 +9231,12 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
 
   // 全域滑鼠釋放監聽 (Window Mouseup to commit duration or position modification)
   window.addEventListener('mouseup', (e: MouseEvent) => {
+    if (isPianoKeyAuditioning || pressedPianoKeyNote !== null) {
+      isPianoKeyAuditioning = false;
+      pressedPianoKeyNote = null;
+      if (currentCanvasRedraw) currentCanvasRedraw();
+    }
+
     if (marqueeStart) {
       if (isMarqueeSelecting && marqueeCurrent) {
         hasJustDragged = true;
@@ -9281,6 +9365,11 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
   });
 
   canvas.addEventListener('mouseleave', () => {
+    if (isPianoKeyAuditioning || pressedPianoKeyNote !== null) {
+      isPianoKeyAuditioning = false;
+      pressedPianoKeyNote = null;
+      if (currentCanvasRedraw) currentCanvasRedraw();
+    }
     if (isResizingNote || isMovingNote || potentialResizeTarget || potentialMoveTarget) return;
     if (hoveredNoteBox) {
       hoveredNoteBox = null;
@@ -9328,10 +9417,29 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
       // 點選小節尺規專注於小節整體操作（複製/剪除/清空），取消單音選取並保持靜音
       deselectNote();
 
-      if (currentCanvasRedraw) currentCanvasRedraw();
+      // 步驟 3.4-C: 點選時間軸小節刻度，若播放中則立即起跳 (Seek)，未播放則停駐走帶遊標
+      const ticksPerBar = currentTicksPerBeat * currentBeatsPerBar;
+      const targetRelTick = Math.max(0, (clickedBar - 1) * ticksPerBar);
+
+      if (currentParsed?.format === 'STY') {
+        const sec = currentActiveStySection || currentAuditionStySection;
+        if (sec && (audioEngine.isPlaying() || audioEngine.isBackingTrackPlaying())) {
+          toggleStySectionAudition(sec, clickedBar);
+        } else {
+          currentPlayheadRelTick = targetRelTick;
+          if (currentCanvasRedraw) currentCanvasRedraw();
+        }
+      } else if (currentParsed?.format === 'PAD') {
+        if (audioEngine.isPlaying() && audioEngine.getPlayingPadNum() === currentCanvasPadNum) {
+          togglePadAudition(currentCanvasPadNum, clickedBar);
+        } else {
+          currentPlayheadRelTick = targetRelTick;
+          if (currentCanvasRedraw) currentCanvasRedraw();
+        }
+      }
 
       if (hoverInfoEl) {
-        hoverInfoEl.innerHTML = `📋 <span style="color:#fbbf24;font-weight:700;">已點選第 ${clickedBar} 小節</span>：<kbd>Ctrl+C</kbd> 複製、<kbd>Ctrl+V</kbd> 貼上、<kbd>Ctrl+Shift+V</kbd> 插入順移、<kbd>Ctrl+D</kbd> 倍增 ｜ <kbd>Shift+Del</kbd> 剪除順移、<kbd>Del</kbd> 清空音符`;
+        hoverInfoEl.innerHTML = `📋 <span style="color:#fbbf24;font-weight:700;">已定位至第 ${clickedBar} 小節</span>：按 <kbd>Space</kbd> 即刻自本小節起奏 ｜ <kbd>Ctrl+C</kbd> 複製小節、<kbd>Ctrl+V</kbd> 貼上、<kbd>Ctrl+D</kbd> 倍增`;
         hoverInfoEl.style.backgroundColor = 'rgba(245, 158, 11, 0.2)';
       }
       return;
@@ -10154,6 +10262,30 @@ function initNoteInspectorEvents() {
     } else if (e.key === 'Escape') {
       e.preventDefault();
       deselectNote();
+    } else if (e.code === 'Space' || e.key === ' ') {
+      // 步驟 3.4-C: Space 空白鍵播放 / 停止控制 (DAW Transport Toggle)
+      if (isCanvasStepInputActive) return; // 手彈步進輸入時由 StepRecorder 專用插休止符
+      e.preventDefault();
+
+      if (currentParsed?.format === 'STY') {
+        const sec = currentActiveStySection || currentAuditionStySection || (currentParsed.sections && currentParsed.sections[0]?.name);
+        if (sec) {
+          const isPlaying = audioEngine.isPlaying() || audioEngine.isBackingTrackPlaying();
+          if (isPlaying) {
+            toggleStySectionAudition(sec);
+          } else {
+            toggleStySectionAudition(sec, selectedRulerBar || undefined);
+          }
+        }
+      } else if (currentParsed?.format === 'PAD') {
+        const isPlaying = audioEngine.isPlaying() && audioEngine.getPlayingPadNum() === currentCanvasPadNum;
+        if (isPlaying) {
+          togglePadAudition(currentCanvasPadNum);
+        } else {
+          togglePadAudition(currentCanvasPadNum, selectedRulerBar || undefined);
+        }
+      }
+      return;
     }
   });
 }
