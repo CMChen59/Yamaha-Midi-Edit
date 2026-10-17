@@ -9728,9 +9728,11 @@ function renderParts(parsed: YamahaFileParsed) {
       partsToRender = parsed.parts.filter(p => channelsWithNotes.has(p.channel));
     }
 
-    partsCount.textContent = hasSff1Notes && !hasSff2Notes
-      ? `${partsToRender.length} 個伴奏聲部 (SFF1 伴奏通道 1~8)`
-      : `${partsToRender.length} 個伴奏聲部 (Yamaha 原廠通道 9~16)`;
+    partsCount.textContent = hasSff1Notes && hasSff2Notes
+      ? `${partsToRender.length} 個伴奏聲部 (完整偵測 ${channelsWithNotes.size} 軌: 跨 SFF1/SFF2 擴展通道)`
+      : (hasSff1Notes
+        ? `${partsToRender.length} 個伴奏聲部 (SFF1 伴奏通道 1~8)`
+        : `${partsToRender.length} 個伴奏聲部 (Yamaha 原廠通道 9~16)`);
 
     for (const part of partsToRender) {
       const ch = part.channel;
