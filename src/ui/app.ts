@@ -11,8 +11,16 @@ import {
   StyleImporter,
   type StyleSourceAnalysis,
   type StylePartMappingItem,
+  type StyleSectionSliceConfig,
+  ROOT_TO_C_SHIFT,
 } from '../core/writer/style-importer';
 import { YamahaStyleSynthesizer } from '../core/writer/style-synthesizer';
+import {
+  StyleRemixer,
+  type StylePoolEntry,
+  type StyleRemixPartAssignment,
+  type StyleRemixSectionSpec,
+} from '../core/writer/style-remixer';
 import {
   DEFAULT_STYLE_PARTS,
   type StylePartId,
@@ -2349,6 +2357,310 @@ const STYLE_PART_ORDER: { id: StylePartId; title: string; defaultCh: number; col
   { id: 'Phrase2', title: 'Phrase 2 (副裝飾旋律)', defaultCh: 16, color: '#14b8a6', icon: '🎵' },
 ];
 
+let currentSlicerMode: 'multi' | 'single' = 'multi';
+let currentStyleSlices: StyleSectionSliceConfig[] = [];
+let currentAuditionSliceIndex: number | null = null;
+let isCNormEnabled: boolean = true;
+let selectedKeyOverride: string = 'auto';
+
+function initDefaultStyleSlices(totalMeasures: number): StyleSectionSliceConfig[] {
+  const tot = Math.max(4, totalMeasures);
+  if (tot <= 8) {
+    return [
+      { id: 'sec-1', sectionName: 'Intro A', startBar: 1, endBar: Math.min(2, tot) },
+      { id: 'sec-2', sectionName: 'Main A', startBar: Math.min(3, tot), endBar: Math.min(6, tot) },
+      { id: 'sec-3', sectionName: 'Fill In AA', startBar: Math.min(7, tot), endBar: Math.min(7, tot) },
+      { id: 'sec-4', sectionName: 'Ending A', startBar: Math.min(8, tot), endBar: tot },
+    ];
+  } else if (tot <= 24) {
+    const mainBars = Math.max(4, Math.floor((tot - 4) / 2));
+    return [
+      { id: 'sec-1', sectionName: 'Intro A', startBar: 1, endBar: 4 },
+      { id: 'sec-2', sectionName: 'Main A', startBar: 5, endBar: 4 + mainBars },
+      { id: 'sec-3', sectionName: 'Fill In AA', startBar: 5 + mainBars, endBar: 5 + mainBars },
+      { id: 'sec-4', sectionName: 'Main B', startBar: 6 + mainBars, endBar: Math.min(tot - 4, 5 + mainBars * 2) },
+      { id: 'sec-5', sectionName: 'Ending A', startBar: Math.max(6 + mainBars, tot - 3), endBar: tot },
+    ];
+  } else {
+    return [
+      { id: 'sec-1', sectionName: 'Intro A', startBar: 1, endBar: 4 },
+      { id: 'sec-2', sectionName: 'Main A', startBar: 5, endBar: 12 },
+      { id: 'sec-3', sectionName: 'Fill In AA', startBar: 13, endBar: 13 },
+      { id: 'sec-4', sectionName: 'Main B', startBar: 14, endBar: 21 },
+      { id: 'sec-5', sectionName: 'Fill In BB', startBar: 22, endBar: 22 },
+      { id: 'sec-6', sectionName: 'Main C', startBar: 23, endBar: 30 },
+      { id: 'sec-7', sectionName: 'Ending A', startBar: 31, endBar: 34 },
+    ];
+  }
+}
+
+function updateCNormUI() {
+  const checkbox = document.getElementById('style-import-c-norm-enable') as HTMLInputElement | null;
+  const select = document.getElementById('style-import-key-override') as HTMLSelectElement | null;
+  const badge = document.getElementById('style-import-c-norm-badge');
+  const keyText = document.getElementById('style-import-detected-key-text');
+
+  if (!currentStyleAnalysis) return;
+
+  const detected = currentStyleAnalysis.detectedKey || StyleImporter.detectKeySignature(currentStyleAnalysis.tracks, currentStyleAnalysis.division);
+
+  if (keyText) {
+    const shiftSign = detected.semitonesToC > 0 ? '+' : '';
+    keyText.textContent = `✨ 偵測調性: ${detected.key} (移調 ${shiftSign}${detected.semitonesToC} 半音至 C 基準)`;
+  }
+
+  isCNormEnabled = checkbox ? checkbox.checked : true;
+  selectedKeyOverride = select ? select.value : 'auto';
+
+  let effectiveShift = 0;
+  if (isCNormEnabled) {
+    if (selectedKeyOverride === 'auto') {
+      effectiveShift = detected.semitonesToC;
+    } else {
+      effectiveShift = ROOT_TO_C_SHIFT[selectedKeyOverride] ?? 0;
+    }
+  }
+
+  if (badge) {
+    const shiftSign = effectiveShift > 0 ? '+' : '';
+    badge.textContent = isCNormEnabled
+      ? `移調: ${shiftSign}${effectiveShift} 半音`
+      : '未啟用 (保留原曲音高)';
+    badge.style.background = isCNormEnabled ? '#0284c7' : '#64748b';
+  }
+}
+
+function renderStyleSlicerUI() {
+  const track = document.getElementById('style-slicer-timeline-track');
+  const cardsContainer = document.getElementById('style-slicer-cards-container');
+  const summaryBadge = document.getElementById('style-slicer-summary-badge');
+  const totalBarsLabel = document.getElementById('style-slicer-timeline-total-bars');
+  if (!currentStyleAnalysis) return;
+
+  const totalMeasures = Math.max(1, currentStyleAnalysis.totalMeasures);
+  if (totalBarsLabel) totalBarsLabel.textContent = `共 ${totalMeasures} 小節`;
+  if (summaryBadge) summaryBadge.textContent = `${currentStyleSlices.length} 個切片段落`;
+
+  // 1. 渲染時間軸彩色區塊
+  if (track) {
+    track.innerHTML = '';
+    currentStyleSlices.forEach((slice, idx) => {
+      const bars = Math.max(1, slice.endBar - slice.startBar + 1);
+      const widthPct = Math.max(3, (bars / totalMeasures) * 100);
+      const leftPct = ((slice.startBar - 1) / totalMeasures) * 100;
+
+      const block = document.createElement('div');
+      const lower = slice.sectionName.toLowerCase();
+      let colorClass = 'slicer-main';
+      if (lower.includes('intro')) colorClass = 'slicer-intro';
+      else if (lower.includes('fill')) colorClass = 'slicer-fill';
+      else if (lower.includes('ending')) colorClass = 'slicer-ending';
+      else if (lower.includes('break')) colorClass = 'slicer-break';
+
+      block.className = `slicer-timeline-block ${colorClass}`;
+      block.style.width = `${widthPct}%`;
+      block.style.marginLeft = idx === 0 ? `${leftPct}%` : '0';
+      block.title = `${slice.sectionName}: 小節 ${slice.startBar} ~ ${slice.endBar} (${bars} 小節)`;
+      block.textContent = `${slice.sectionName} (${bars}m)`;
+
+      block.addEventListener('click', () => {
+        const card = document.getElementById(`slicer-card-${idx}`);
+        if (card && cardsContainer) {
+          card.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+          document.querySelectorAll('.slicer-section-card').forEach(c => c.classList.remove('active'));
+          card.classList.add('active');
+        }
+      });
+
+      track.appendChild(block);
+    });
+  }
+
+  // 2. 渲染下方切片卡片列表
+  if (cardsContainer) {
+    cardsContainer.innerHTML = '';
+    const sectionTypes: StyleSectionType[] = [
+      'Intro A', 'Intro B', 'Intro C',
+      'Main A', 'Main B', 'Main C', 'Main D',
+      'Fill In AA', 'Fill In BB', 'Fill In CC', 'Fill In DD', 'Fill In BA',
+      'Ending A', 'Ending B', 'Ending C',
+      'Break'
+    ];
+
+    currentStyleSlices.forEach((slice, idx) => {
+      const card = document.createElement('div');
+      card.id = `slicer-card-${idx}`;
+      card.className = 'slicer-section-card';
+
+      const bars = Math.max(1, slice.endBar - slice.startBar + 1);
+      const isAuditioning = currentAuditionSliceIndex === idx;
+
+      const typeOptions = sectionTypes.map(st =>
+        `<option value="${st}" ${st === slice.sectionName ? 'selected' : ''}>${st}</option>`
+      ).join('');
+
+      card.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 6px;">
+          <select class="slicer-sec-name-select" data-idx="${idx}" style="background: #11131a; border: 1px solid #3d4660; border-radius: 4px; color: #38bdf8; font-weight: 700; font-size: 0.8rem; padding: 2px 6px;">
+            ${typeOptions}
+          </select>
+          <button type="button" class="btn-slicer-del" data-idx="${idx}" style="background: transparent; border: none; color: #ef4444; cursor: pointer; font-size: 0.85rem; padding: 0 4px;" title="刪除此段落切片">&times;</button>
+        </div>
+        <div style="display: flex; align-items: center; gap: 4px; font-size: 0.76rem; color: #cbd5e1;">
+          <span>小節:</span>
+          <input type="number" class="slicer-start-bar" data-idx="${idx}" min="1" max="${totalMeasures}" value="${slice.startBar}" style="width: 46px; background: #11131a; border: 1px solid #333846; border-radius: 3px; color: #fff; padding: 2px 4px; font-size: 0.76rem; text-align: center;" />
+          <span style="color: #64748b;">~</span>
+          <input type="number" class="slicer-end-bar" data-idx="${idx}" min="1" max="${totalMeasures}" value="${slice.endBar}" style="width: 46px; background: #11131a; border: 1px solid #333846; border-radius: 3px; color: #fff; padding: 2px 4px; font-size: 0.76rem; text-align: center;" />
+          <span class="badge" style="background: #1e293b; color: #94a3b8; font-size: 0.7rem; padding: 1px 6px;">${bars}m</span>
+        </div>
+        <div style="display: flex; justify-content: flex-end; margin-top: 2px;">
+          <button type="button" class="btn-audition btn-slicer-audition ${isAuditioning ? 'playing' : ''}" data-idx="${idx}" style="padding: 2px 8px; font-size: 0.72rem;">
+            ${isAuditioning ? '⏹ 停止' : '▶ 試聽段落'}
+          </button>
+        </div>
+      `;
+
+      // 監聽段落名稱變更
+      const nameSelect = card.querySelector('.slicer-sec-name-select') as HTMLSelectElement | null;
+      nameSelect?.addEventListener('change', () => {
+        slice.sectionName = nameSelect.value;
+        renderStyleSlicerUI();
+      });
+
+      // 監聽小節變更
+      const startInput = card.querySelector('.slicer-start-bar') as HTMLInputElement | null;
+      const endInput = card.querySelector('.slicer-end-bar') as HTMLInputElement | null;
+      startInput?.addEventListener('change', () => {
+        const val = Math.max(1, Math.min(totalMeasures, parseInt(startInput.value || '1', 10)));
+        slice.startBar = val;
+        if (slice.endBar < val) slice.endBar = val;
+        renderStyleSlicerUI();
+      });
+      endInput?.addEventListener('change', () => {
+        const val = Math.max(slice.startBar, Math.min(totalMeasures, parseInt(endInput.value || '1', 10)));
+        slice.endBar = val;
+        renderStyleSlicerUI();
+      });
+
+      // 監聽刪除
+      const btnDel = card.querySelector('.btn-slicer-del') as HTMLButtonElement | null;
+      btnDel?.addEventListener('click', () => {
+        if (currentStyleSlices.length <= 1) {
+          alert('請至少保留一個伴奏段落！');
+          return;
+        }
+        currentStyleSlices.splice(idx, 1);
+        renderStyleSlicerUI();
+      });
+
+      // 監聽段落試聽
+      const btnAudition = card.querySelector('.btn-slicer-audition') as HTMLButtonElement | null;
+      btnAudition?.addEventListener('click', () => {
+        toggleStyleSliceAudition(idx);
+      });
+
+      cardsContainer.appendChild(card);
+    });
+  }
+}
+
+function toggleStyleSliceAudition(sliceIdx: number) {
+  if (!currentStyleAnalysis) return;
+
+  if (currentAuditionSliceIndex === sliceIdx && (audioEngine.isPlaying() || audioEngine.isBackingTrackPlaying())) {
+    audioEngine.stopBackingTrack();
+    audioEngine.stop();
+    currentAuditionSliceIndex = null;
+    renderStyleSlicerUI();
+    showStatus('已停止段落試聽');
+    return;
+  }
+
+  audioEngine.stopBackingTrack();
+  audioEngine.stop();
+  currentStyleAuditionTrackIndex = null;
+  isStyleEnsemblePlaying = false;
+
+  const slice = currentStyleSlices[sliceIdx];
+  if (!slice) return;
+
+  const activeMappings = currentStyleMappings.filter((m) => m.sourceTrackIndex !== null);
+  if (activeMappings.length === 0) {
+    showStatus('請至少指派一個伴奏聲部以供試聽', true);
+    return;
+  }
+
+  const division = currentStyleAnalysis.division || 480;
+  const timeSig = currentStyleAnalysis.timeSignature || { numerator: 4, denominator: 4 };
+  const ticksPerBeat = division;
+  const beatsPerMeasure = timeSig.numerator * (4 / timeSig.denominator);
+  const ticksPerMeasure = Math.round(ticksPerBeat * beatsPerMeasure);
+
+  const startBar = Math.max(1, slice.startBar);
+  const endBar = Math.max(startBar, slice.endBar);
+  const startTick = (startBar - 1) * ticksPerMeasure;
+  const endTick = endBar * ticksPerMeasure;
+  const totalTicks = (endBar - startBar + 1) * ticksPerMeasure;
+
+  const backingItems: BackingTrackItem[] = [];
+
+  for (const mapping of activeMappings) {
+    const track = currentStyleAnalysis.tracks.find((t) => t.trackIndex === mapping.sourceTrackIndex);
+    if (!track || track.notes.length === 0) continue;
+
+    const sliceNotes: NoteEvent[] = [];
+    for (const n of track.notes) {
+      if (n.startTick >= startTick && n.startTick < endTick) {
+        sliceNotes.push({
+          note: n.note,
+          velocity: n.velocity,
+          startTick: n.startTick - startTick,
+          durationTick: n.durationTick,
+        });
+      }
+    }
+
+    if (sliceNotes.length > 0) {
+      const isDrum = mapping.partId === 'Rhythm1' || mapping.partId === 'Rhythm2';
+      backingItems.push({
+        padNum: DEFAULT_STYLE_PARTS[mapping.partId].channel,
+        notes: sliceNotes,
+        totalTicks,
+        channelParams: {
+          instrumentId: isDrum ? 'standard-drum-kit' : 'grand-piano',
+          channel: DEFAULT_STYLE_PARTS[mapping.partId].channel,
+          isDrum,
+        },
+      });
+    }
+  }
+
+  if (backingItems.length === 0) {
+    showStatus(`段落 [${slice.sectionName}] 在小節 ${startBar}~${endBar} 區間內無音符可供試聽`, false);
+    return;
+  }
+
+  currentAuditionSliceIndex = sliceIdx;
+  renderStyleSlicerUI();
+
+  const bpmInput = document.getElementById('style-import-bpm') as HTMLInputElement | null;
+  const bpm = Math.max(30, Math.min(300, parseInt(bpmInput?.value || '120', 10)));
+
+  audioEngine.startBackingTrack(backingItems, {
+    bpm,
+    division,
+    beatsPerBar: timeSig.numerator,
+    volumeRatio: 1.0,
+    loop: true,
+    onEnded: () => {
+      currentAuditionSliceIndex = null;
+      renderStyleSlicerUI();
+    },
+  });
+
+  showStatus(`▶ 正在試聽切片段落: [${slice.sectionName}] (小節 ${startBar}~${endBar})...`);
+}
+
 function openStyleImportModal(bytes: Uint8Array, fileName: string) {
   pendingMidiBytes = bytes;
   pendingMidiFileName = fileName;
@@ -2393,6 +2705,25 @@ function openStyleImportModal(bytes: Uint8Array, fileName: string) {
   // 3. 套用 8 聲部初始推薦映射
   resetStyleMappingsToSmartRecommendation();
 
+  // 3.1 初始化多段落切片與 C 調基準校正 (Phase 3.3)
+  currentStyleSlices = initDefaultStyleSlices(currentStyleAnalysis.totalMeasures);
+  currentSlicerMode = 'multi';
+  currentAuditionSliceIndex = null;
+  renderStyleSlicerUI();
+  updateCNormUI();
+
+  // 同步切換按鈕視覺
+  const btnMulti = document.getElementById('btn-slicer-mode-multi');
+  const btnSingle = document.getElementById('btn-slicer-mode-single');
+  const slicerPanel = document.getElementById('style-slicer-panel');
+  const singlePanel = document.getElementById('style-single-section-panel');
+  if (btnMulti && btnSingle && slicerPanel && singlePanel) {
+    btnMulti.classList.add('active-rp');
+    btnSingle.classList.remove('active-rp');
+    slicerPanel.style.display = 'flex';
+    singlePanel.style.display = 'none';
+  }
+
   // 4. 渲染左側來源音軌特徵與右側 8 聲部映射網格
   renderStyleSourceTracksList();
   renderStylePartMappingsGrid();
@@ -2411,6 +2742,7 @@ function closeStyleImportModal() {
   audioEngine.stopBackingTrack();
   audioEngine.stop();
   currentStyleAuditionTrackIndex = null;
+  currentAuditionSliceIndex = null;
   isStyleEnsemblePlaying = false;
   const btnAll = document.getElementById('btn-style-audition-all');
   if (btnAll) btnAll.innerHTML = '🎧 試聽所選小節合奏';
@@ -2869,6 +3201,97 @@ function initStyleImportModal() {
     showStatus('🔄 已清空所有聲部來源映射。');
   });
 
+  // Phase 3.3 切片模式切換 (多段落 vs 單一段落)
+  const btnMulti = document.getElementById('btn-slicer-mode-multi');
+  const btnSingle = document.getElementById('btn-slicer-mode-single');
+  const slicerPanel = document.getElementById('style-slicer-panel');
+  const singlePanel = document.getElementById('style-single-section-panel');
+
+  btnMulti?.addEventListener('click', () => {
+    currentSlicerMode = 'multi';
+    btnMulti.classList.add('active-rp');
+    btnSingle?.classList.remove('active-rp');
+    if (slicerPanel) slicerPanel.style.display = 'flex';
+    if (singlePanel) singlePanel.style.display = 'none';
+  });
+
+  btnSingle?.addEventListener('click', () => {
+    currentSlicerMode = 'single';
+    btnSingle.classList.add('active-rp');
+    btnMulti?.classList.remove('active-rp');
+    if (slicerPanel) slicerPanel.style.display = 'none';
+    if (singlePanel) singlePanel.style.display = 'flex';
+  });
+
+  // Phase 3.3 快速曲式範本
+  const btnTplSingle = document.getElementById('btn-slicer-template-single');
+  const btnTplClassic4 = document.getElementById('btn-slicer-template-classic4');
+  const btnTplFull = document.getElementById('btn-slicer-template-full');
+  const btnAddSection = document.getElementById('btn-slicer-add-section');
+
+  btnTplSingle?.addEventListener('click', () => {
+    const tot = currentStyleAnalysis?.totalMeasures || 8;
+    currentStyleSlices = [
+      { id: 'sec-1', sectionName: 'Main A', startBar: 1, endBar: Math.min(4, tot) }
+    ];
+    renderStyleSlicerUI();
+    showStatus('⚡ 已套用「單段 Main A」切片範本');
+  });
+
+  btnTplClassic4?.addEventListener('click', () => {
+    const tot = currentStyleAnalysis?.totalMeasures || 8;
+    const m = Math.max(1, Math.floor(tot / 4));
+    currentStyleSlices = [
+      { id: 'sec-1', sectionName: 'Main A', startBar: 1, endBar: Math.min(tot, m) },
+      { id: 'sec-2', sectionName: 'Fill In AA', startBar: Math.min(tot, m + 1), endBar: Math.min(tot, m + 1) },
+      { id: 'sec-3', sectionName: 'Main B', startBar: Math.min(tot, m + 2), endBar: Math.min(tot, m * 2 + 1) },
+      { id: 'sec-4', sectionName: 'Ending A', startBar: Math.min(tot, m * 2 + 2), endBar: tot },
+    ];
+    renderStyleSlicerUI();
+    showStatus('⚡ 已套用「經典 4 段 (Main A/B + Fill + Ending)」切片範本');
+  });
+
+  btnTplFull?.addEventListener('click', () => {
+    const tot = currentStyleAnalysis?.totalMeasures || 16;
+    currentStyleSlices = [
+      { id: 'sec-1', sectionName: 'Intro A', startBar: 1, endBar: Math.min(tot, 4) },
+      { id: 'sec-2', sectionName: 'Main A', startBar: Math.min(tot, 5), endBar: Math.min(tot, 8) },
+      { id: 'sec-3', sectionName: 'Fill In AA', startBar: Math.min(tot, 9), endBar: Math.min(tot, 9) },
+      { id: 'sec-4', sectionName: 'Main B', startBar: Math.min(tot, 10), endBar: Math.min(tot, 13) },
+      { id: 'sec-5', sectionName: 'Fill In BB', startBar: Math.min(tot, 14), endBar: Math.min(tot, 14) },
+      { id: 'sec-6', sectionName: 'Main C', startBar: Math.min(tot, 15), endBar: Math.min(tot, 18) },
+      { id: 'sec-7', sectionName: 'Ending A', startBar: Math.min(tot, 19), endBar: Math.min(tot, 22) },
+    ];
+    renderStyleSlicerUI();
+    showStatus('⚡ 已套用「完整曲式 (Intro + 3 Main + 2 Fills + Ending)」切片範本');
+  });
+
+  btnAddSection?.addEventListener('click', () => {
+    const tot = currentStyleAnalysis?.totalMeasures || 8;
+    const lastSlice = currentStyleSlices[currentStyleSlices.length - 1];
+    let nextStart = lastSlice ? lastSlice.endBar + 1 : 1;
+    if (nextStart > tot) nextStart = 1;
+    const nextEnd = Math.min(tot, nextStart + 3);
+    const names: StyleSectionType[] = ['Main B', 'Main C', 'Main D', 'Fill In BB', 'Fill In CC', 'Ending B', 'Break'];
+    const usedNames = new Set(currentStyleSlices.map(s => s.sectionName));
+    const nextName = names.find(n => !usedNames.has(n)) || 'Main B';
+
+    currentStyleSlices.push({
+      id: `sec-${Date.now()}`,
+      sectionName: nextName,
+      startBar: nextStart,
+      endBar: nextEnd,
+    });
+    renderStyleSlicerUI();
+    showStatus(`➕ 已新增段落切片: [${nextName}] (小節 ${nextStart} ~ ${nextEnd})`);
+  });
+
+  // Phase 3.3 C 調基準自動校正監聽
+  const cNormCheckbox = document.getElementById('style-import-c-norm-enable') as HTMLInputElement | null;
+  const keyOverrideSelect = document.getElementById('style-import-key-override') as HTMLSelectElement | null;
+  cNormCheckbox?.addEventListener('change', updateCNormUI);
+  keyOverrideSelect?.addEventListener('change', updateCNormUI);
+
   btnConfirm?.addEventListener('click', () => {
     if (!currentStyleAnalysis) return;
 
@@ -2891,6 +3314,11 @@ function initStyleImportModal() {
       return;
     }
 
+    const cNormEnableInput = document.getElementById('style-import-c-norm-enable') as HTMLInputElement | null;
+    const keyOverrideSel = document.getElementById('style-import-key-override') as HTMLSelectElement | null;
+    const normalizeToCRoot = cNormEnableInput ? cNormEnableInput.checked : true;
+    const rootKeyOverride = keyOverrideSel && keyOverrideSel.value !== 'auto' ? keyOverrideSel.value : undefined;
+
     showStatus(`正在將外部 MIDI 8 聲部合成為 Yamaha Style: ${projectName}...`);
 
     try {
@@ -2901,7 +3329,10 @@ function initStyleImportModal() {
         startBar,
         endBar,
         targetSection,
+        sections: currentSlicerMode === 'multi' ? currentStyleSlices : undefined,
         partMappings: currentStyleMappings,
+        normalizeToCRoot,
+        rootKeyOverride,
       });
 
       closeStyleImportModal();
@@ -2909,14 +3340,769 @@ function initStyleImportModal() {
       // 序列化為 .sty 二進位 Uint8Array 並載入至工作區
       const binaryBytes = YamahaStyleSynthesizer.serializeToStyleFile(styleProject);
       renderParsed(binaryBytes, `${projectName}.sty`, 'STY');
-      markModified(`從外部 MIDI [${currentStyleAnalysis.fileName}] 成功合成 Yamaha SFF2 Style 伴奏專案`);
+      markModified(`從外部 MIDI [${currentStyleAnalysis.fileName}] 成功合成 Yamaha SFF2 Style 伴奏專案 (含 ${styleProject.sections.length} 個曲式段落)`);
 
-      showStatus(`✨ 成功將外部 MIDI 合成為 Yamaha Style 伴奏專案: ${projectName}.sty`);
+      showStatus(`✨ 成功將外部 MIDI 合成為 Yamaha Style 伴奏專案: ${projectName}.sty (${styleProject.sections.length} 個段落)`);
     } catch (err: any) {
       alert(`合成 Yamaha Style 專案失敗: ${err.message}`);
       showStatus(`合成失敗: ${err.message}`, true);
     }
   });
+}
+
+// ==========================================
+// Phase 3.3: 跨 STY 聲部混搭重組精靈 (Style Remixer)
+// ==========================================
+
+let remixerPool: StylePoolEntry[] = [];
+let currentRemixerSectionTab: StyleSectionType = 'Main A';
+let remixerSectionAssignments: Record<string, Record<StylePartId, StyleRemixPartAssignment>> = {};
+let isRemixerAuditionPlaying = false;
+let currentRemixerSoloPartId: StylePartId | null = null;
+
+const REMIXER_SECTIONS_LIST: StyleSectionType[] = [
+  'Main A',
+  'Main B',
+  'Main C',
+  'Main D',
+  'Fill In AA',
+  'Fill In BB',
+  'Fill In CC',
+  'Fill In DD',
+  'Intro A',
+  'Intro B',
+  'Ending A',
+  'Ending B',
+  'Break',
+];
+
+const REMIXER_PARTS_CONFIG: Array<{ id: StylePartId; title: string; defaultCh: number; color: string; icon: string }> = [
+  { id: 'Rhythm1', title: 'Rhythm 1 (副節奏 / 擊樂打擊)', defaultCh: 9, color: '#06b6d4', icon: '🪘' },
+  { id: 'Rhythm2', title: 'Rhythm 2 (主節奏 / 原廠鼓組)', defaultCh: 10, color: '#3b82f6', icon: '🥁' },
+  { id: 'Bass', title: 'Bass (低音貝斯)', defaultCh: 11, color: '#10b981', icon: '🎸' },
+  { id: 'Chord1', title: 'Chord 1 (主要和弦 / 鋼琴鍵盤)', defaultCh: 12, color: '#f59e0b', icon: '🎹' },
+  { id: 'Chord2', title: 'Chord 2 (副和弦 / 吉他節奏)', defaultCh: 13, color: '#fb923c', icon: '🪕' },
+  { id: 'Pad', title: 'Pad (鋪底弦樂 / 背景合成)', defaultCh: 14, color: '#a855f7', icon: '🎻' },
+  { id: 'Phrase1', title: 'Phrase 1 (對位旋律 / 裝飾管樂)', defaultCh: 15, color: '#ec4899', icon: '🎺' },
+  { id: 'Phrase2', title: 'Phrase 2 (動態副歌樂句 / 合唱)', defaultCh: 16, color: '#14b8a6', icon: '🎷' },
+];
+
+function autoInitRemixerAssignmentsIfEmpty() {
+  if (remixerPool.length === 0) return;
+  const firstPool = remixerPool[0];
+
+  for (const secName of REMIXER_SECTIONS_LIST) {
+    if (!remixerSectionAssignments[secName]) {
+      remixerSectionAssignments[secName] = {} as any;
+      for (const p of REMIXER_PARTS_CONFIG) {
+        remixerSectionAssignments[secName][p.id] = {
+          partId: p.id,
+          sourceStyleId: firstPool.id,
+          sourceSectionName: secName,
+          transposeShift: 0,
+        };
+      }
+    }
+  }
+}
+
+function openStyleRemixerModal() {
+  const modal = document.getElementById('style-remixer-modal');
+  if (!modal) return;
+
+  // 若當前工作區中有開啟的 STY，且伴奏庫尚為空，自動載入當前 STY
+  if (remixerPool.length === 0 && currentParsed && currentParsed.format === 'STY') {
+    remixerPool.push({
+      id: `pool-curr-${Date.now()}`,
+      name: currentFileName || 'Workspace.sty',
+      parsed: currentParsed,
+    });
+  }
+
+  autoInitRemixerAssignmentsIfEmpty();
+
+  modal.style.display = 'flex';
+  renderRemixerPoolUI();
+  renderRemixerSectionTabsUI();
+  renderRemixerPartsMatrixUI();
+}
+
+function closeStyleRemixerModal() {
+  const modal = document.getElementById('style-remixer-modal');
+  if (!modal) return;
+
+  if (isRemixerAuditionPlaying || currentRemixerSoloPartId) {
+    audioEngine.stopBackingTrack();
+    audioEngine.stop();
+    isRemixerAuditionPlaying = false;
+    currentRemixerSoloPartId = null;
+    updateRemixerAuditionUI();
+  }
+
+  modal.style.display = 'none';
+}
+
+function renderRemixerPoolUI() {
+  const countBadge = document.getElementById('remixer-pool-count-badge');
+  const chipsContainer = document.getElementById('remixer-pool-chips');
+  const drumSel = document.getElementById('remixer-global-drum-src') as HTMLSelectElement | null;
+  const bassSel = document.getElementById('remixer-global-bass-src') as HTMLSelectElement | null;
+  const chordSel = document.getElementById('remixer-global-chord-src') as HTMLSelectElement | null;
+
+  if (countBadge) {
+    countBadge.textContent = `${remixerPool.length} 個來源`;
+  }
+
+  if (chipsContainer) {
+    chipsContainer.innerHTML = '';
+    if (remixerPool.length === 0) {
+      chipsContainer.innerHTML = `
+        <span style="font-size: 0.78rem; color: #64748b; font-style: italic;">
+          尚未載入任何 STY 伴奏檔。請點擊右上角按鈕載入示範或本機 STY。
+        </span>
+      `;
+    } else {
+      for (const item of remixerPool) {
+        const chip = document.createElement('div');
+        chip.style.cssText =
+          'background: #1e2230; border: 1px solid #333a4d; border-radius: 6px; padding: 4px 10px; display: inline-flex; align-items: center; gap: 8px; font-size: 0.78rem;';
+        chip.innerHTML = `
+          <span style="color: #f1f5f9; font-weight: 500;">🎵 ${escapeHtml(item.name)}</span>
+          <span style="color: #94a3b8; font-size: 0.7rem;">(${item.parsed.sections.length} 個段落)</span>
+          <button type="button" class="btn-remove-pool-item" data-id="${item.id}" style="background: none; border: none; color: #ef4444; cursor: pointer; font-size: 0.95rem; font-weight: bold; line-height: 1; padding: 0 2px;" title="從伴奏庫移除">&times;</button>
+        `;
+
+        const btnRemove = chip.querySelector('.btn-remove-pool-item') as HTMLButtonElement | null;
+        btnRemove?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          remixerPool = remixerPool.filter((p) => p.id !== item.id);
+          for (const sec of Object.keys(remixerSectionAssignments)) {
+            for (const pId of Object.keys(remixerSectionAssignments[sec])) {
+              if (remixerSectionAssignments[sec][pId as StylePartId]?.sourceStyleId === item.id) {
+                remixerSectionAssignments[sec][pId as StylePartId].sourceStyleId = '';
+              }
+            }
+          }
+          renderRemixerPoolUI();
+          renderRemixerPartsMatrixUI();
+          showStatus(`已從伴奏庫移除: ${item.name}`);
+        });
+
+        chipsContainer.appendChild(chip);
+      }
+    }
+  }
+
+  // 更新 3 個快速全域套用下拉選單
+  const globalSelects = [drumSel, bassSel, chordSel].filter(Boolean) as HTMLSelectElement[];
+  for (const sel of globalSelects) {
+    const curVal = sel.value;
+    sel.innerHTML = '<option value="">(保留各段原設定)</option>';
+    for (const item of remixerPool) {
+      const opt = document.createElement('option');
+      opt.value = item.id;
+      opt.textContent = item.name;
+      if (curVal === item.id) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  }
+}
+
+function renderRemixerSectionTabsUI() {
+  const container = document.getElementById('remixer-section-tabs');
+  if (!container) return;
+
+  container.innerHTML = '';
+  for (const secName of REMIXER_SECTIONS_LIST) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `toggle-btn ${secName === currentRemixerSectionTab ? 'active-rp' : ''}`;
+    btn.style.cssText = 'padding: 3px 10px; font-size: 0.76rem; border-radius: 4px;';
+    btn.textContent = secName;
+
+    btn.addEventListener('click', () => {
+      if (isRemixerAuditionPlaying || currentRemixerSoloPartId) {
+        audioEngine.stopBackingTrack();
+        audioEngine.stop();
+        isRemixerAuditionPlaying = false;
+        currentRemixerSoloPartId = null;
+        updateRemixerAuditionUI();
+      }
+      currentRemixerSectionTab = secName;
+      renderRemixerSectionTabsUI();
+      renderRemixerPartsMatrixUI();
+    });
+
+    container.appendChild(btn);
+  }
+}
+
+function renderRemixerPartsMatrixUI() {
+  const container = document.getElementById('remixer-parts-matrix');
+  if (!container) return;
+
+  if (!remixerSectionAssignments[currentRemixerSectionTab]) {
+    remixerSectionAssignments[currentRemixerSectionTab] = {} as any;
+    for (const p of REMIXER_PARTS_CONFIG) {
+      remixerSectionAssignments[currentRemixerSectionTab][p.id] = {
+        partId: p.id,
+        sourceStyleId: remixerPool[0]?.id || '',
+        sourceSectionName: currentRemixerSectionTab,
+        transposeShift: 0,
+      };
+    }
+  }
+
+  container.innerHTML = '';
+
+  for (const p of REMIXER_PARTS_CONFIG) {
+    const assign = remixerSectionAssignments[currentRemixerSectionTab][p.id];
+    const srcStyle = assign?.sourceStyleId ? remixerPool.find((entry) => entry.id === assign.sourceStyleId) : null;
+    const srcSecName = assign?.sourceSectionName || currentRemixerSectionTab;
+
+    let noteCount = 0;
+    let voiceName = '預設音色';
+    if (srcStyle) {
+      const notes = StyleRemixer.extractSectionPartNotes(srcStyle.parsed, srcSecName, p.id);
+      noteCount = notes.length;
+      const voice = StyleRemixer.extractPartVoiceConfig(srcStyle.parsed, p.id);
+      const yv = findYamahaVoice(voice.msb ?? 0, voice.lsb ?? 0, voice.pc ?? 0);
+      voiceName = yv ? yv.name : `PC ${voice.pc ?? 0}`;
+    }
+
+    const isSoloing = currentRemixerSoloPartId === p.id;
+    const isDrum = p.id === 'Rhythm1' || p.id === 'Rhythm2';
+
+    const card = document.createElement('div');
+    card.className = `remixer-part-card ${isSoloing ? 'section-playing' : ''}`;
+    card.style.cssText = `background: #181b26; border: 1px solid ${p.color}40; border-left: 4px solid ${p.color}; border-radius: 6px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;`;
+
+    // 來源段落選項
+    let secOptionsHtml = `<option value="${currentRemixerSectionTab}">同名段落 (${currentRemixerSectionTab})</option>`;
+    if (srcStyle) {
+      const musicalSecs = StyleRemixer.getMusicalSections(srcStyle.parsed);
+      for (const ms of musicalSecs) {
+        const isSel = assign?.sourceSectionName === ms.name;
+        secOptionsHtml += `<option value="${escapeHtml(ms.name)}" ${isSel ? 'selected' : ''}>${escapeHtml(ms.name)}</option>`;
+      }
+    }
+
+    // 來源伴奏選項
+    let styleOptionsHtml = '<option value="">(無 / 靜音)</option>';
+    for (const poolItem of remixerPool) {
+      const isSel = assign?.sourceStyleId === poolItem.id;
+      styleOptionsHtml += `<option value="${poolItem.id}" ${isSel ? 'selected' : ''}>${escapeHtml(poolItem.name)}</option>`;
+    }
+
+    card.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <span style="font-size: 0.95rem;">${p.icon}</span>
+          <span style="font-size: 0.82rem; font-weight: 700; color: #f1f5f9;">${p.title}</span>
+          <span style="font-size: 0.68rem; color: #94a3b8; background: #222736; padding: 1px 5px; border-radius: 3px;">Ch ${p.defaultCh}</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <span class="remixer-part-summary-badge" style="font-size: 0.7rem; color: ${srcStyle ? '#38bdf8' : '#64748b'}; background: #131620; padding: 2px 6px; border-radius: 4px; border: 1px solid #23293a;">
+            ${srcStyle ? `${noteCount} 音符 | ${voiceName}` : '🔇 靜音'}
+          </span>
+          <button type="button" class="btn-remixer-solo toggle-btn" data-part="${p.id}" style="padding: 2px 8px; font-size: 0.7rem; ${isSoloing ? 'background: #dc2626; color: #fff; border-color: #ef4444;' : ''}" title="獨奏試聽此聲部">
+            ${isSoloing ? '⏹ 停止' : '▶ 獨奏'}
+          </button>
+        </div>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr ${isDrum ? '' : 'auto'}; gap: 8px; align-items: center;">
+        <div style="display: flex; flex-direction: column; gap: 2px;">
+          <label style="font-size: 0.68rem; color: #94a3b8;">來源伴奏 (Style)</label>
+          <select class="remixer-sel-style" data-part="${p.id}" style="background: #12141c; color: #f1f5f9; border: 1px solid #333a4d; border-radius: 4px; font-size: 0.74rem; padding: 3px 6px;">
+            ${styleOptionsHtml}
+          </select>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 2px;">
+          <label style="font-size: 0.68rem; color: #94a3b8;">來源段落 (Section)</label>
+          <select class="remixer-sel-sec" data-part="${p.id}" style="background: #12141c; color: #f1f5f9; border: 1px solid #333a4d; border-radius: 4px; font-size: 0.74rem; padding: 3px 6px;">
+            ${secOptionsHtml}
+          </select>
+        </div>
+        ${!isDrum ? `
+        <div style="display: flex; flex-direction: column; gap: 2px;">
+          <label style="font-size: 0.68rem; color: #94a3b8;">移調 (半音)</label>
+          <input type="number" class="remixer-inp-shift" data-part="${p.id}" min="-12" max="12" value="${assign?.transposeShift ?? 0}" style="width: 54px; background: #12141c; color: #f1f5f9; border: 1px solid #333a4d; border-radius: 4px; font-size: 0.74rem; padding: 3px 4px; text-align: center;" />
+        </div>
+        ` : ''}
+      </div>
+    `;
+
+    // 事件綁定
+    const selStyle = card.querySelector('.remixer-sel-style') as HTMLSelectElement | null;
+    const selSec = card.querySelector('.remixer-sel-sec') as HTMLSelectElement | null;
+    const inpShift = card.querySelector('.remixer-inp-shift') as HTMLInputElement | null;
+    const btnSolo = card.querySelector('.btn-remixer-solo') as HTMLButtonElement | null;
+
+    selStyle?.addEventListener('change', () => {
+      if (!assign) return;
+      assign.sourceStyleId = selStyle.value;
+      renderRemixerPartsMatrixUI();
+    });
+
+    selSec?.addEventListener('change', () => {
+      if (!assign) return;
+      assign.sourceSectionName = selSec.value;
+      renderRemixerPartsMatrixUI();
+    });
+
+    inpShift?.addEventListener('change', () => {
+      if (!assign) return;
+      assign.transposeShift = parseInt(inpShift.value, 10) || 0;
+    });
+
+    btnSolo?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleRemixerSoloPart(p.id);
+    });
+
+    container.appendChild(card);
+  }
+}
+
+function applyRemixerGlobalSources() {
+  const drumStyleId = (document.getElementById('remixer-global-drum-src') as HTMLSelectElement)?.value || '';
+  const bassStyleId = (document.getElementById('remixer-global-bass-src') as HTMLSelectElement)?.value || '';
+  const chordStyleId = (document.getElementById('remixer-global-chord-src') as HTMLSelectElement)?.value || '';
+
+  if (!drumStyleId && !bassStyleId && !chordStyleId) {
+    showStatus('請先在快速全域選單中選取至少一個伴奏來源', true);
+    return;
+  }
+
+  for (const secName of REMIXER_SECTIONS_LIST) {
+    if (!remixerSectionAssignments[secName]) {
+      remixerSectionAssignments[secName] = {} as any;
+    }
+    if (drumStyleId) {
+      remixerSectionAssignments[secName]['Rhythm1'] = {
+        partId: 'Rhythm1',
+        sourceStyleId: drumStyleId,
+        sourceSectionName: secName,
+        transposeShift: 0,
+      };
+      remixerSectionAssignments[secName]['Rhythm2'] = {
+        partId: 'Rhythm2',
+        sourceStyleId: drumStyleId,
+        sourceSectionName: secName,
+        transposeShift: 0,
+      };
+    }
+    if (bassStyleId) {
+      remixerSectionAssignments[secName]['Bass'] = {
+        partId: 'Bass',
+        sourceStyleId: bassStyleId,
+        sourceSectionName: secName,
+        transposeShift: 0,
+      };
+    }
+    if (chordStyleId) {
+      const chordParts: StylePartId[] = ['Chord1', 'Chord2', 'Pad', 'Phrase1', 'Phrase2'];
+      for (const cp of chordParts) {
+        remixerSectionAssignments[secName][cp] = {
+          partId: cp,
+          sourceStyleId: chordStyleId,
+          sourceSectionName: secName,
+          transposeShift: 0,
+        };
+      }
+    }
+  }
+
+  renderRemixerPartsMatrixUI();
+  showStatus(`⚡ 已將全域配置成功套用至所有 13 個曲式段落！`);
+}
+
+function toggleRemixerSectionAudition() {
+  if (isRemixerAuditionPlaying) {
+    audioEngine.stopBackingTrack();
+    audioEngine.stop();
+    isRemixerAuditionPlaying = false;
+    currentRemixerSoloPartId = null;
+    updateRemixerAuditionUI();
+    showStatus('已停止混搭段落試聽');
+    return;
+  }
+
+  audioEngine.stopBackingTrack();
+  audioEngine.stop();
+  currentRemixerSoloPartId = null;
+
+  const secAssign = remixerSectionAssignments[currentRemixerSectionTab];
+  if (!secAssign) {
+    showStatus('當前段落尚未配置任何伴奏聲部', true);
+    return;
+  }
+
+  const backingItems: BackingTrackItem[] = [];
+  let maxTick = 480 * 16;
+
+  for (const p of REMIXER_PARTS_CONFIG) {
+    const assign = secAssign[p.id];
+    if (!assign || !assign.sourceStyleId) continue;
+
+    const srcStyle = remixerPool.find((entry) => entry.id === assign.sourceStyleId);
+    if (!srcStyle) continue;
+
+    const srcSecName = assign.sourceSectionName || currentRemixerSectionTab;
+    const notes = StyleRemixer.extractSectionPartNotes(srcStyle.parsed, srcSecName, p.id);
+    if (notes.length === 0) continue;
+
+    const voice = StyleRemixer.extractPartVoiceConfig(srcStyle.parsed, p.id);
+    const def = DEFAULT_STYLE_PARTS[p.id];
+    const isDrum = p.id === 'Rhythm1' || p.id === 'Rhythm2';
+    const shift = (!isDrum && assign.transposeShift) ? assign.transposeShift : 0;
+
+    let matchedInst = PRESET_INSTRUMENTS.find((i) => i.pc === voice.pc && (voice.msb === 0 || i.msb === voice.msb));
+    if (!matchedInst) matchedInst = PRESET_INSTRUMENTS.find((i) => i.pc === voice.pc);
+    const instId = isDrum ? 'standard-drum-kit' : (matchedInst ? matchedInst.id : (p.id === 'Bass' ? 'electric-bass' : 'grand-piano'));
+
+    const range = StyleRemixer.getSectionTickRange(srcStyle.parsed, srcSecName);
+    const totalTicks = range ? range.endTick - range.startTick : 480 * 16;
+    if (totalTicks > maxTick) maxTick = totalTicks;
+
+    backingItems.push({
+      padNum: def.channel,
+      notes: notes.map((n) => ({
+        note: shift ? Math.max(0, Math.min(127, n.note + shift)) : n.note,
+        velocity: n.velocity,
+        startTick: n.startTick,
+        durationTick: n.durationTick,
+      })),
+      totalTicks,
+      channelParams: {
+        volume: voice.volume ?? def.volume,
+        pan: voice.pan ?? def.pan,
+        reverb: voice.reverb ?? def.reverb,
+        chorus: voice.chorus ?? def.chorus,
+        instrumentId: instId,
+        msb: voice.msb ?? def.msb,
+        lsb: voice.lsb ?? def.lsb,
+        pc: voice.pc ?? def.pc,
+        channel: def.channel,
+        isDrum,
+      },
+    });
+  }
+
+  if (backingItems.length === 0) {
+    showStatus(`段落 [${currentRemixerSectionTab}] 中無音符可供試聽。請確認來源 Style 是否包含此段落。`, false);
+    return;
+  }
+
+  const bpmInput = document.getElementById('remixer-bpm') as HTMLInputElement | null;
+  const bpm = Math.max(30, Math.min(300, parseInt(bpmInput?.value || '120', 10)));
+
+  isRemixerAuditionPlaying = true;
+  updateRemixerAuditionUI();
+
+  audioEngine.startBackingTrack(backingItems, {
+    bpm,
+    division: 480,
+    beatsPerBar: 4,
+    loop: true,
+    volumeRatio: 1.0,
+    onEnded: () => {
+      isRemixerAuditionPlaying = false;
+      updateRemixerAuditionUI();
+    },
+  });
+
+  showStatus(`▶ 正在試聽混搭段落: [${currentRemixerSectionTab}] (含 ${backingItems.length} 個聲部合奏)...`);
+}
+
+function toggleRemixerSoloPart(partId: StylePartId) {
+  if (currentRemixerSoloPartId === partId && (audioEngine.isPlaying() || audioEngine.isBackingTrackPlaying())) {
+    audioEngine.stopBackingTrack();
+    audioEngine.stop();
+    currentRemixerSoloPartId = null;
+    isRemixerAuditionPlaying = false;
+    updateRemixerAuditionUI();
+    renderRemixerPartsMatrixUI();
+    showStatus(`已停止聲部 [${partId}] 獨奏`);
+    return;
+  }
+
+  audioEngine.stopBackingTrack();
+  audioEngine.stop();
+  isRemixerAuditionPlaying = false;
+  currentRemixerSoloPartId = null;
+
+  const assign = remixerSectionAssignments[currentRemixerSectionTab]?.[partId];
+  if (!assign || !assign.sourceStyleId) {
+    showStatus(`聲部 [${partId}] 尚未指派來源伴奏`, true);
+    return;
+  }
+
+  const srcStyle = remixerPool.find((p) => p.id === assign.sourceStyleId);
+  if (!srcStyle) return;
+
+  const srcSecName = assign.sourceSectionName || currentRemixerSectionTab;
+  const notes = StyleRemixer.extractSectionPartNotes(srcStyle.parsed, srcSecName, partId);
+  if (notes.length === 0) {
+    showStatus(`聲部 [${partId}] 在來源段落 [${srcSecName}] 中無音符`, false);
+    return;
+  }
+
+  const voice = StyleRemixer.extractPartVoiceConfig(srcStyle.parsed, partId);
+  const def = DEFAULT_STYLE_PARTS[partId];
+  const isDrum = partId === 'Rhythm1' || partId === 'Rhythm2';
+  const shift = (!isDrum && assign.transposeShift) ? assign.transposeShift : 0;
+
+  let matchedInst = PRESET_INSTRUMENTS.find((i) => i.pc === voice.pc && (voice.msb === 0 || i.msb === voice.msb));
+  if (!matchedInst) matchedInst = PRESET_INSTRUMENTS.find((i) => i.pc === voice.pc);
+  const instId = isDrum ? 'standard-drum-kit' : (matchedInst ? matchedInst.id : (partId === 'Bass' ? 'electric-bass' : 'grand-piano'));
+
+  const range = StyleRemixer.getSectionTickRange(srcStyle.parsed, srcSecName);
+  const totalTicks = range ? range.endTick - range.startTick : 480 * 16;
+
+  const bpmInput = document.getElementById('remixer-bpm') as HTMLInputElement | null;
+  const bpm = Math.max(30, Math.min(300, parseInt(bpmInput?.value || '120', 10)));
+
+  currentRemixerSoloPartId = partId;
+  updateRemixerAuditionUI();
+  renderRemixerPartsMatrixUI();
+
+  audioEngine.startBackingTrack([
+    {
+      padNum: def.channel,
+      notes: notes.map((n) => ({
+        note: shift ? Math.max(0, Math.min(127, n.note + shift)) : n.note,
+        velocity: n.velocity,
+        startTick: n.startTick,
+        durationTick: n.durationTick,
+      })),
+      totalTicks,
+      channelParams: {
+        volume: voice.volume ?? def.volume,
+        pan: voice.pan ?? def.pan,
+        reverb: voice.reverb ?? def.reverb,
+        chorus: voice.chorus ?? def.chorus,
+        instrumentId: instId,
+        msb: voice.msb ?? def.msb,
+        lsb: voice.lsb ?? def.lsb,
+        pc: voice.pc ?? def.pc,
+        channel: def.channel,
+        isDrum,
+      },
+    },
+  ], {
+    bpm,
+    division: 480,
+    beatsPerBar: 4,
+    loop: true,
+    volumeRatio: 1.0,
+    onEnded: () => {
+      currentRemixerSoloPartId = null;
+      updateRemixerAuditionUI();
+      renderRemixerPartsMatrixUI();
+    },
+  });
+
+  showStatus(`▶ 正在獨奏試聽: [${partId}] (${notes.length} 音符)...`);
+}
+
+function updateRemixerAuditionUI() {
+  const btnAudition = document.getElementById('btn-remixer-audition-section');
+  if (btnAudition) {
+    if (isRemixerAuditionPlaying) {
+      btnAudition.textContent = '⏹ 停止合奏試聽';
+      btnAudition.style.background = '#dc2626';
+      btnAudition.style.borderColor = '#ef4444';
+    } else {
+      btnAudition.textContent = '🎧 試聽此段落混搭合奏';
+      btnAudition.style.background = '#0284c7';
+      btnAudition.style.borderColor = '#38bdf8';
+    }
+  }
+}
+
+function confirmStyleRemix() {
+  if (remixerPool.length === 0) {
+    alert('請至少載入一個 STY 伴奏來源至伴奏庫！');
+    return;
+  }
+
+  const activeSections: StyleRemixSectionSpec[] = [];
+  for (const secName of REMIXER_SECTIONS_LIST) {
+    const secAssign = remixerSectionAssignments[secName];
+    if (!secAssign) continue;
+
+    const hasAnyPart = Object.values(secAssign).some((a) => a && a.sourceStyleId);
+    if (hasAnyPart) {
+      activeSections.push({
+        targetSectionName: secName,
+        parts: secAssign,
+      });
+    }
+  }
+
+  if (activeSections.length === 0) {
+    alert('請至少為一個曲式段落指派伴奏聲部！');
+    return;
+  }
+
+  const projNameInput = document.getElementById('remixer-proj-name') as HTMLInputElement | null;
+  const bpmInput = document.getElementById('remixer-bpm') as HTMLInputElement | null;
+  const projectName = projNameInput?.value.trim() || 'My Hybrid Style';
+  const bpm = Math.max(30, Math.min(300, parseInt(bpmInput?.value || '120', 10)));
+
+  showStatus(`正在混搭合成 Yamaha Style: ${projectName}...`);
+
+  try {
+    const hybridParsed = StyleRemixer.remixStyles({
+      projectName,
+      bpm,
+      division: 480,
+      timeSignature: { numerator: 4, denominator: 4 },
+      pool: remixerPool,
+      sections: activeSections,
+    });
+
+    closeStyleRemixerModal();
+
+    // 序列化為 .sty 二進位 Uint8Array 並載入至工作區
+    const binaryBytes = YamahaStyleSynthesizer.serializeToStyleFile(hybridParsed);
+    renderParsed(binaryBytes, `${projectName}.sty`, 'STY');
+    markModified(`透過跨 STY 混搭精靈成功合成全新 Yamaha SFF2 Style 伴奏專案 (含 ${hybridParsed.sections.length} 個曲式段落)`);
+
+    showStatus(`✨ 成功合成跨 STY 混搭伴奏專案: ${projectName}.sty (${hybridParsed.sections.length} 個段落)`);
+  } catch (err: any) {
+    alert(`混搭合成 Yamaha Style 專案失敗: ${err.message}`);
+    showStatus(`混搭合成失敗: ${err.message}`, true);
+  }
+}
+
+function initStyleRemixerModal() {
+  const modal = document.getElementById('style-remixer-modal');
+  if (!modal) return;
+
+  const btnClose = document.getElementById('btn-close-style-remixer-modal');
+  const btnCancel = document.getElementById('btn-cancel-style-remixer');
+  const btnConfirm = document.getElementById('btn-confirm-style-remixer');
+  const btnHeaderRemixer = document.getElementById('btn-header-style-remixer');
+  const btnOpenRemixer = document.getElementById('btn-open-style-remixer');
+  const btnLoadSample = document.getElementById('btn-remixer-load-sample-sty');
+  const btnAddSty = document.getElementById('btn-remixer-add-sty');
+  const fileInput = document.getElementById('remixer-file-input') as HTMLInputElement | null;
+  const btnApplyGlobal = document.getElementById('btn-remixer-apply-global');
+  const btnAuditionSection = document.getElementById('btn-remixer-audition-section');
+
+  btnClose?.addEventListener('click', closeStyleRemixerModal);
+  btnCancel?.addEventListener('click', closeStyleRemixerModal);
+  btnHeaderRemixer?.addEventListener('click', openStyleRemixerModal);
+  btnOpenRemixer?.addEventListener('click', openStyleRemixerModal);
+
+  // 點擊背景遮罩防誤觸
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      const dialog = modal.querySelector('.modal-dialog') as HTMLElement | null;
+      if (dialog) {
+        dialog.classList.remove('modal-dialog-pulse');
+        void dialog.offsetWidth;
+        dialog.classList.add('modal-dialog-pulse');
+      }
+    }
+  });
+
+  const dialog = modal.querySelector('.modal-dialog');
+  if (dialog) {
+    dialog.addEventListener('click', (e) => e.stopPropagation());
+    dialog.addEventListener('mousedown', (e) => e.stopPropagation());
+  }
+
+  // 載入示範 / 當前 STY
+  btnLoadSample?.addEventListener('click', async () => {
+    let addedCount = 0;
+    if (currentParsed && currentParsed.format === 'STY') {
+      const curName = currentFileName || 'Workspace.sty';
+      if (!remixerPool.some((p) => p.name === curName)) {
+        remixerPool.push({
+          id: `pool-curr-${Date.now()}`,
+          name: curName,
+          parsed: currentParsed,
+        });
+        addedCount++;
+      }
+    }
+
+    try {
+      const resp = await fetch('./samples/4006_SX900.T547.sty');
+      if (resp.ok) {
+        const buf = await resp.arrayBuffer();
+        const parsed = YamahaParser.parse(new Uint8Array(buf), 'STY');
+        if (!remixerPool.some((p) => p.name === '4006_SX900.T547.sty')) {
+          remixerPool.push({
+            id: `pool-sample-${Date.now()}`,
+            name: '4006_SX900.T547.sty',
+            parsed,
+          });
+          addedCount++;
+        }
+      }
+    } catch (e) {
+      console.warn('無法從網路載入 samples/4006_SX900.T547.sty', e);
+    }
+
+    if (addedCount > 0) {
+      autoInitRemixerAssignmentsIfEmpty();
+      renderRemixerPoolUI();
+      renderRemixerSectionTabsUI();
+      renderRemixerPartsMatrixUI();
+      showStatus(`🎵 已成功載入 ${addedCount} 個示範 STY 伴奏檔至伴奏庫！`);
+    } else {
+      showStatus('伴奏庫中已有該示範伴奏檔。');
+    }
+  });
+
+  // 瀏覽本機 STY 檔案
+  btnAddSty?.addEventListener('click', () => {
+    fileInput?.click();
+  });
+
+  fileInput?.addEventListener('change', async (e) => {
+    const files = Array.from((e.target as HTMLInputElement).files || []);
+    if (files.length === 0) return;
+
+    let successCount = 0;
+    for (const file of files) {
+      try {
+        const buf = await file.arrayBuffer();
+        const parsed = YamahaParser.parse(new Uint8Array(buf), 'STY');
+        remixerPool.push({
+          id: `pool-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          name: file.name,
+          parsed,
+        });
+        successCount++;
+      } catch (err: any) {
+        console.error(`解析檔案 ${file.name} 失敗:`, err);
+        showStatus(`檔案 ${file.name} 不是有效的 Yamaha STY 伴奏檔`, true);
+      }
+    }
+
+    fileInput.value = '';
+    if (successCount > 0) {
+      autoInitRemixerAssignmentsIfEmpty();
+      renderRemixerPoolUI();
+      renderRemixerSectionTabsUI();
+      renderRemixerPartsMatrixUI();
+      showStatus(`📂 成功匯入 ${successCount} 個 STY 伴奏檔至伴奏庫！`);
+    }
+  });
+
+  // 快速全域套用
+  btnApplyGlobal?.addEventListener('click', applyRemixerGlobalSources);
+
+  // 試聽此段落混搭合奏
+  btnAuditionSection?.addEventListener('click', toggleRemixerSectionAudition);
+
+  // 確認合成混搭 Style
+  btnConfirm?.addEventListener('click', confirmStyleRemix);
 }
 
 function auditionSingleVoice(voice: YamahaVoice) {
@@ -3399,6 +4585,9 @@ function initEvents() {
   initMidiModeRouterModal();
   initStyleImportModal();
 
+  // Phase 3.3: 初始化跨 STY 聲部混搭重組精靈彈窗
+  initStyleRemixerModal();
+
   // Phase 2.7: 初始化琴端即時錄音視窗 (Live Pad Recorder)
   initPadRecordModal();
 
@@ -3437,12 +4626,15 @@ function setupWebMidiControls() {
   const midiModalBtnConnect = document.getElementById('btn-midi-import-connect-midi');
   const midiModalBtnTestChime = document.getElementById('btn-midi-import-test-chime');
 
+  // 5. 跨 STY 混搭精靈發聲路由 (Phase 3.3)
+  const remixerSelectRouting = document.getElementById('remixer-audio-routing') as HTMLSelectElement | null;
+
   const statusLeds = [headerStatusLed, styleStatusLed, midiModalStatusLed].filter(Boolean) as HTMLElement[];
   const statusTexts = [headerStatusText, styleStatusText, midiModalStatusText].filter(Boolean) as HTMLElement[];
   const outputSelects = [headerSelectOutput, styleSelectOutput, midiModalSelectOutput].filter(Boolean) as HTMLSelectElement[];
   const connectBtns = [headerBtnConnect, styleBtnConnect, midiModalBtnConnect].filter(Boolean) as HTMLElement[];
   const testChimeBtns = [headerBtnTestChime, mainBtnTestChime, styleBtnTestChime, midiModalBtnTestChime].filter(Boolean) as HTMLElement[];
-  const routingSelects = [mainSelectRouting, styleSelectRouting, midiModalSelectRouting].filter(Boolean) as HTMLSelectElement[];
+  const routingSelects = [mainSelectRouting, styleSelectRouting, midiModalSelectRouting, remixerSelectRouting].filter(Boolean) as HTMLSelectElement[];
 
   const updateMidiUI = (devices: MidiDeviceInfo[]) => {
     const selected = midiManager.getSelectedOutput();
@@ -3685,6 +4877,8 @@ function renderParsed(bytes: Uint8Array, filename: string, format: 'STY' | 'PAD'
 
     // 停止任何正在播放的試聽
     audioEngine.stop();
+    audioEngine.stopBackingTrack();
+    currentAuditionStySection = null;
     updateAuditionUIState(null);
     const bpmInput = document.getElementById('input-playback-bpm') as HTMLInputElement | null;
     if (bpmInput && currentParsed.bpm) {
@@ -4041,6 +5235,122 @@ function togglePadAudition(padNum: number) {
   });
 }
 
+let currentAuditionStySection: string | null = null;
+
+function toggleStySectionAudition(sectionName: string) {
+  if (!currentParsed || currentParsed.format !== 'STY') return;
+
+  if (currentAuditionStySection === sectionName && (audioEngine.isPlaying() || audioEngine.isBackingTrackPlaying())) {
+    audioEngine.stopBackingTrack();
+    audioEngine.stop();
+    currentAuditionStySection = null;
+    updateStySectionAuditionButtons();
+    showStatus(`已停止伴奏段落 [${sectionName}] 試聽`);
+    return;
+  }
+
+  // 停止先前的播放
+  audioEngine.stopBackingTrack();
+  audioEngine.stop();
+  currentAuditionStySection = null;
+
+  const range = StyleRemixer.getSectionTickRange(currentParsed, sectionName);
+  if (!range) {
+    showStatus(`無法取得段落 [${sectionName}] 的時間軸範圍`, true);
+    return;
+  }
+
+  const division = currentParsed.division || 480;
+  const timeSig = currentParsed.timeSignature || { numerator: 4, denominator: 4 };
+  const totalTicks = Math.max(division * 4, range.endTick - range.startTick);
+
+  // 提取該段落中所有 8 聲部的音符與音色
+  const backingItems: BackingTrackItem[] = [];
+  const partKeys: StylePartId[] = [
+    'Rhythm1', 'Rhythm2', 'Bass', 'Chord1', 'Chord2', 'Pad', 'Phrase1', 'Phrase2'
+  ];
+
+  for (const partId of partKeys) {
+    const notes = StyleRemixer.extractSectionPartNotes(currentParsed, sectionName, partId);
+    if (notes.length === 0) continue;
+
+    const voice = StyleRemixer.extractPartVoiceConfig(currentParsed, partId);
+    const def = DEFAULT_STYLE_PARTS[partId];
+    const isDrum = partId === 'Rhythm1' || partId === 'Rhythm2';
+
+    let matchedInst = PRESET_INSTRUMENTS.find(i => i.pc === voice.pc && (voice.msb === 0 || i.msb === voice.msb));
+    if (!matchedInst) matchedInst = PRESET_INSTRUMENTS.find(i => i.pc === voice.pc);
+    const instId = isDrum ? 'standard-drum-kit' : (matchedInst ? matchedInst.id : (partId === 'Bass' ? 'electric-bass' : 'grand-piano'));
+
+    backingItems.push({
+      padNum: def.channel,
+      notes: notes.map(n => ({
+        note: n.note,
+        velocity: n.velocity,
+        startTick: n.startTick,
+        durationTick: n.durationTick,
+      })),
+      totalTicks,
+      channelParams: {
+        volume: voice.volume ?? def.volume,
+        pan: voice.pan ?? def.pan,
+        reverb: voice.reverb ?? def.reverb,
+        chorus: voice.chorus ?? def.chorus,
+        instrumentId: instId,
+        msb: voice.msb ?? def.msb,
+        lsb: voice.lsb ?? def.lsb,
+        pc: voice.pc ?? def.pc,
+        channel: def.channel,
+        isDrum,
+      }
+    });
+  }
+
+  if (backingItems.length === 0) {
+    showStatus(`伴奏段落 [${sectionName}] 內無可試聽音符`, false);
+    return;
+  }
+
+  currentAuditionStySection = sectionName;
+  updateStySectionAuditionButtons();
+
+  const bpmInput = document.getElementById('input-playback-bpm') as HTMLInputElement | null;
+  const bpm = bpmInput ? (parseInt(bpmInput.value, 10) || currentParsed.bpm || 120) : (currentParsed.bpm || 120);
+
+  audioEngine.startBackingTrack(backingItems, {
+    bpm,
+    division,
+    beatsPerBar: timeSig.numerator,
+    volumeRatio: 1.0,
+    loop: true,
+    onEnded: () => {
+      currentAuditionStySection = null;
+      updateStySectionAuditionButtons();
+    },
+  });
+
+  showStatus(`▶ 正在試聽 STY 伴奏段落: [${sectionName}] (${range.measureCount} 小節，共 ${backingItems.length} 個發聲聲部)...`);
+}
+
+function updateStySectionAuditionButtons() {
+  document.querySelectorAll<HTMLButtonElement>('.btn-sty-section-audition').forEach(btn => {
+    const secName = btn.dataset.sec;
+    const isPlaying = currentAuditionStySection !== null && currentAuditionStySection === secName;
+    const card = btn.closest('.section-item');
+    if (isPlaying) {
+      btn.textContent = '⏹ 停止';
+      btn.style.background = '#dc2626';
+      btn.style.borderColor = '#ef4444';
+      card?.classList.add('section-playing');
+    } else {
+      btn.textContent = '▶ 試聽';
+      btn.style.background = '';
+      btn.style.borderColor = '';
+      card?.classList.remove('section-playing');
+    }
+  });
+}
+
 function renderSections(parsed: YamahaFileParsed) {
   if (!sectionsList || !sectionCount) return;
   sectionsList.innerHTML = '';
@@ -4049,6 +5359,11 @@ function renderSections(parsed: YamahaFileParsed) {
   const panelTitle = document.getElementById('panel-sections-title');
   if (panelTitle) {
     panelTitle.textContent = isPad ? '🥁 Multi Pad 打擊墊 (Pad 1 ~ 4)' : '🎼 伴奏段落結構 (Sections)';
+  }
+
+  const btnOpenRemixer = document.getElementById('btn-open-style-remixer');
+  if (btnOpenRemixer) {
+    btnOpenRemixer.style.display = isPad ? 'none' : 'inline-flex';
   }
 
   sectionCount.textContent = isPad ? '4 組打擊墊設定' : `${parsed.sections.length} 個標記段落`;
@@ -4309,8 +5624,11 @@ function renderSections(parsed: YamahaFileParsed) {
     updateEnsembleChipsUI();
   } else {
     sectionsList.className = 'section-grid';
-    // STY 模式：傳統伴奏積木
-    for (const sec of parsed.sections) {
+    // STY 模式：Yamaha 原廠伴奏段落卡片 (支援即時試聽、小節範圍與聲部統計)
+    const musicalSections = StyleRemixer.getMusicalSections(parsed);
+    const sectionsToRender = musicalSections.length > 0 ? musicalSections : parsed.sections;
+
+    for (const sec of sectionsToRender) {
       const item = document.createElement('div');
       const lower = sec.name.toLowerCase();
 
@@ -4318,17 +5636,47 @@ function renderSections(parsed: YamahaFileParsed) {
       if (lower.includes('intro')) typeClass = 'intro';
       else if (lower.includes('fill')) typeClass = 'fill';
       else if (lower.includes('ending')) typeClass = 'ending';
+      else if (lower.includes('break')) typeClass = 'break';
 
-      item.className = `section-item ${typeClass}`;
+      const range = StyleRemixer.getSectionTickRange(parsed, sec.name);
+      const startTick = range ? range.startTick : sec.startTick;
+      const endTick = range ? range.endTick : (sec.endTick ?? startTick + (sec.measureCount || 4) * (parsed.division || 480) * 4);
+      const bars = range ? range.measureCount : (sec.measureCount || Math.max(1, Math.round((endTick - startTick) / ((parsed.division || 480) * 4))));
+
+      const isPlaying = currentAuditionStySection === sec.name;
+
+      item.className = `section-item ${typeClass} interactive ${isPlaying ? 'section-playing' : ''}`;
       item.innerHTML = `
-        <div>
-          <div class="section-name">${sec.name}</div>
-          <div class="section-details">起點 Tick: ${sec.startTick}</div>
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
+          <div>
+            <div class="section-name" style="font-size: 1rem; font-weight: 700; color: #f8fafc;">${escapeHtml(sec.name)}</div>
+            <div class="section-details" style="font-size: 0.74rem; color: #94a3b8; margin-top: 2px;">Tick: ${startTick} ~ ${endTick}</div>
+          </div>
+          <button type="button" class="btn-audition btn-sty-section-audition" data-sec="${escapeHtml(sec.name)}" title="點擊試聽此段落伴奏合奏" style="padding: 3px 10px; font-size: 0.74rem; ${isPlaying ? 'background: #dc2626; border-color: #ef4444;' : ''}">
+            ${isPlaying ? '⏹ 停止' : '▶ 試聽'}
+          </button>
         </div>
-        <div class="section-details" style="font-weight: 600; color: #a5b4fc;">
-          ${sec.measureCount ? `${sec.measureCount} 小節` : ''}
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.06);">
+          <span style="font-size: 0.76rem; font-weight: 600; color: #a5b4fc;">
+            ${bars} 小節
+          </span>
+          <span style="font-size: 0.72rem; color: #38bdf8; background: rgba(56, 189, 248, 0.12); padding: 1px 6px; border-radius: 4px;">
+            Yamaha Section
+          </span>
         </div>
       `;
+
+      const btnAudition = item.querySelector('.btn-sty-section-audition') as HTMLButtonElement | null;
+      btnAudition?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleStySectionAudition(sec.name);
+      });
+
+      // 點擊卡片本體亦可觸發試聽
+      item.addEventListener('click', () => {
+        toggleStySectionAudition(sec.name);
+      });
+
       sectionsList.appendChild(item);
     }
   }

@@ -40,9 +40,39 @@ export interface StyleTrackAnalysis extends MidiSourceTrackSummary {
   alternativeParts: { partId: StylePartId; reason: string }[];
 }
 
+export interface KeyDetectionResult {
+  key: string;            // 例如 'G Major', 'C Major', 'A Minor'
+  root: string;           // 例如 'G', 'C', 'A'
+  mode: 'major' | 'minor';
+  semitonesToC: number;   // 將原曲根音轉調至 C 基準所需的半音位移量 (例如 G -> -7, F -> -5, D -> -2)
+  confidence: number;     // 0 ~ 1 信心度
+  tonicPitchClass: number; // 0 ~ 11 (0=C, 1=C#, etc.)
+}
+
+export const ROOT_TO_C_SHIFT: Record<string, number> = {
+  'C': 0,
+  'C#': -1,
+  'Db': -1,
+  'D': -2,
+  'D#': -3,
+  'Eb': -3,
+  'E': -4,
+  'F': -5,
+  'F#': -6,
+  'Gb': -6,
+  'G': -7,
+  'G#': 4,
+  'Ab': 4,
+  'A': 3,
+  'A#': 2,
+  'Bb': 2,
+  'B': 1,
+};
+
 export interface StyleSourceAnalysis extends MidiSourceAnalysis {
   styleTracks: StyleTrackAnalysis[];
   autoMapping: Partial<Record<StylePartId, number>>;
+  detectedKey?: KeyDetectionResult;
 }
 
 export interface StylePartMappingItem {
@@ -60,14 +90,26 @@ export interface StylePartMappingItem {
   transposeShift?: number; // 半音位移
 }
 
+export interface StyleSectionSliceConfig {
+  id?: string;
+  sectionName: StyleSectionType | string;
+  startBar: number; // 1-indexed, 起始小節
+  endBar: number;   // 1-indexed, 結束小節
+  chordRoot?: string; // 選填自訂 C 基準轉調
+}
+
 export interface StyleImportOptions {
   projectName: string;
   bpm?: number;
   timeSignature?: { numerator: number; denominator: number };
-  startBar?: number; // 1-indexed, default 1
-  endBar?: number;   // 1-indexed, default 4 or 8
-  targetSection?: StyleSectionType; // default 'Main A'
+  startBar?: number; // 1-indexed, default 1 (單段落模式相容)
+  endBar?: number;   // 1-indexed, default 4 or 8 (單段落模式相容)
+  targetSection?: StyleSectionType; // default 'Main A' (單段落模式相容)
+  sections?: StyleSectionSliceConfig[]; // Phase 3.3: 全曲多段落切片配置清單
   partMappings: StylePartMappingItem[];
+  normalizeToCRoot?: boolean; // Phase 3.3: 自動轉調為 Yamaha 原廠 C 基準 (預設 true)
+  rootKeyOverride?: string;   // 手動指定原曲調性 (例如 'G', 'F', 'D')
+  manualChordShift?: number;  // 手動覆寫和弦移調半音數
 }
 
 export class StyleImporter {
@@ -88,10 +130,14 @@ export class StyleImporter {
     // 執行 8 聲部智慧分配裁決演算法
     const autoMapping = StyleImporter.allocateParts(styleTracks);
 
+    // 執行全曲調性偵測 (Krumhansl-Schmuckler Key-Finding Algorithm)
+    const detectedKey = StyleImporter.detectKeySignature(baseAnalysis.tracks, baseAnalysis.division);
+
     return {
       ...baseAnalysis,
       styleTracks,
       autoMapping,
+      detectedKey,
     };
   }
 
@@ -437,7 +483,109 @@ export class StyleImporter {
   }
 
   /**
-   * 根據智慧映射與切片小節設定，合成標準 Yamaha Style (.sty)
+   * 智慧調性偵測 (Krumhansl-Schmuckler Key-Finding Algorithm)
+   * 根據外部 MIDI 各音軌之音高音長加權直方圖，精確計算原曲調性與對應 Yamaha C 根音轉調半音位移
+   */
+  public static detectKeySignature(
+    tracks: MidiSourceTrackSummary[],
+    division: number = 480
+  ): KeyDetectionResult {
+    const pitchWeights = new Float64Array(12);
+    let totalWeight = 0;
+
+    for (const track of tracks) {
+      // 忽略鼓組/打擊樂通道 (Channel 9 即 MIDI Ch 10)
+      if (track.channel === 9) continue;
+
+      for (const note of track.notes) {
+        const pc = ((note.note % 12) + 12) % 12;
+        const durWeight = Math.max(1, note.durationTick / Math.max(1, division / 2));
+        // 低音域 (Bass 音域 < 55) 給予 2.5 倍權重，因為低音根音對調性具有決定性引導作用
+        const bassMultiplier = note.note < 55 ? 2.5 : 1.0;
+        const weight = durWeight * bassMultiplier;
+        pitchWeights[pc] += weight;
+        totalWeight += weight;
+      }
+    }
+
+    if (totalWeight === 0) {
+      return {
+        key: 'C Major',
+        root: 'C',
+        mode: 'major',
+        semitonesToC: 0,
+        confidence: 1.0,
+        tonicPitchClass: 0,
+      };
+    }
+
+    // Krumhansl-Schmuckler 原型音高權重表
+    const majorProfile = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
+    const minorProfile = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
+    const pitchNames = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
+
+    let bestR = -Infinity;
+    let bestTonic = 0;
+    let bestMode: 'major' | 'minor' = 'major';
+
+    for (let tonic = 0; tonic < 12; tonic++) {
+      const rMaj = StyleImporter.calculateCorrelation(pitchWeights, majorProfile, tonic);
+      if (rMaj > bestR) {
+        bestR = rMaj;
+        bestTonic = tonic;
+        bestMode = 'major';
+      }
+      const rMin = StyleImporter.calculateCorrelation(pitchWeights, minorProfile, tonic);
+      if (rMin > bestR) {
+        bestR = rMin;
+        bestTonic = tonic;
+        bestMode = 'minor';
+      }
+    }
+
+    const root = pitchNames[bestTonic];
+    const semitonesToC = ROOT_TO_C_SHIFT[root] ?? 0;
+    const confidence = Math.max(0, Math.min(1, (bestR + 1) / 2));
+    const key = `${root} ${bestMode === 'major' ? 'Major' : 'Minor'}`;
+
+    return {
+      key,
+      root,
+      mode: bestMode,
+      semitonesToC,
+      confidence: Number(confidence.toFixed(2)),
+      tonicPitchClass: bestTonic,
+    };
+  }
+
+  private static calculateCorrelation(weights: Float64Array, profile: number[], shift: number): number {
+    let meanW = 0;
+    let meanP = 0;
+    for (let i = 0; i < 12; i++) {
+      meanW += weights[i];
+      meanP += profile[i];
+    }
+    meanW /= 12;
+    meanP /= 12;
+
+    let num = 0;
+    let denW = 0;
+    let denP = 0;
+
+    for (let i = 0; i < 12; i++) {
+      const wDiff = weights[i] - meanW;
+      const pDiff = profile[(i - shift + 12) % 12] - meanP;
+      num += wDiff * pDiff;
+      denW += wDiff * wDiff;
+      denP += pDiff * pDiff;
+    }
+
+    if (denW === 0 || denP === 0) return 0;
+    return num / Math.sqrt(denW * denP);
+  }
+
+  /**
+   * 根據智慧映射、多段落切片與 C 調基準自動校正，合成標準 Yamaha Style (.sty)
    */
   public static synthesizeStyleFromImport(
     analysis: StyleSourceAnalysis,
@@ -447,27 +595,31 @@ export class StyleImporter {
     const bpm = options.bpm || analysis.bpm || 120;
     const timeSig = options.timeSignature || analysis.timeSignature || { numerator: 4, denominator: 4 };
 
-    const startBar = Math.max(1, options.startBar || 1);
-    const endBar = Math.max(startBar, options.endBar || 4);
-    const measureLength = (endBar - startBar + 1);
-
     const ticksPerBeat = division;
     const beatsPerMeasure = timeSig.numerator * (4 / timeSig.denominator);
     const ticksPerMeasure = Math.round(ticksPerBeat * beatsPerMeasure);
 
-    const sliceStartTick = (startBar - 1) * ticksPerMeasure;
-    const sliceEndTick = endBar * ticksPerMeasure;
+    // 1. 計算 Yamaha C 調基準移調半音數 (Chord Normalization to C Root)
+    let cRootShift = 0;
+    if (options.normalizeToCRoot !== false) {
+      if (options.manualChordShift !== undefined) {
+        cRootShift = options.manualChordShift;
+      } else if (options.rootKeyOverride && ROOT_TO_C_SHIFT[options.rootKeyOverride] !== undefined) {
+        cRootShift = ROOT_TO_C_SHIFT[options.rootKeyOverride];
+      } else if (analysis.detectedKey) {
+        cRootShift = analysis.detectedKey.semitonesToC;
+      } else {
+        const detected = StyleImporter.detectKeySignature(analysis.tracks, division);
+        cRootShift = detected.semitonesToC;
+      }
+    }
 
-    // 構建 8 聲部設定與抽取音符
+    // 2. 準備 8 個伴奏聲部預設與音色覆寫
     const partsConfig: Record<StylePartId, StylePartConfig> = { ...DEFAULT_STYLE_PARTS };
-    const sectionNotes: StyleNoteEvent[] = [];
-
-    // 遍歷 8 大聲部映射
     for (const mapping of options.partMappings) {
       const partDef = partsConfig[mapping.partId];
       if (!partDef) continue;
 
-      // 更新音色或混音參數 (若有覆寫)
       if (mapping.voice) {
         partsConfig[mapping.partId] = {
           ...partDef,
@@ -481,48 +633,81 @@ export class StyleImporter {
         };
       }
 
-      // 若有指定來源音軌，擷取該音軌在切片區間內的音符
       if (mapping.sourceTrackIndex !== null && mapping.sourceTrackIndex !== undefined) {
         const sourceTrack = analysis.tracks.find((t) => t.trackIndex === mapping.sourceTrackIndex);
-        if (sourceTrack && sourceTrack.notes.length > 0) {
-          const shift = mapping.transposeShift || 0;
-
-          // 若來源軌道自帶音色資訊且設定中未手動指派，繼承來源音色
-          if (!mapping.voice && sourceTrack.programChange !== undefined) {
-            partsConfig[mapping.partId].pc = sourceTrack.programChange;
-            if (sourceTrack.bankMsb !== undefined) partsConfig[mapping.partId].msb = sourceTrack.bankMsb;
-            if (sourceTrack.bankLsb !== undefined) partsConfig[mapping.partId].lsb = sourceTrack.bankLsb;
-          }
-
-          for (const n of sourceTrack.notes) {
-            // 檢查音符是否落在切片區間內
-            if (n.startTick >= sliceStartTick && n.startTick < sliceEndTick) {
-              const relTick = n.startTick - sliceStartTick;
-              const transposedNote = Math.min(127, Math.max(0, n.note + shift));
-
-              sectionNotes.push({
-                partId: mapping.partId,
-                note: transposedNote,
-                velocity: n.velocity,
-                startTick: relTick,
-                durationTick: n.durationTick,
-              });
-            }
-          }
+        if (sourceTrack && !mapping.voice && sourceTrack.programChange !== undefined) {
+          partsConfig[mapping.partId].pc = sourceTrack.programChange;
+          if (sourceTrack.bankMsb !== undefined) partsConfig[mapping.partId].msb = sourceTrack.bankMsb;
+          if (sourceTrack.bankLsb !== undefined) partsConfig[mapping.partId].lsb = sourceTrack.bankLsb;
         }
       }
     }
 
-    const targetSection = options.targetSection || 'Main A';
-    const sectionsConfig: StyleSectionConfig[] = [
-      {
-        name: targetSection,
+    // 3. 確定要切片合成的段落清單 (支援 Phase 3.3 全曲多段落切片或相容單段落模式)
+    const slicesToProcess: StyleSectionSliceConfig[] =
+      options.sections && options.sections.length > 0
+        ? options.sections
+        : [
+            {
+              sectionName: options.targetSection || 'Main A',
+              startBar: options.startBar || 1,
+              endBar: options.endBar || 4,
+            },
+          ];
+
+    // 4. 為每個段落切片擷取時序音符並套用 C 基準校正
+    const sectionsConfig: StyleSectionConfig[] = [];
+
+    for (const slice of slicesToProcess) {
+      const startBar = Math.max(1, slice.startBar);
+      const endBar = Math.max(startBar, slice.endBar);
+      const measureLength = endBar - startBar + 1;
+      const sliceStartTick = (startBar - 1) * ticksPerMeasure;
+      const sliceEndTick = endBar * ticksPerMeasure;
+
+      // 若該段落單獨指定了 chordRoot 則採用該覆寫，否則套用全曲 C 基準移調
+      let effectiveSectionChordShift = cRootShift;
+      if (slice.chordRoot && ROOT_TO_C_SHIFT[slice.chordRoot] !== undefined) {
+        effectiveSectionChordShift = ROOT_TO_C_SHIFT[slice.chordRoot];
+      }
+
+      const sectionNotes: StyleNoteEvent[] = [];
+
+      for (const mapping of options.partMappings) {
+        if (mapping.sourceTrackIndex === null || mapping.sourceTrackIndex === undefined) continue;
+        const sourceTrack = analysis.tracks.find((t) => t.trackIndex === mapping.sourceTrackIndex);
+        if (!sourceTrack || sourceTrack.notes.length === 0) continue;
+
+        // 鼓組/打擊樂 (Rhythm 1/2, Ch 8/9) 絕對保持固定音高，絕不轉調！
+        // 旋律/和弦/低音聲部則疊加聲部自訂移調與 C 基準校正
+        const isDrum = mapping.partId === 'Rhythm1' || mapping.partId === 'Rhythm2';
+        const baseShift = mapping.transposeShift || 0;
+        const noteShift = isDrum ? baseShift : baseShift + effectiveSectionChordShift;
+
+        for (const n of sourceTrack.notes) {
+          if (n.startTick >= sliceStartTick && n.startTick < sliceEndTick) {
+            const relTick = n.startTick - sliceStartTick;
+            const transposedNote = Math.min(127, Math.max(0, n.note + noteShift));
+
+            sectionNotes.push({
+              partId: mapping.partId,
+              note: transposedNote,
+              velocity: n.velocity,
+              startTick: relTick,
+              durationTick: n.durationTick,
+            });
+          }
+        }
+      }
+
+      sectionsConfig.push({
+        name: slice.sectionName,
         bars: measureLength,
         notes: sectionNotes,
-      },
-    ];
+      });
+    }
 
-    // 調用 YamahaStyleSynthesizer 建立 Format 0 單軌 Style
+    // 5. 調用 YamahaStyleSynthesizer 建立 Format 0 單軌 Style 與完整 SFF2 CASM 轉調區塊
     return YamahaStyleSynthesizer.createBlankStyle({
       styleName: options.projectName || 'My Style',
       bpm,

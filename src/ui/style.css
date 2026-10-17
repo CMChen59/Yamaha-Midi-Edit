@@ -1900,3 +1900,156 @@ body {
   flex-direction: column;
   gap: 4px;
 }
+
+/* ========================================================
+   Phase 3.3: Section Slicer & Style Remixer Styles
+   ======================================================== */
+.slicer-timeline-block {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  border-radius: 3px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 4px;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.slicer-timeline-block:hover {
+  filter: brightness(1.2);
+  transform: scaleY(1.05);
+}
+
+.slicer-intro {
+  background: rgba(217, 119, 6, 0.45);
+  border: 1px solid #f59e0b;
+  color: #fef3c7;
+}
+
+.slicer-main {
+  background: rgba(99, 102, 241, 0.45);
+  border: 1px solid #818cf8;
+  color: #e0e7ff;
+}
+
+.slicer-fill {
+  background: rgba(16, 185, 129, 0.45);
+  border: 1px solid #34d399;
+  color: #d1fae5;
+}
+
+.slicer-ending {
+  background: rgba(244, 63, 94, 0.45);
+  border: 1px solid #fb7185;
+  color: #ffe4e6;
+}
+
+.slicer-break {
+  background: rgba(168, 85, 247, 0.45);
+  border: 1px solid #c084fc;
+  color: #f3e8ff;
+}
+
+.slicer-section-card {
+  background: #181b26;
+  border: 1px solid #2e3549;
+  border-radius: 6px;
+  padding: 8px 12px;
+  min-width: 195px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.slicer-section-card:hover {
+  border-color: #6366f1;
+}
+
+.slicer-section-card.active {
+  border-color: #818cf8;
+  box-shadow: 0 0 12px rgba(99, 102, 241, 0.35);
+}
+
+.remixer-tab-btn {
+  background: #1a1e2b;
+  border: 1px solid #333a4d;
+  border-radius: 5px;
+  color: #94a3b8;
+  padding: 4px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.remixer-tab-btn:hover {
+  background: #252b3d;
+  color: #fff;
+}
+
+.remixer-tab-btn.active {
+  background: #ec4899;
+  color: #fff;
+  border-color: #ec4899;
+  box-shadow: 0 0 10px rgba(236, 72, 153, 0.35);
+}
+
+.remixer-part-card {
+  background: #151823;
+  border: 1px solid #282f42;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 0.2s ease;
+}
+
+.remixer-part-card:hover {
+  border-color: #ec4899;
+}
+
+.remixer-pool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #1e2538;
+  border: 1px solid #3b4563;
+  border-radius: 20px;
+  padding: 3px 12px;
+  font-size: 0.76rem;
+  color: #e2e8f0;
+}
+
+.section-item.interactive {
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.section-item.interactive:hover {
+  transform: translateY(-2px);
+  border-color: #818cf8;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.25);
+}
+
+.section-item.section-playing {
+  border-color: #38bdf8 !important;
+  animation: sectionItemPulse 1.2s infinite alternate ease-in-out;
+}
+
+@keyframes sectionItemPulse {
+  0% {
+    box-shadow: 0 0 8px rgba(56, 189, 248, 0.3);
+  }
+  100% {
+    box-shadow: 0 0 20px rgba(56, 189, 248, 0.7);
+  }
+}

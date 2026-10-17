@@ -156,4 +156,103 @@ describe('Phase 3.2: StyleImporter 外部 MIDI 8 聲部智慧映射與伴奏合�
     );
     expect(volumeEvent?.value).toBe(110);
   });
+
+  it('Phase 3.3-A: 能智慧偵測外部 MIDI 之音樂調性並計算 C 基準轉調半音量', () => {
+    const analysis = StyleImporter.analyzeForStyle(demoBytes, 'demo_groove.mid');
+    expect(analysis.detectedKey).toBeDefined();
+    expect(analysis.detectedKey?.root).toBeDefined();
+    expect(analysis.detectedKey?.mode).toBeDefined();
+    expect(typeof analysis.detectedKey?.semitonesToC).toBe('number');
+  });
+
+  it('Phase 3.3-B: 能執行全曲多段落切片合成 (Intro A, Main A, Fill In AA, Main B, Ending A)', () => {
+    const analysis = StyleImporter.analyzeForStyle(demoBytes, 'demo_groove.mid');
+
+    const multiSectionOptions: StyleImportOptions = {
+      projectName: 'Full Song Sliced Style',
+      bpm: 128,
+      normalizeToCRoot: false,
+      sections: [
+        { sectionName: 'Intro A', startBar: 1, endBar: 2 },
+        { sectionName: 'Main A', startBar: 1, endBar: 4 },
+        { sectionName: 'Fill In AA', startBar: 4, endBar: 4 },
+        { sectionName: 'Main B', startBar: 1, endBar: 4 },
+        { sectionName: 'Ending A', startBar: 3, endBar: 4 },
+      ],
+      partMappings: [
+        { partId: 'Rhythm2', sourceTrackIndex: analysis.autoMapping['Rhythm2'] ?? null },
+        { partId: 'Bass', sourceTrackIndex: analysis.autoMapping['Bass'] ?? null },
+        { partId: 'Chord1', sourceTrackIndex: analysis.autoMapping['Chord1'] ?? null },
+      ],
+    };
+
+    const style = StyleImporter.synthesizeStyleFromImport(analysis, multiSectionOptions);
+
+    // 1. 驗證產生的所有段落
+    const musicalSections = YamahaStyleSynthesizer.getMusicalSections(style);
+    expect(musicalSections.length).toBe(5);
+    expect(musicalSections.map((s) => s.name)).toEqual([
+      'Intro A',
+      'Main A',
+      'Fill In AA',
+      'Main B',
+      'Ending A',
+    ]);
+    expect(musicalSections[0].measureCount).toBe(2);
+    expect(musicalSections[1].measureCount).toBe(4);
+    expect(musicalSections[2].measureCount).toBe(1);
+    expect(musicalSections[3].measureCount).toBe(4);
+    expect(musicalSections[4].measureCount).toBe(2);
+
+    // 2. 驗證所有段落均包含 SFF2 CASM 映射
+    const casm = style.customChunks.find((c) => c.id === 'CASM');
+    expect(casm).toBeDefined();
+
+    // 3. 驗證可順利二進位序列化與回讀
+    const bytes = YamahaStyleSynthesizer.serializeToStyleFile(style);
+    const parsed = YamahaParser.parse(bytes, 'STY');
+    const parsedSections = YamahaStyleSynthesizer.getMusicalSections(parsed);
+    expect(parsedSections.length).toBe(5);
+    expect(parsedSections[0].name).toBe('Intro A');
+    expect(parsedSections[2].name).toBe('Fill In AA');
+  });
+
+  it('Phase 3.3-C: 能執行 Yamaha 原廠 C 基準校正 (和弦移調、鼓組保持不變)', () => {
+    const analysis = StyleImporter.analyzeForStyle(demoBytes, 'demo_groove.mid');
+
+    // 強制設定原曲調性為 G (semitonesToC = -7)
+    const options: StyleImportOptions = {
+      projectName: 'G-to-C Normalized Style',
+      normalizeToCRoot: true,
+      rootKeyOverride: 'G', // G ➔ -7 半音移至 C
+      startBar: 1,
+      endBar: 2,
+      targetSection: 'Main A',
+      partMappings: [
+        { partId: 'Rhythm2', sourceTrackIndex: 4, transposeShift: 0 },
+        { partId: 'Bass', sourceTrackIndex: 3, transposeShift: 0 },
+      ],
+    };
+
+    const style = StyleImporter.synthesizeStyleFromImport(analysis, options);
+
+    // 鼓組 (Ch 9) 的音高不可改變
+    const originalDrumNotes = analysis.tracks[4].notes.filter(
+      (n) => n.startTick >= 0 && n.startTick < analysis.division * 8
+    );
+    const synthDrumNotes = style.tracks[0].events.filter(
+      (e) => e.type === 'noteOn' && e.channel === 9 && (e.velocity ?? 0) > 0
+    );
+    expect(synthDrumNotes[0].noteNumber).toBe(originalDrumNotes[0].note);
+
+    // 貝斯 (Ch 10) 的音高必須被扣除 7 個半音 (G ➔ C 基準)
+    const originalBassNotes = analysis.tracks[3].notes.filter(
+      (n) => n.startTick >= 0 && n.startTick < analysis.division * 8
+    );
+    const synthBassNotes = style.tracks[0].events.filter(
+      (e) => e.type === 'noteOn' && e.channel === 10 && (e.velocity ?? 0) > 0
+    );
+    expect(synthBassNotes[0].noteNumber).toBe(originalBassNotes[0].note - 7);
+  });
 });
+

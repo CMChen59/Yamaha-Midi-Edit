@@ -31,6 +31,7 @@
         </button>
         <button id="btn-new-pad" class="btn btn-primary" style="background: linear-gradient(135deg, #10b981, #059669); border: none; font-weight: 600;">➕ 新建空白 PAD</button>
         <button id="btn-import-midi" class="btn btn-secondary" style="background: linear-gradient(135deg, #6366f1, #4f46e5); color: #fff; border: none; font-weight: 600;">📂 匯入 MIDI 切片</button>
+        <button type="button" id="btn-header-style-remixer" class="btn btn-secondary" style="background: linear-gradient(135deg, #ec4899, #be185d); color: #fff; border: none; font-weight: 600;" title="跨 STY 伴奏風格混搭重組精靈 (提取各風格鼓組、低音與和弦自由拼裝)">🎛️ 跨 STY 混搭精靈</button>
         <button id="btn-load-sample-mid" class="btn btn-secondary">載入範例 MIDI</button>
         <button id="btn-load-sample-sty" class="btn btn-secondary">載入範例 STY</button>
         <button id="btn-load-sample-pad" class="btn btn-secondary">載入範例 PAD</button>
@@ -90,9 +91,14 @@
 
       <!-- 段落結構 (Sections) -->
       <section class="panel-section">
-        <div class="panel-header">
-          <h2 id="panel-sections-title">🎼 段落結構 (Sections)</h2>
-          <span class="badge" id="section-count">0 個段落</span>
+        <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <h2 id="panel-sections-title">🎼 段落結構 (Sections)</h2>
+            <span class="badge" id="section-count">0 個段落</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <button type="button" id="btn-open-style-remixer" class="btn btn-primary" style="background: linear-gradient(135deg, #ec4899, #be185d); border: none; font-size: 0.76rem; padding: 4px 12px; font-weight: 600; display: none;" title="開啟跨 STY 伴奏風格混搭重組精靈">🎛️ 跨 STY 混搭精靈</button>
+          </div>
         </div>
         <div class="section-grid" id="sections-list">
           <!-- 動態產生段落卡片 -->
@@ -704,7 +710,7 @@
       </div>
 
       <div style="padding: 14px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px;">
-        <!-- 頂部專案全域與切片參數 -->
+        <!-- 頂部專案全域名稱與速度設定條 -->
         <div style="background: #151822; border: 1px solid #2a2e3d; border-radius: 8px; padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 14px; align-items: center;">
           <div style="display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 180px;">
             <label for="style-import-proj-name" style="font-size: 0.8rem; font-weight: 600; color: #cbd5e1;">伴奏風格名稱：</label>
@@ -717,25 +723,12 @@
               <input type="number" id="style-import-bpm" min="40" max="260" value="120" style="width: 70px; background: #11131a; border: 1px solid #333846; border-radius: 4px; color: #fff; padding: 5px 8px; font-size: 0.85rem; text-align: center;" />
             </div>
 
+            <!-- 切片模式切換 (單一特定段落 vs 全曲多段落切片分配) -->
             <div style="display: flex; flex-direction: column; gap: 4px;">
-              <label for="style-import-target-section" style="font-size: 0.8rem; font-weight: 600; color: #cbd5e1;">指派目標段落：</label>
-              <select id="style-import-target-section" style="background: #11131a; border: 1px solid #333846; border-radius: 4px; color: #38bdf8; padding: 5px 8px; font-size: 0.85rem; font-weight: 600;">
-                <option value="Main A" selected>Main A (主段落 A)</option>
-                <option value="Main B">Main B (主段落 B)</option>
-                <option value="Main C">Main C (主段落 C)</option>
-                <option value="Main D">Main D (主段落 D)</option>
-                <option value="Intro A">Intro A (前奏 A)</option>
-                <option value="Ending A">Ending A (尾奏 A)</option>
-              </select>
-            </div>
-
-            <div style="display: flex; flex-direction: column; gap: 4px;">
-              <label style="font-size: 0.8rem; font-weight: 600; color: #cbd5e1;">來源切片小節：</label>
-              <div style="display: flex; align-items: center; gap: 4px;">
-                <input type="number" id="style-import-start-bar" min="1" max="999" value="1" style="width: 55px; background: #11131a; border: 1px solid #333846; border-radius: 4px; color: #fff; padding: 5px 6px; font-size: 0.85rem; text-align: center;" />
-                <span style="color: #64748b; font-size: 0.8rem;">~</span>
-                <input type="number" id="style-import-end-bar" min="1" max="999" value="4" style="width: 55px; background: #11131a; border: 1px solid #333846; border-radius: 4px; color: #fff; padding: 5px 6px; font-size: 0.85rem; text-align: center;" />
-                <span style="color: #94a3b8; font-size: 0.75rem;">小節</span>
+              <label style="font-size: 0.8rem; font-weight: 600; color: #cbd5e1;">曲式切片架構：</label>
+              <div style="display: flex; gap: 4px; background: #11131a; padding: 2px; border-radius: 4px; border: 1px solid #2d3345;">
+                <button type="button" id="btn-slicer-mode-multi" class="toggle-btn active-rp" style="padding: 3px 8px; font-size: 0.74rem;">🎼 全曲多段落切片 (推薦)</button>
+                <button type="button" id="btn-slicer-mode-single" class="toggle-btn" style="padding: 3px 8px; font-size: 0.74rem;">單一段落</button>
               </div>
             </div>
           </div>
@@ -745,6 +738,98 @@
             <button type="button" id="btn-style-audition-all" class="toggle-btn" style="padding: 5px 12px; font-size: 0.78rem; font-weight: 600; background: #0284c7; color: #fff; border: 1px solid #38bdf8;">🎧 試聽所選小節合奏</button>
             <button type="button" id="btn-style-smart-assign" class="toggle-btn active-rp" style="padding: 5px 12px; font-size: 0.78rem; font-weight: 600;">⚡ 8 聲部智慧推薦一鍵映射</button>
             <button type="button" id="btn-style-clear-assign" class="toggle-btn" style="padding: 5px 10px; font-size: 0.78rem;">🔄 全部清空</button>
+          </div>
+        </div>
+
+        <!-- C 調基準自動校正面板 (Phase 3.3) -->
+        <div style="background: #131722; border: 1px solid #28324a; border-radius: 8px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 0.82rem; font-weight: 600; color: #38bdf8; cursor: pointer;">
+              <input type="checkbox" id="style-import-c-norm-enable" checked style="accent-color: #38bdf8; width: 16px; height: 16px; cursor: pointer;" />
+              <span>🎹 自動轉調為 Yamaha 原廠 C 調基準 (原廠 CASM 轉調必備)</span>
+            </label>
+            <div id="style-import-detected-key-pill" style="display: inline-flex; align-items: center; gap: 6px; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 20px; padding: 2px 10px; font-size: 0.74rem; color: #e0f2fe;">
+              <span id="style-import-detected-key-text">✨ 偵測調性: 分析中...</span>
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <span style="font-size: 0.76rem; color: #94a3b8;">原曲調性設定:</span>
+            <select id="style-import-key-override" style="background: #1e2538; border: 1px solid #3d4b6e; border-radius: 4px; color: #f1f5f9; font-size: 0.78rem; padding: 3px 8px; font-weight: 600;">
+              <option value="auto" selected>✨ 自動偵測</option>
+              <option value="C">C 大調 / C 基準 (0 半音)</option>
+              <option value="C#">C# / Db 大調 (-1 半音)</option>
+              <option value="D">D 大調 (-2 半音)</option>
+              <option value="Eb">Eb / D# 大調 (-3 半音)</option>
+              <option value="E">E 大調 (-4 半音)</option>
+              <option value="F">F 大調 (-5 半音)</option>
+              <option value="F#">F# / Gb 大調 (-6 半音)</option>
+              <option value="G">G 大調 (-7 半音)</option>
+              <option value="Ab">Ab / G# 大調 (+4 半音)</option>
+              <option value="A">A 大調 (+3 半音)</option>
+              <option value="Bb">Bb / A# 大調 (+2 半音)</option>
+              <option value="B">B 大調 (+1 半音)</option>
+            </select>
+            <span id="style-import-c-norm-badge" class="badge" style="background: #0284c7; color: #fff; font-size: 0.72rem; padding: 2px 8px;">移調: 0 半音</span>
+          </div>
+          <div style="width: 100%; font-size: 0.72rem; color: #64748b; line-height: 1.4;">
+            💡 說明：Yamaha SFF2 CASM 伴奏引擎規定伴奏原型音符必須以 C 為根音基準 (C-E-G)，琴端左手彈奏和弦時才能正確平移。鼓組與打擊樂 (Ch 9/10) 自動保留原固定音高不轉調。
+          </div>
+        </div>
+
+        <!-- 全曲曲式多段落視覺化切片分配 (Phase 3.3 Section Slicer) -->
+        <div id="style-slicer-panel" style="background: #141722; border: 1px solid #283045; border-radius: 8px; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 0.88rem; font-weight: 700; color: #e2e8f0;">🎼 全曲曲式多段落視覺化切片分配 (Section Slicer)</span>
+              <span id="style-slicer-summary-badge" class="badge" style="background: #312e81; color: #c7d2fe; font-size: 0.72rem;">1 個段落</span>
+            </div>
+            <!-- 快速範本與切換動作 -->
+            <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+              <span style="font-size: 0.75rem; color: #94a3b8;">快速曲式範本:</span>
+              <button type="button" id="btn-slicer-template-single" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem;">單段 Main A</button>
+              <button type="button" id="btn-slicer-template-classic4" class="toggle-btn active-rp" style="padding: 2px 8px; font-size: 0.72rem;">⚡ 經典 4 段 (Main A/B + Fill + End)</button>
+              <button type="button" id="btn-slicer-template-full" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem;">⚡ 完整曲式 (Intro + 4 Main + Fills + End)</button>
+              <button type="button" id="btn-slicer-add-section" class="toggle-btn" style="padding: 2px 10px; font-size: 0.74rem; background: linear-gradient(135deg, #10b981, #059669); color: #fff; border: none; font-weight: 600;">➕ 新增段落</button>
+            </div>
+          </div>
+
+          <!-- 視覺化全曲時間軸長條 (Interactive Timeline Bar) -->
+          <div style="background: #0d0f17; border: 1px solid #1e2333; border-radius: 6px; padding: 10px 12px; position: relative;">
+            <div style="display: flex; justify-content: space-between; font-size: 0.7rem; color: #64748b; margin-bottom: 4px;">
+              <span>第 1 小節</span>
+              <span id="style-slicer-timeline-center-label" style="color: #94a3b8;">全曲時間軸配置進度</span>
+              <span id="style-slicer-timeline-total-bars">共 8 小節</span>
+            </div>
+            <div id="style-slicer-timeline-track" style="height: 34px; background: #161925; border-radius: 4px; border: 1px dashed #2b3247; position: relative; overflow: hidden; display: flex;">
+              <!-- 動態渲染各段落的彩色切片塊 -->
+            </div>
+          </div>
+
+          <!-- 段落切片清單卡片捲軸區 -->
+          <div id="style-slicer-cards-container" style="display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px;">
+            <!-- 動態生成各段落卡片 -->
+          </div>
+        </div>
+
+        <!-- 單一段落模式控制列 (當切換至單段落模式時顯示) -->
+        <div id="style-single-section-panel" style="display: none; background: #151822; border: 1px solid #2a2e3d; border-radius: 8px; padding: 10px 16px; align-items: center; gap: 14px; flex-wrap: wrap;">
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <label for="style-import-target-section" style="font-size: 0.8rem; font-weight: 600; color: #cbd5e1;">目標段落：</label>
+            <select id="style-import-target-section" style="background: #11131a; border: 1px solid #333846; border-radius: 4px; color: #38bdf8; padding: 4px 8px; font-size: 0.82rem; font-weight: 600;">
+              <option value="Main A" selected>Main A (主段落 A)</option>
+              <option value="Main B">Main B (主段落 B)</option>
+              <option value="Main C">Main C (主段落 C)</option>
+              <option value="Main D">Main D (主段落 D)</option>
+              <option value="Intro A">Intro A (前奏 A)</option>
+              <option value="Ending A">Ending A (尾奏 A)</option>
+            </select>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <label style="font-size: 0.8rem; font-weight: 600; color: #cbd5e1;">來源切片小節：</label>
+            <input type="number" id="style-import-start-bar" min="1" max="999" value="1" style="width: 55px; background: #11131a; border: 1px solid #333846; border-radius: 4px; color: #fff; padding: 4px 6px; font-size: 0.82rem; text-align: center;" />
+            <span style="color: #64748b; font-size: 0.8rem;">~</span>
+            <input type="number" id="style-import-end-bar" min="1" max="999" value="4" style="width: 55px; background: #11131a; border: 1px solid #333846; border-radius: 4px; color: #fff; padding: 4px 6px; font-size: 0.82rem; text-align: center;" />
+            <span style="color: #94a3b8; font-size: 0.75rem;">小節</span>
           </div>
         </div>
 
@@ -812,6 +897,102 @@
         <div style="display: flex; gap: 10px;">
           <button type="button" id="btn-cancel-style-import" class="btn btn-secondary" style="padding: 6px 16px; font-size: 0.85rem;">取消</button>
           <button type="button" id="btn-confirm-style-import" class="btn btn-primary" style="background: linear-gradient(135deg, #6366f1, #4f46e5); border: none; padding: 6px 20px; font-size: 0.85rem; font-weight: 600;">✨ 合成並建立 Yamaha Style 專案</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 跨 STY 聲部混搭重組精靈視窗 (Phase 3.3 Style Remixer Modal) -->
+  <div id="style-remixer-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-dialog" style="max-width: 1120px; max-height: 92vh;">
+      <div class="modal-header">
+        <div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <h3 class="modal-title">🎛️ 跨 STY 聲部混搭重組精靈 (Style Remixer Studio)</h3>
+            <span class="badge" style="background: #ec4899; color: #fff; font-size: 0.72rem; padding: 3px 8px;">Phase 3.3 Hybrid Engine</span>
+          </div>
+          <p class="modal-subtitle">自由載入多個 STY 伴奏來源，提取各自聲部（如 Style A 的鼓組、Style B 的貝斯、Style C 的和弦），跨風格自由混搭合成全新 Yamaha SFF2 伴奏！</p>
+        </div>
+        <button type="button" id="btn-close-style-remixer-modal" class="modal-close-btn" title="關閉視窗">&times;</button>
+      </div>
+
+      <div style="padding: 14px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px;">
+        <!-- 1. 伴奏風格池管理列 (Style Pool Bar) -->
+        <div style="background: #141722; border: 1px solid #283045; border-radius: 8px; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 0.88rem; font-weight: 700; color: #e2e8f0;">📂 伴奏風格池 (Style Pool)</span>
+              <span id="remixer-pool-count-badge" class="badge" style="background: #1e293b; color: #cbd5e1; font-size: 0.72rem;">0 個風格</span>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              <button type="button" id="btn-remixer-load-sample-sty" class="toggle-btn" style="padding: 3px 10px; font-size: 0.74rem;">⚡ 載入原廠樣品 4006_SX900.sty</button>
+              <input type="file" id="remixer-file-input" accept=".sty,.STY" style="display: none;" multiple>
+              <button type="button" id="btn-remixer-add-sty" class="toggle-btn active-rp" style="padding: 3px 12px; font-size: 0.74rem; background: linear-gradient(135deg, #6366f1, #4f46e5); color: #fff; border: none; font-weight: 600;">➕ 載入本地 STY 伴奏...</button>
+            </div>
+          </div>
+          <div id="remixer-pool-chips" style="display: flex; gap: 8px; flex-wrap: wrap; min-height: 36px; align-items: center;">
+            <!-- 動態生成風格膠囊標籤 -->
+          </div>
+        </div>
+
+        <!-- 2. 全域混搭專案名稱、速度與發聲設定條 -->
+        <div style="background: #12151e; border: 1px solid #232938; border-radius: 8px; padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <label style="font-size: 0.8rem; color: #cbd5e1; font-weight: 600;">混搭風格名稱:</label>
+              <input type="text" id="remixer-proj-name" value="My Hybrid Style" style="background: #161924; border: 1px solid #333a4d; border-radius: 4px; color: #fff; padding: 4px 8px; font-size: 0.82rem; width: 160px;" />
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <label style="font-size: 0.8rem; color: #cbd5e1; font-weight: 600;">速度 (BPM):</label>
+              <input type="number" id="remixer-bpm" value="120" min="40" max="260" style="background: #161924; border: 1px solid #333a4d; border-radius: 4px; color: #fff; padding: 4px 6px; font-size: 0.82rem; width: 60px; text-align: center;" />
+            </div>
+            <!-- 發聲路由 -->
+            <div style="display: inline-flex; align-items: center; gap: 6px; background: #1a1e2b; padding: 3px 8px; border-radius: 4px; border: 1px solid #333a4d;">
+              <span style="color: #94a3b8; font-size: 0.74rem;">發聲:</span>
+              <select id="remixer-audio-routing" style="background: #14161f; color: #f8fafc; border: 1px solid #3b4256; border-radius: 3px; font-size: 0.72rem; padding: 2px 6px;">
+                <option value="both" selected>🔊+🎹 雙出 (電腦+實體琴)</option>
+                <option value="midi">🎹 僅實體琴 (PSR-SX920)</option>
+                <option value="audio">🔊 僅電腦喇叭</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- 快速全域套用 (一鍵將鼓組/低音/和弦統一套用至所有段落) -->
+          <div style="display: flex; align-items: center; gap: 6px; background: #1a1e2b; padding: 4px 10px; border-radius: 6px; border: 1px solid #2d3448; flex-wrap: wrap;">
+            <span style="font-size: 0.74rem; color: #cbd5e1; font-weight: 600;">⚡ 快速一鍵全域套用:</span>
+            <span style="font-size: 0.72rem; color: #94a3b8;">鼓組</span>
+            <select id="remixer-global-drum-src" style="background: #12141c; color: #38bdf8; border: 1px solid #3b4256; border-radius: 3px; font-size: 0.72rem; padding: 2px 4px;"></select>
+            <span style="font-size: 0.72rem; color: #94a3b8;">低音</span>
+            <select id="remixer-global-bass-src" style="background: #12141c; color: #38bdf8; border: 1px solid #3b4256; border-radius: 3px; font-size: 0.72rem; padding: 2px 4px;"></select>
+            <span style="font-size: 0.72rem; color: #94a3b8;">和弦</span>
+            <select id="remixer-global-chord-src" style="background: #12141c; color: #38bdf8; border: 1px solid #3b4256; border-radius: 3px; font-size: 0.72rem; padding: 2px 4px;"></select>
+            <button type="button" id="btn-remixer-apply-global" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem; background: #2563eb; color: #fff; border: none; font-weight: 600;">套用全部段落</button>
+          </div>
+        </div>
+
+        <!-- 3. 目標段落分頁標籤 (Target Section Tabs) -->
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #232938; padding-bottom: 4px; flex-wrap: wrap; gap: 8px;">
+          <div id="remixer-section-tabs" style="display: flex; gap: 4px; flex-wrap: wrap;">
+            <!-- 動態生成 Main A, Main B, Intro A, Fill In AA, Ending A 等標籤 -->
+          </div>
+          <div style="display: flex; gap: 6px; align-items: center;">
+            <button type="button" id="btn-remixer-audition-section" class="toggle-btn" style="padding: 4px 12px; font-size: 0.78rem; font-weight: 600; background: #0284c7; color: #fff; border: 1px solid #38bdf8;">🎧 試聽此段落混搭合奏</button>
+          </div>
+        </div>
+
+        <!-- 4. 當前段落 8 伴奏聲部混搭配置網格 (8-Part Assignment Matrix) -->
+        <div id="remixer-parts-matrix" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; max-height: 440px; overflow-y: auto;">
+          <!-- 8 大聲部卡片由 JS 動態生成 -->
+        </div>
+      </div>
+
+      <div class="modal-footer" style="padding: 12px 20px; background: #1a1d26; border-top: 1px solid #282c39; display: flex; justify-content: space-between; align-items: center;">
+        <div style="font-size: 0.78rem; color: #94a3b8;">
+          💡 提示：合成時將自動提取選取風格的音符與音色控制器，並重新計算生成 PSR-SX920 原廠相容 SFF2 CASM 轉調區塊。
+        </div>
+        <div style="display: flex; gap: 10px;">
+          <button type="button" id="btn-cancel-style-remixer" class="btn btn-secondary" style="padding: 6px 16px; font-size: 0.85rem;">取消</button>
+          <button type="button" id="btn-confirm-style-remixer" class="btn btn-primary" style="background: linear-gradient(135deg, #ec4899, #be185d); border: none; padding: 6px 20px; font-size: 0.85rem; font-weight: 600;">🚀 合成並建立混搭 Style</button>
         </div>
       </div>
     </div>
