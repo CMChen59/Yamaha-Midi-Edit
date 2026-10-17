@@ -20,6 +20,18 @@ const CHANNEL_TO_PART_NAME: Record<number, string> = {
   15: 'Phrase 2',
 };
 
+// Yamaha SFF1 傳統伴奏聲部映射 (MIDI Channel 1~8，即 0-indexed 0~7)
+const SFF1_CHANNEL_TO_PART_NAME: Record<number, string> = {
+  0: 'Sub Rhythm (Rhythm 1)',
+  1: 'Bass',
+  2: 'Chord 1',
+  3: 'Chord 2',
+  4: 'Pad',
+  5: 'Phrase 1',
+  6: 'Phrase 2',
+  7: 'Extra Part',
+};
+
 // Pad 聲部映射 (Pad 1~4 通常使用特定 Channel)
 const PAD_CHANNEL_NAME: Record<number, string> = {
   0: 'Pad 1',
@@ -208,7 +220,7 @@ export class YamahaParser {
             channel,
             partName: fallbackFormat === 'PAD'
               ? (PAD_CHANNEL_NAME[channel] || `Channel ${channel + 1}`)
-              : (CHANNEL_TO_PART_NAME[channel] || `Part ${channel + 1}`),
+              : (CHANNEL_TO_PART_NAME[channel] || SFF1_CHANNEL_TO_PART_NAME[channel] || `Part ${channel + 1}`),
           };
 
           if (eventType === 0x90 || eventType === 0x80) {

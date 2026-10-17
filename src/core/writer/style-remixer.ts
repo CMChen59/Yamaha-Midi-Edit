@@ -133,6 +133,36 @@ export class StyleRemixer {
   }
 
   /**
+   * 取得特定段落與通道在 Track 0 中的音色 (PC/Bank) 或音量 (CC 7) 覆寫設定
+   */
+  public static getSectionChannelOverride(
+    parsed: YamahaFileParsed,
+    startTick: number,
+    endTick: number,
+    channel: number
+  ): { pc?: number; bankMsb?: number; bankLsb?: number; volume?: number; pan?: number } {
+    const override: { pc?: number; bankMsb?: number; bankLsb?: number; volume?: number; pan?: number } = {};
+    const track0 = parsed.tracks[0];
+    if (!track0) return override;
+    let cur = 0;
+    for (const ev of track0.events) {
+      cur += ev.delta;
+      if (cur >= startTick && cur < endTick && ev.channel === channel) {
+        if (ev.type === 'programChange' && ev.program !== undefined) {
+          override.pc = ev.program;
+        }
+        if (ev.type === 'controlChange' && ev.value !== undefined) {
+          if (ev.controller === 0) override.bankMsb = ev.value;
+          if (ev.controller === 32) override.bankLsb = ev.value;
+          if (ev.controller === 7) override.volume = ev.value;
+          if (ev.controller === 10) override.pan = ev.value;
+        }
+      }
+    }
+    return override;
+  }
+
+  /**
    * 智慧判定指定 Style 中對應此聲部的實際 MIDI 通道
    * 1. 優先使用指定 channel (若有手動覆寫)
    * 2. 檢查標準 Yamaha 通道 (Channel 8~15)
@@ -162,13 +192,13 @@ export class StyleRemixer {
     // 若標準通道無音符，智慧檢查傳統/自訂 SFF 通道映射
     const fallbackChannelsMap: Record<StylePartId, number[]> = {
       Rhythm1: [8, 0],
-      Rhythm2: [9, 8],
-      Bass: [10, 1],
-      Chord1: [11, 2],
-      Chord2: [12, 3],
+      Rhythm2: [9, 1, 8],
+      Bass: [10, 1, 2],
+      Chord1: [11, 2, 3],
+      Chord2: [12, 3, 4],
       Pad: [13, 4, 5],
-      Phrase1: [14, 6],
-      Phrase2: [15, 7],
+      Phrase1: [14, 5, 6],
+      Phrase2: [15, 6, 7],
     };
 
     const candidates = fallbackChannelsMap[partId] || [standardChannel];

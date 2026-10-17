@@ -189,8 +189,19 @@ let currentModalSuitabilityFilter: VoiceSuitabilityFilter = 'ALL';
 let currentModalSearchQuery: string = '';
 let currentModalRenderLimit: number = 60;
 
-// Yamaha STY 8 伴奏聲部主題與視覺配置 (Channel 8 ~ 15，對應 Yamaha Ch 9 ~ 16)
+// Yamaha STY 伴奏聲部主題與視覺配置 (支援 SFF1 Channel 0 ~ 7 與 SFF2 Channel 8 ~ 15)
 const STY_PART_META: Record<number, { id: StylePartId; name: string; shortName: string; icon: string; color: string; bg: string; border: string }> = {
+  // SFF1 傳統伴奏通道 (0~7，對應 MIDI Ch 1~8)
+  0: { id: 'Rhythm1', name: 'Sub Rhythm (Rhythm 1)', shortName: 'Rhythm 1', icon: '🥁', color: '#ec4899', bg: 'rgba(236,72,153,0.15)', border: 'rgba(236,72,153,0.35)' },
+  1: { id: 'Bass', name: 'Bass', shortName: 'Bass', icon: '🎸', color: '#8b5cf6', bg: 'rgba(139,92,246,0.15)', border: 'rgba(139,92,246,0.35)' },
+  2: { id: 'Chord1', name: 'Chord 1', shortName: 'Chord 1', icon: '🎹', color: '#3b82f6', bg: 'rgba(59,130,246,0.15)', border: 'rgba(59,130,246,0.35)' },
+  3: { id: 'Chord2', name: 'Chord 2', shortName: 'Chord 2', icon: '🎸', color: '#06b6d4', bg: 'rgba(6,182,212,0.15)', border: 'rgba(6,182,212,0.35)' },
+  4: { id: 'Pad', name: 'Pad', shortName: 'Pad', icon: '🎻', color: '#10b981', bg: 'rgba(16,185,129,0.15)', border: 'rgba(16,185,129,0.35)' },
+  5: { id: 'Phrase1', name: 'Phrase 1', shortName: 'Phrase 1', icon: '🎺', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', border: 'rgba(245,158,11,0.35)' },
+  6: { id: 'Phrase2', name: 'Phrase 2', shortName: 'Phrase 2', icon: '🎷', color: '#e11d48', bg: 'rgba(225,29,72,0.15)', border: 'rgba(225,29,72,0.35)' },
+  7: { id: 'Phrase2', name: 'Extra Part', shortName: 'Extra', icon: '🎶', color: '#a855f7', bg: 'rgba(168,85,247,0.15)', border: 'rgba(168,85,247,0.35)' },
+
+  // SFF2 / 標準 Yamaha 伴奏通道 (8~15，對應 Yamaha Ch 9~16)
   8: { id: 'Rhythm1', name: 'Sub Rhythm (Rhythm 1)', shortName: 'Rhythm 1', icon: '🥁', color: '#ec4899', bg: 'rgba(236,72,153,0.15)', border: 'rgba(236,72,153,0.35)' },
   9: { id: 'Rhythm2', name: 'Main Rhythm (Rhythm 2)', shortName: 'Rhythm 2', icon: '🥁', color: '#f43f5e', bg: 'rgba(244,63,94,0.15)', border: 'rgba(244,63,94,0.35)' },
   10: { id: 'Bass', name: 'Bass', shortName: 'Bass', icon: '🎸', color: '#8b5cf6', bg: 'rgba(139,92,246,0.15)', border: 'rgba(139,92,246,0.35)' },
@@ -212,11 +223,13 @@ function getStylePartDisplayName(channel: number): string {
 }
 
 function countPartTotalNotes(parsed: YamahaFileParsed, channel: number): number {
-  if (!parsed || !parsed.tracks || !parsed.tracks[0]) return 0;
+  if (!parsed || !parsed.tracks) return 0;
   let count = 0;
-  for (const ev of parsed.tracks[0].events) {
-    if (ev.channel === channel && ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
-      count++;
+  for (const track of parsed.tracks) {
+    for (const ev of track.events) {
+      if (ev.channel === channel && ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
+        count++;
+      }
     }
   }
   return count;
@@ -5259,6 +5272,14 @@ function renderParsed(bytes: Uint8Array, filename: string, format: 'STY' | 'PAD'
     audioEngine.stop();
     audioEngine.stopBackingTrack();
     currentAuditionStySection = null;
+    if (format === 'STY') {
+      const musicalSections = StyleRemixer.getMusicalSections(currentParsed);
+      const sectionsToUse = musicalSections.length > 0 ? musicalSections : currentParsed.sections;
+      const mainA = sectionsToUse.find(s => s.name.toUpperCase().includes('MAIN A') || s.name.toUpperCase() === 'MAIN A');
+      currentActiveStySection = mainA ? mainA.name : (sectionsToUse[0]?.name || null);
+    } else {
+      currentActiveStySection = null;
+    }
     updateAuditionUIState(null);
     stylePartMuteState = {};
     stylePartSoloChannel = null;
@@ -5622,6 +5643,37 @@ function togglePadAudition(padNum: number) {
 }
 
 let currentAuditionStySection: string | null = null;
+let currentActiveStySection: string | null = null;
+
+function selectStySection(sectionName: string) {
+  if (!currentParsed || currentParsed.format !== 'STY') return;
+  currentActiveStySection = sectionName;
+  updateStySectionCardsSelection();
+  updateStyPartsSectionLinkage(currentParsed, currentActiveStySection);
+}
+
+function updateStySectionCardsSelection() {
+  document.querySelectorAll<HTMLElement>('.section-item[data-sec-name]').forEach(card => {
+    const secName = card.dataset.secName;
+    const isSelected = currentActiveStySection !== null && currentActiveStySection === secName;
+    card.classList.toggle('section-selected', isSelected);
+
+    let focusBadge = card.querySelector('.badge-section-selected');
+    if (isSelected) {
+      if (!focusBadge) {
+        const titleContainer = card.querySelector('.section-header-title') || card.querySelector('.section-name')?.parentElement;
+        if (titleContainer) {
+          const badge = document.createElement('span');
+          badge.className = 'badge-section-selected';
+          badge.textContent = '🎯 聚焦段落';
+          titleContainer.appendChild(badge);
+        }
+      }
+    } else if (focusBadge) {
+      focusBadge.remove();
+    }
+  });
+}
 
 function toggleStySectionAudition(sectionName: string) {
   if (!currentParsed || currentParsed.format !== 'STY') return;
@@ -6043,12 +6095,17 @@ function renderSections(parsed: YamahaFileParsed) {
       const bars = range ? range.measureCount : (sec.measureCount || Math.max(1, Math.round((endTick - startTick) / ((parsed.division || 480) * 4))));
 
       const isPlaying = currentAuditionStySection === sec.name;
+      const isSelected = currentActiveStySection === sec.name;
 
-      item.className = `section-item ${typeClass} interactive ${isPlaying ? 'section-playing' : ''}`;
+      item.className = `section-item ${typeClass} interactive ${isSelected ? 'section-selected' : ''} ${isPlaying ? 'section-playing' : ''}`;
+      item.dataset.secName = sec.name;
       item.innerHTML = `
         <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
           <div>
-            <div class="section-name" style="font-size: 1rem; font-weight: 700; color: #f8fafc;">${escapeHtml(sec.name)}</div>
+            <div class="section-header-title" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+              <span class="section-name" style="font-size: 1rem; font-weight: 700; color: #f8fafc;">${escapeHtml(sec.name)}</span>
+              ${isSelected ? '<span class="badge-section-selected">🎯 聚焦段落</span>' : ''}
+            </div>
             <div class="section-details" style="font-size: 0.74rem; color: #94a3b8; margin-top: 2px;">Tick: ${startTick} ~ ${endTick}</div>
           </div>
           <button type="button" class="btn-audition btn-sty-section-audition" data-sec="${escapeHtml(sec.name)}" title="點擊試聽此段落伴奏合奏" style="padding: 3px 10px; font-size: 0.74rem; ${isPlaying ? 'background: #dc2626; border-color: #ef4444;' : ''}">
@@ -6068,12 +6125,15 @@ function renderSections(parsed: YamahaFileParsed) {
       const btnAudition = item.querySelector('.btn-sty-section-audition') as HTMLButtonElement | null;
       btnAudition?.addEventListener('click', (e) => {
         e.stopPropagation();
+        selectStySection(sec.name);
         toggleStySectionAudition(sec.name);
       });
 
-      // 點擊卡片本體亦可觸發試聽
-      item.addEventListener('click', () => {
-        toggleStySectionAudition(sec.name);
+      // 點擊卡片本體聚焦選取該段落
+      item.addEventListener('click', (e) => {
+        const target = e.target as HTMLElement;
+        if (target.closest('.btn-sty-section-audition')) return;
+        selectStySection(sec.name);
       });
 
       sectionsList.appendChild(item);
@@ -9560,30 +9620,52 @@ function renderParts(parsed: YamahaFileParsed) {
     }
   } else {
     // STY 模式：8 伴奏聲部互動式混音台 (Rhythm 1/2, Bass, Chord 1/2, Pad, Phrase 1/2)
-    // 確保 8 大標準伴奏聲部 (Channel 8 ~ 15) 條目完整
-    const partKeys: StylePartId[] = ['Rhythm1', 'Rhythm2', 'Bass', 'Chord1', 'Chord2', 'Pad', 'Phrase1', 'Phrase2'];
-    for (const key of partKeys) {
-      const def = DEFAULT_STYLE_PARTS[key];
-      if (!parsed.parts.find((p) => p.channel === def.channel)) {
-        parsed.parts.push({
-          trackIndex: 0,
-          channel: def.channel,
-          partName: def.name,
-          volume: def.volume,
-          pan: def.pan,
-          reverb: def.reverb,
-          chorus: def.chorus,
-          bankMsb: def.msb,
-          bankLsb: def.lsb,
-          programChange: def.pc,
-        });
+    // 檢查此 STY 是否主要使用 SFF1 通道 (0~7)
+    const hasSff1Notes = parsed.parts.some(p => p.channel >= 0 && p.channel <= 7 && countPartTotalNotes(parsed, p.channel) > 0);
+    const hasSff2Notes = parsed.parts.some(p => p.channel >= 8 && p.channel <= 15 && countPartTotalNotes(parsed, p.channel) > 0);
+
+    // 若非純 SFF1 檔案，確保 8 大標準伴奏聲部 (Channel 8 ~ 15) 條目完整
+    if (!hasSff1Notes || hasSff2Notes) {
+      const partKeys: StylePartId[] = ['Rhythm1', 'Rhythm2', 'Bass', 'Chord1', 'Chord2', 'Pad', 'Phrase1', 'Phrase2'];
+      for (const key of partKeys) {
+        const def = DEFAULT_STYLE_PARTS[key];
+        if (!parsed.parts.find((p) => p.channel === def.channel)) {
+          parsed.parts.push({
+            trackIndex: 0,
+            channel: def.channel,
+            partName: def.name,
+            volume: def.volume,
+            pan: def.pan,
+            reverb: def.reverb,
+            chorus: def.chorus,
+            bankMsb: def.msb,
+            bankLsb: def.lsb,
+            programChange: def.pc,
+          });
+        }
       }
     }
     parsed.parts.sort((a, b) => a.channel - b.channel);
 
-    partsCount.textContent = `8 個伴奏聲部 (Yamaha 原廠通道 9~16)`;
+    // 取得在檔案中實際有音符的伴奏聲部
+    const channelsWithNotes = new Set<number>();
+    for (let c = 0; c <= 15; c++) {
+      if (countPartTotalNotes(parsed, c) > 0) {
+        channelsWithNotes.add(c);
+      }
+    }
 
-    for (const part of parsed.parts) {
+    let partsToRender = parsed.parts;
+    if (hasSff1Notes && channelsWithNotes.size > 0) {
+      // 僅顯示在檔案中實際演奏 (有音符) 的聲部，過濾掉後面空的 8~15 通道
+      partsToRender = parsed.parts.filter(p => channelsWithNotes.has(p.channel));
+    }
+
+    partsCount.textContent = hasSff1Notes && !hasSff2Notes
+      ? `${partsToRender.length} 個伴奏聲部 (SFF1 伴奏通道 1~8)`
+      : `${partsToRender.length} 個伴奏聲部 (Yamaha 原廠通道 9~16)`;
+
+    for (const part of partsToRender) {
       const ch = part.channel;
       const meta = STY_PART_META[ch] || {
         id: 'Phrase2' as StylePartId,
@@ -9625,7 +9707,7 @@ function renderParts(parsed: YamahaFileParsed) {
             </div>
           </div>
         </td>
-        <td>
+        <td class="part-notes-cell">
           <div style="display: flex; flex-direction: column; gap: 2px;">
             <span style="color: #94a3b8; font-family: monospace; font-weight: 600;">Ch ${ch + 1}</span>
             <span style="font-size: 0.72rem; color: ${noteCount > 0 ? '#10b981' : '#64748b'};">
@@ -9640,13 +9722,13 @@ function renderParts(parsed: YamahaFileParsed) {
             <input type="number" min="0" max="127" class="mixing-num-input bank-lsb-sty-${ch}" value="${bankLsb}" title="Bank LSB (CC32)" />
           </div>
         </td>
-        <td>
+        <td class="part-voice-cell">
           <div style="display: flex; gap: 4px; align-items: center;">
             <input type="number" min="0" max="127" class="mixing-num-input pc-sty-${ch}" value="${pc}" title="Program Change (音色代碼 0~127)" />
             <button type="button" class="btn-open-sty-voice-modal" data-channel="${ch}" title="開啟 Yamaha PSR-SX920 原廠音色庫搜尋視窗" style="padding: 2px 6px; font-size: 0.76rem; border-radius: 4px; border: 1px solid #475569; background: #1e293b; color: #38bdf8; cursor: pointer;">🔍 庫</button>
           </div>
         </td>
-        <td>
+        <td class="part-vol-cell">
           <div class="mixing-slider-container">
             <input type="range" min="0" max="127" value="${vol}" class="mixing-slider vol-range-sty-${ch}" title="音量 (0~127)" />
             <span class="vol-label-sty-${ch}" style="font-size: 0.8rem; width: 28px; text-align: right; color: #cbd5e1;">${vol}</span>
@@ -9777,8 +9859,10 @@ function renderParts(parsed: YamahaFileParsed) {
         updateAllStySoloVisuals();
 
         // 實體琴同步
-        for (let c = 8; c <= 15; c++) {
-          const v = parseInt((document.querySelector(`.vol-range-sty-${c}`) as HTMLInputElement)?.value, 10) || 100;
+        for (let c = 0; c <= 15; c++) {
+          const inputEl = document.querySelector(`.vol-range-sty-${c}`) as HTMLInputElement | null;
+          if (!inputEl) continue;
+          const v = parseInt(inputEl.value, 10) || 100;
           if (stylePartSoloChannel !== null) {
             midiManager.sendMixerControllers(c, { volume: c === stylePartSoloChannel ? v : 0 });
           } else {
@@ -9792,7 +9876,131 @@ function renderParts(parsed: YamahaFileParsed) {
 
       partsTbody.appendChild(tr);
     }
+
+    // 依據目前聚焦的伴奏段落，動態連動各聲部發聲狀態與音符
+    updateStyPartsSectionLinkage(parsed, currentActiveStySection);
   }
+}
+
+function updateStyPartsSectionLinkage(parsed: YamahaFileParsed, sectionName: string | null) {
+  if (!parsed || parsed.format !== 'STY') return;
+
+  const panelPartsTitle = document.getElementById('panel-parts-title');
+  const range = sectionName ? StyleRemixer.getSectionTickRange(parsed, sectionName) : null;
+
+  if (panelPartsTitle) {
+    if (sectionName) {
+      panelPartsTitle.innerHTML = `🎛️ 伴奏聲部與音色配置 <span style="font-size: 0.82rem; font-weight: 600; color: #38bdf8; margin-left: 8px; padding: 2px 8px; background: rgba(56,189,248,0.12); border: 1px solid rgba(56,189,248,0.3); border-radius: 4px;">🎯 聚焦段落: ${escapeHtml(sectionName)}</span>`;
+    } else {
+      panelPartsTitle.textContent = '🎛️ 伴奏聲部與音色配置 (Parts & Voices)';
+    }
+  }
+
+  // 更新或插入表格上方的焦點提示橫幅
+  let focusBanner = document.getElementById('sty-section-focus-banner');
+  const tableContainer = document.querySelector('.parts-table-container');
+  if (sectionName && range && tableContainer) {
+    if (!focusBanner) {
+      focusBanner = document.createElement('div');
+      focusBanner.id = 'sty-section-focus-banner';
+      focusBanner.className = 'sty-section-focus-banner';
+      tableContainer.parentElement?.insertBefore(focusBanner, tableContainer);
+    }
+    focusBanner.style.display = 'flex';
+    focusBanner.innerHTML = `
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span style="font-size: 1.1rem;">🎯</span>
+        <div>
+          <span>當前聚焦伴奏段落: <strong style="color: #38bdf8; font-size: 0.95rem;">${escapeHtml(sectionName)}</strong></span>
+          <span style="color: #94a3b8; margin-left: 8px; font-size: 0.76rem;">(長度: ${range.measureCount} 小節 | Tick: ${range.startTick} ~ ${range.endTick})</span>
+        </div>
+      </div>
+      <div style="font-size: 0.74rem; color: #a5b4fc; background: rgba(99,102,241,0.12); padding: 3px 8px; border-radius: 4px; border: 1px solid rgba(99,102,241,0.25);">
+        ⚡ 各伴奏聲部音符與發聲狀態已自動連動至此段落
+      </div>
+    `;
+  } else if (focusBanner) {
+    focusBanner.style.display = 'none';
+  }
+
+  // 更新各聲部列 (tr.sty-table-row-{ch}) 的音符統計與段落專屬設定
+  document.querySelectorAll<HTMLTableRowElement>('.sty-table-row').forEach(tr => {
+    const classMatch = tr.className.match(/sty-table-row-(\d+)/);
+    if (!classMatch) return;
+    const ch = parseInt(classMatch[1], 10);
+
+    const totalNotes = countPartTotalNotes(parsed, ch);
+    const secNotes = range ? StyleRemixer.countNotesInChannel(parsed, range.startTick, range.endTick, ch) : totalNotes;
+
+    const noteCell = tr.querySelector('.part-notes-cell') || tr.cells[1];
+    if (noteCell) {
+      if (sectionName && range) {
+        const activeHtml = secNotes > 0
+          ? `<span class="part-section-active-badge">🟢 本段: ♪ ${secNotes} 音符 (演奏中)</span>`
+          : `<span class="part-section-silent-badge">⚪ 本段: 0 音符 (未演奏)</span>`;
+        noteCell.innerHTML = `
+          <div style="display: flex; flex-direction: column; gap: 3px;">
+            <span style="color: #94a3b8; font-family: monospace; font-weight: 600;">Ch ${ch + 1}</span>
+            ${activeHtml}
+            <span class="part-total-notes-badge">全曲總計: ${totalNotes} 音符</span>
+          </div>
+        `;
+      } else {
+        noteCell.innerHTML = `
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <span style="color: #94a3b8; font-family: monospace; font-weight: 600;">Ch ${ch + 1}</span>
+            <span style="font-size: 0.72rem; color: ${totalNotes > 0 ? '#10b981' : '#64748b'};">
+              ${totalNotes > 0 ? `♪ ${totalNotes} 音符` : '無音符'}
+            </span>
+          </div>
+        `;
+      }
+    }
+
+    if (sectionName && range) {
+      tr.classList.toggle('part-active-in-section', secNotes > 0);
+      tr.classList.toggle('part-silent-in-section', secNotes === 0);
+    } else {
+      tr.classList.remove('part-active-in-section', 'part-silent-in-section');
+    }
+
+    // 檢查是否有段落專屬音色或音量覆寫
+    if (sectionName && range) {
+      const override = StyleRemixer.getSectionChannelOverride(parsed, range.startTick, range.endTick, ch);
+      const voiceCell = tr.querySelector('.part-voice-cell') || tr.cells[3];
+      if (voiceCell) {
+        let overrideBadge = voiceCell.querySelector('.badge-section-voice-override');
+        if (override.pc !== undefined) {
+          if (!overrideBadge) {
+            overrideBadge = document.createElement('span');
+            overrideBadge.className = 'badge-section-voice-override';
+            voiceCell.appendChild(overrideBadge);
+          }
+          overrideBadge.textContent = `🎯 本段專屬 PC ${override.pc}`;
+          overrideBadge.setAttribute('title', `此段落包含獨立 Program Change: ${override.pc}`);
+        } else if (overrideBadge) {
+          overrideBadge.remove();
+        }
+      }
+
+      const volCell = tr.querySelector('.part-vol-cell') || tr.cells[4];
+      if (volCell) {
+        let volBadge = volCell.querySelector('.badge-section-vol-override');
+        if (override.volume !== undefined) {
+          if (!volBadge) {
+            volBadge = document.createElement('span');
+            volBadge.className = 'badge-section-vol-override';
+            volCell.appendChild(volBadge);
+          }
+          volBadge.textContent = `🎯 本段音量 ${override.volume}`;
+        } else if (volBadge) {
+          volBadge.remove();
+        }
+      }
+    } else {
+      tr.querySelectorAll('.badge-section-voice-override, .badge-section-vol-override').forEach(el => el.remove());
+    }
+  });
 }
 
 // 註冊初始化

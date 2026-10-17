@@ -2122,3 +2122,112 @@ body {
   border-color: #3b82f6 !important;
   color: #ffffff !important;
 }
+
+/* ========================================================
+   Phase 4.2 / Step 2.1: STY Section Selection & Parts Linkage
+   ======================================================== */
+.section-item.section-selected {
+  border-color: #38bdf8 !important;
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.4), 0 8px 24px rgba(56, 189, 248, 0.25) !important;
+  background: linear-gradient(145deg, #1e293b, #0f172a) !important;
+  position: relative;
+}
+
+.badge-section-selected {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.16);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 4px;
+  padding: 1px 6px;
+  animation: fadeIn 0.2s ease-in-out;
+}
+
+.sty-section-focus-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.12), rgba(99, 102, 241, 0.08));
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 8px;
+  padding: 8px 14px;
+  margin-bottom: 12px;
+  font-size: 0.82rem;
+  color: #e2e8f0;
+  animation: fadeIn 0.2s ease-in-out;
+}
+
+.part-section-active-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: #34d399;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  padding: 2px 7px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.part-section-silent-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.72rem;
+  color: #94a3b8;
+  background: rgba(148, 163, 184, 0.08);
+  border: 1px dashed rgba(148, 163, 184, 0.25);
+  padding: 2px 7px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.part-total-notes-badge {
+  font-size: 0.7rem;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.part-silent-in-section {
+  opacity: 0.62;
+  filter: grayscale(25%);
+  transition: opacity 0.2s ease, filter 0.2s ease;
+}
+
+.part-active-in-section {
+  border-left: 3px solid #38bdf8 !important;
+  transition: border-left 0.2s ease;
+}
+
+.badge-section-voice-override {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 3px;
+  padding: 1px 5px;
+  margin-top: 3px;
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.badge-section-vol-override {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #a78bfa;
+  background: rgba(139, 92, 246, 0.15);
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  border-radius: 3px;
+  padding: 1px 5px;
+  margin-top: 3px;
+  display: inline-block;
+  white-space: nowrap;
+}
+
