@@ -236,7 +236,7 @@ function countPartTotalNotes(parsed: YamahaFileParsed, channel: number): number 
 }
 
 function updateAllStySoloVisuals() {
-  for (let c = 8; c <= 15; c++) {
+  for (let c = 0; c <= 15; c++) {
     const btnSolo = document.querySelector(`.btn-solo-sty-${c}`) as HTMLButtonElement | null;
     const row = document.querySelector(`.sty-table-row-${c}`) as HTMLElement | null;
     const isSolo = stylePartSoloChannel === c;
@@ -245,11 +245,68 @@ function updateAllStySoloVisuals() {
 
     if (btnSolo) {
       btnSolo.classList.toggle('active-solo', isSolo);
+      btnSolo.title = isSolo ? '點擊解除獨奏 (恢復合奏)' : '獨奏此伴奏聲部 (Solo)';
     }
     if (row) {
       row.classList.toggle('row-solo', isSolo);
       row.classList.toggle('row-muted', isMuted || isSilencedBySolo);
+      row.classList.toggle('row-silenced-by-solo', isSilencedBySolo);
+
+      let soloBadge = row.querySelector('.badge-solo-indicator');
+      if (isSolo) {
+        if (!soloBadge) {
+          const badgeContainer = row.querySelector('.part-badge')?.parentElement;
+          if (badgeContainer) {
+            soloBadge = document.createElement('span');
+            soloBadge.className = 'badge-solo-indicator';
+            soloBadge.textContent = '🎧 SOLO';
+            badgeContainer.appendChild(soloBadge);
+          }
+        }
+      } else if (soloBadge) {
+        soloBadge.remove();
+      }
     }
+  }
+
+  // 更新或插入表格上方的 Solo 獨奏提示條
+  let soloBanner = document.getElementById('sty-solo-active-banner');
+  const tableContainer = document.querySelector('.parts-table-container');
+  if (stylePartSoloChannel !== null && tableContainer) {
+    if (!soloBanner) {
+      soloBanner = document.createElement('div');
+      soloBanner.id = 'sty-solo-active-banner';
+      soloBanner.className = 'sty-solo-active-banner';
+      tableContainer.parentElement?.insertBefore(soloBanner, tableContainer);
+    }
+    const meta = STY_PART_META[stylePartSoloChannel];
+    const partName = meta ? `${meta.icon} ${meta.name} (Ch ${stylePartSoloChannel + 1})` : `Ch ${stylePartSoloChannel + 1}`;
+    soloBanner.style.display = 'flex';
+    soloBanner.innerHTML = `
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span style="font-size: 1.1rem;">🎧</span>
+        <span><strong>獨奏模式 (Solo) 啟動中：</strong> 目前僅保留 <strong style="color: #fbbf24;">${partName}</strong> 演奏，其餘所有伴奏聲部已自動靜音。</span>
+      </div>
+      <button type="button" id="btn-clear-sty-solo" class="btn-clear-sty-solo" title="點擊取消獨奏，恢復所有伴奏聲部合奏">
+        ✖ 解除獨奏 (全聲部合奏)
+      </button>
+    `;
+    const btnClearSolo = soloBanner.querySelector('#btn-clear-sty-solo') as HTMLButtonElement | null;
+    btnClearSolo?.addEventListener('click', () => {
+      stylePartSoloChannel = null;
+      updateAllStySoloVisuals();
+      // 實體琴同步
+      for (let c = 0; c <= 15; c++) {
+        const inputEl = document.querySelector(`.vol-range-sty-${c}`) as HTMLInputElement | null;
+        if (!inputEl) continue;
+        const v = parseInt(inputEl.value, 10) || 100;
+        const isM = !!stylePartMuteState[c];
+        midiManager.sendMixerControllers(c, { volume: isM ? 0 : v });
+      }
+      restartCurrentStySectionAudition();
+    });
+  } else if (soloBanner) {
+    soloBanner.style.display = 'none';
   }
 }
 
