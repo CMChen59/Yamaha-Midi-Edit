@@ -71,4 +71,43 @@ describe('步驟 2.1: STY 伴奏段落選取與聲部發聲連動 (Section & Par
     expect(override).toBeDefined();
     expect(typeof override).toBe('object');
   });
+
+  it('5. (步驟 2.2) 段落專屬靜音矩陣 (Section Part Mute Matrix) 能獨立隔離段落開關而不互相污染', () => {
+    const mockSectionPartMuteState: Record<string, Record<number, boolean>> = {};
+
+    // 模擬使用者在 Intro A 將 Channel 4 (Pad / 前奏主旋律) 設為本段靜音
+    mockSectionPartMuteState['Intro A'] = { 4: true };
+
+    // 驗證 Intro A 狀態
+    expect(mockSectionPartMuteState['Intro A'][4]).toBe(true);
+    expect(mockSectionPartMuteState['Intro A'][1]).toBeUndefined(); // Bass 仍發聲
+
+    // 驗證 Main A 完全不受影響
+    expect(mockSectionPartMuteState['Main A']?.[4]).toBeFalsy();
+
+    // 模擬 Intro A 試聽提取聲部清單
+    const rangeIntroA = StyleRemixer.getSectionTickRange(parsed, 'Intro A')!;
+    const activeChannelsForAudition: number[] = [];
+
+    for (const part of parsed.parts) {
+      const ch = part.channel;
+      // 段落專屬靜音過濾
+      if (mockSectionPartMuteState['Intro A']?.[ch]) continue;
+
+      const notes = StyleRemixer.extractSectionChannelNotes(parsed, rangeIntroA.startTick, rangeIntroA.endTick, ch);
+      if (notes.length > 0) {
+        activeChannelsForAudition.push(ch);
+      }
+    }
+
+    // 驗證 Channel 4 (Pad 主旋律) 已成功被排除在 Intro A 試聽清單之外
+    expect(activeChannelsForAudition).not.toContain(4);
+    // 其餘原本有音符的伴奏軌 (如 Bass ch 1, Chord 1 ch 2) 依然正常發聲
+    expect(activeChannelsForAudition).toContain(1);
+    expect(activeChannelsForAudition).toContain(2);
+
+    // 模擬點擊「恢復全發聲」按鈕
+    delete mockSectionPartMuteState['Intro A'];
+    expect(mockSectionPartMuteState['Intro A']).toBeUndefined();
+  });
 });

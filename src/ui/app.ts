@@ -214,6 +214,9 @@ const STY_PART_META: Record<number, { id: StylePartId; name: string; shortName: 
 
 let stylePartMuteState: Record<number, boolean> = {};
 let stylePartSoloChannel: number | null = null;
+// 模組二 (步驟 2.2): 段落專屬伴奏聲部發聲/靜音狀態字典
+// 結構: styleSectionPartMuteState[sectionName][channel] = true (表示在該段落中靜音)
+let styleSectionPartMuteState: Record<string, Record<number, boolean>> = {};
 
 function getStylePartDisplayName(channel: number): string {
   const meta = STY_PART_META[channel];
@@ -5340,6 +5343,7 @@ function renderParsed(bytes: Uint8Array, filename: string, format: 'STY' | 'PAD'
     updateAuditionUIState(null);
     stylePartMuteState = {};
     stylePartSoloChannel = null;
+    styleSectionPartMuteState = {};
     const bpmInput = document.getElementById('input-playback-bpm') as HTMLInputElement | null;
     const styBpmInput = document.getElementById('sty-playback-bpm') as HTMLInputElement | null;
     if (bpmInput && currentParsed.bpm) {
@@ -5715,19 +5719,34 @@ function updateStySectionCardsSelection() {
     const isSelected = currentActiveStySection !== null && currentActiveStySection === secName;
     card.classList.toggle('section-selected', isSelected);
 
+    const titleContainer = card.querySelector('.section-header-title') || card.querySelector('.section-name')?.parentElement;
+
     let focusBadge = card.querySelector('.badge-section-selected');
     if (isSelected) {
-      if (!focusBadge) {
-        const titleContainer = card.querySelector('.section-header-title') || card.querySelector('.section-name')?.parentElement;
-        if (titleContainer) {
-          const badge = document.createElement('span');
-          badge.className = 'badge-section-selected';
-          badge.textContent = '🎯 聚焦段落';
-          titleContainer.appendChild(badge);
-        }
+      if (!focusBadge && titleContainer) {
+        const badge = document.createElement('span');
+        badge.className = 'badge-section-selected';
+        badge.textContent = '🎯 聚焦段落';
+        titleContainer.appendChild(badge);
       }
     } else if (focusBadge) {
       focusBadge.remove();
+    }
+
+    // 模組二 (步驟 2.2): 段落專屬靜音提示標籤
+    const mutedCount = secName && styleSectionPartMuteState[secName]
+      ? Object.values(styleSectionPartMuteState[secName]).filter(Boolean).length
+      : 0;
+    let muteBadge = card.querySelector('.badge-section-has-mutes');
+    if (mutedCount > 0) {
+      if (!muteBadge && titleContainer) {
+        muteBadge = document.createElement('span');
+        muteBadge.className = 'badge-section-has-mutes';
+        titleContainer.appendChild(muteBadge);
+      }
+      if (muteBadge) muteBadge.textContent = `🔇 ${mutedCount} 聲部靜音`;
+    } else if (muteBadge) {
+      muteBadge.remove();
     }
   });
 }
@@ -5769,6 +5788,11 @@ function toggleStySectionAudition(sectionName: string) {
     if (stylePartSoloChannel !== null) {
       if (ch !== stylePartSoloChannel) continue;
     } else if (stylePartMuteState[ch]) {
+      continue;
+    }
+
+    // 模組二 (步驟 2.2): 段落專屬靜音過濾 (Section Part Mute)
+    if (styleSectionPartMuteState[sectionName]?.[ch]) {
       continue;
     }
 
@@ -9974,6 +9998,20 @@ function updateStyPartsSectionLinkage(parsed: YamahaFileParsed, sectionName: str
       tableContainer.parentElement?.insertBefore(focusBanner, tableContainer);
     }
     focusBanner.style.display = 'flex';
+
+    const mutedPartsCount = sectionName && styleSectionPartMuteState[sectionName]
+      ? Object.values(styleSectionPartMuteState[sectionName]).filter(Boolean).length
+      : 0;
+
+    const muteInfoHtml = mutedPartsCount > 0
+      ? `<span style="display: inline-flex; align-items: center; gap: 6px;">
+           <span style="color: #f87171; font-weight: 700; background: rgba(239,68,68,0.18); border: 1px solid rgba(239,68,68,0.4); padding: 2px 8px; border-radius: 4px;">🔇 本段有 ${mutedPartsCount} 個聲部已靜音</span>
+           <button type="button" class="btn-clear-sec-mutes" title="清除此段落所有專屬靜音，恢復全部聲部發聲">↩️ 恢復全發聲</button>
+         </span>`
+      : `<span style="font-size: 0.74rem; color: #a5b4fc; background: rgba(99,102,241,0.12); padding: 3px 8px; border-radius: 4px; border: 1px solid rgba(99,102,241,0.25);">
+           ⚡ 點擊下方各聲部開關可隨時切換 [本段發聲 / 本段靜音]
+         </span>`;
+
     focusBanner.innerHTML = `
       <div style="display: flex; align-items: center; gap: 8px;">
         <span style="font-size: 1.1rem;">🎯</span>
@@ -9982,10 +10020,22 @@ function updateStyPartsSectionLinkage(parsed: YamahaFileParsed, sectionName: str
           <span style="color: #94a3b8; margin-left: 8px; font-size: 0.76rem;">(長度: ${range.measureCount} 小節 | Tick: ${range.startTick} ~ ${range.endTick})</span>
         </div>
       </div>
-      <div style="font-size: 0.74rem; color: #a5b4fc; background: rgba(99,102,241,0.12); padding: 3px 8px; border-radius: 4px; border: 1px solid rgba(99,102,241,0.25);">
-        ⚡ 各伴奏聲部音符與發聲狀態已自動連動至此段落
+      <div style="display: flex; align-items: center; gap: 8px;">
+        ${muteInfoHtml}
       </div>
     `;
+
+    const btnClearMutes = focusBanner.querySelector('.btn-clear-sec-mutes') as HTMLButtonElement | null;
+    if (btnClearMutes) {
+      btnClearMutes.addEventListener('click', () => {
+        if (!sectionName) return;
+        delete styleSectionPartMuteState[sectionName];
+        updateStySectionCardsSelection();
+        updateStyPartsSectionLinkage(parsed, sectionName);
+        restartCurrentStySectionAudition();
+        showStatus(`已恢復伴奏段落 [${sectionName}] 所有聲部發聲！`);
+      });
+    }
   } else if (focusBanner) {
     focusBanner.style.display = 'none';
   }
@@ -9998,20 +10048,50 @@ function updateStyPartsSectionLinkage(parsed: YamahaFileParsed, sectionName: str
 
     const totalNotes = countPartTotalNotes(parsed, ch);
     const secNotes = range ? StyleRemixer.countNotesInChannel(parsed, range.startTick, range.endTick, ch) : totalNotes;
+    const isSecMuted = !!(sectionName && styleSectionPartMuteState[sectionName]?.[ch]);
 
     const noteCell = tr.querySelector('.part-notes-cell') || tr.cells[1];
     if (noteCell) {
       if (sectionName && range) {
-        const activeHtml = secNotes > 0
-          ? `<span class="part-section-active-badge">🟢 本段: ♪ ${secNotes} 音符 (演奏中)</span>`
-          : `<span class="part-section-silent-badge">⚪ 本段: 0 音符 (未演奏)</span>`;
+        let secStatusHtml = '';
+        if (secNotes > 0) {
+          secStatusHtml = isSecMuted
+            ? `<button type="button" class="btn-sec-mute-toggle muted" data-channel="${ch}" title="目前在 ${escapeHtml(sectionName)} 已靜音，點擊切換為本段發聲">🔴 本段已靜音 (點擊發聲)</button>`
+            : `<button type="button" class="btn-sec-mute-toggle active" data-channel="${ch}" title="目前在 ${escapeHtml(sectionName)} 發聲中，點擊切換為本段靜音">🟢 本段發聲: ♪ ${secNotes} (點擊靜音)</button>`;
+        } else {
+          secStatusHtml = `<span class="part-section-silent-badge">⚪ 本段: 0 音符 (未演奏)</span>`;
+        }
+
         noteCell.innerHTML = `
           <div style="display: flex; flex-direction: column; gap: 3px;">
             <span style="color: #94a3b8; font-family: monospace; font-weight: 600;">Ch ${ch + 1}</span>
-            ${activeHtml}
+            ${secStatusHtml}
             <span class="part-total-notes-badge">全曲總計: ${totalNotes} 音符</span>
           </div>
         `;
+
+        if (secNotes > 0) {
+          const btnSecToggle = noteCell.querySelector(`.btn-sec-mute-toggle[data-channel="${ch}"]`) as HTMLButtonElement | null;
+          if (btnSecToggle) {
+            btnSecToggle.addEventListener('click', (e) => {
+              e.stopPropagation();
+              if (!sectionName) return;
+              if (!styleSectionPartMuteState[sectionName]) {
+                styleSectionPartMuteState[sectionName] = {};
+              }
+              const nextMuted = !styleSectionPartMuteState[sectionName][ch];
+              styleSectionPartMuteState[sectionName][ch] = nextMuted;
+
+              updateStySectionCardsSelection();
+              updateStyPartsSectionLinkage(parsed, sectionName);
+              restartCurrentStySectionAudition();
+
+              const meta = STY_PART_META[ch];
+              const partName = meta?.name || `Ch ${ch + 1}`;
+              showStatus(`伴奏段落 [${sectionName}]：${partName} 已切換為 ${nextMuted ? '🔴 本段靜音' : '🟢 本段發聲'}`);
+            });
+          }
+        }
       } else {
         noteCell.innerHTML = `
           <div style="display: flex; flex-direction: column; gap: 2px;">
@@ -10025,10 +10105,11 @@ function updateStyPartsSectionLinkage(parsed: YamahaFileParsed, sectionName: str
     }
 
     if (sectionName && range) {
-      tr.classList.toggle('part-active-in-section', secNotes > 0);
+      tr.classList.toggle('part-active-in-section', secNotes > 0 && !isSecMuted);
       tr.classList.toggle('part-silent-in-section', secNotes === 0);
+      tr.classList.toggle('part-section-muted', isSecMuted);
     } else {
-      tr.classList.remove('part-active-in-section', 'part-silent-in-section');
+      tr.classList.remove('part-active-in-section', 'part-silent-in-section', 'part-section-muted');
     }
 
     // 檢查是否有段落專屬音色或音量覆寫
