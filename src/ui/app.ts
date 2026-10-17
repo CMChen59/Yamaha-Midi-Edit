@@ -4935,7 +4935,11 @@ function initEvents() {
   const btnTransportPlay = document.getElementById('btn-transport-play');
   if (btnTransportPlay) {
     btnTransportPlay.addEventListener('click', () => {
-      if (currentActivePadNum !== null) {
+      if (currentParsed?.format === 'STY') {
+        if (currentActiveStySection) {
+          toggleStySectionAudition(currentActiveStySection);
+        }
+      } else if (currentActivePadNum !== null) {
         togglePadAudition(currentActivePadNum);
       }
     });
@@ -4984,6 +4988,8 @@ function initEvents() {
     btnTransportStop.addEventListener('click', () => {
       audioEngine.stop();
       audioEngine.stopBackingTrack();
+      currentAuditionStySection = null;
+      updateStySectionAuditionButtons();
       isAllPadsPlaying = false;
       updateEnsembleChipsUI();
       const statusBadge = document.getElementById('transport-status-badge');
@@ -4992,6 +4998,16 @@ function initEvents() {
         currentCanvasRedrawWithPlayhead(null, []);
       }
       updateAuditionUIState(null);
+    });
+  }
+
+  const btnCloseRoll = document.getElementById('btn-close-piano-roll');
+  if (btnCloseRoll) {
+    btnCloseRoll.addEventListener('click', () => {
+      const container = document.getElementById('pad-detail-container');
+      if (container) container.style.display = 'none';
+      currentActiveStyPartChannel = null;
+      updateStyTableSelectedRow();
     });
   }
 
@@ -5223,6 +5239,9 @@ function setupWebMidiControls() {
       audioEngine.stop();
       currentAuditionStySection = null;
       updateStySectionAuditionButtons();
+      if (currentCanvasRedrawWithPlayhead) {
+        currentCanvasRedrawWithPlayhead(null);
+      }
       showStatus('已停止所有伴奏段落試聽');
     });
   }
@@ -5711,12 +5730,16 @@ function togglePadAudition(padNum: number) {
 
 let currentAuditionStySection: string | null = null;
 let currentActiveStySection: string | null = null;
+let currentActiveStyPartChannel: number | null = null;
 
 function selectStySection(sectionName: string) {
   if (!currentParsed || currentParsed.format !== 'STY') return;
   currentActiveStySection = sectionName;
   updateStySectionCardsSelection();
   updateStyPartsSectionLinkage(currentParsed, currentActiveStySection);
+  if (currentActiveStyPartChannel !== null) {
+    showStyPartNotesDetail(currentParsed, currentActiveStySection, currentActiveStyPartChannel);
+  }
 }
 
 function updateStySectionCardsSelection() {
@@ -5860,9 +5883,17 @@ function toggleStySectionAudition(sectionName: string) {
     beatsPerBar: timeSig.numerator,
     volumeRatio: 1.0,
     loop: true,
+    onProgress: (state) => {
+      if (currentCanvasRedrawWithPlayhead) {
+        currentCanvasRedrawWithPlayhead(state.relTick, state.activeNoteNumbers);
+      }
+    },
     onEnded: () => {
       currentAuditionStySection = null;
       updateStySectionAuditionButtons();
+      if (currentCanvasRedrawWithPlayhead) {
+        currentCanvasRedrawWithPlayhead(null);
+      }
     },
   });
 
@@ -5886,6 +5917,21 @@ function updateStySectionAuditionButtons() {
       card?.classList.remove('section-playing');
     }
   });
+
+  if (currentAuditionStySection === null && currentCanvasRedrawWithPlayhead) {
+    currentCanvasRedrawWithPlayhead(null);
+  }
+
+  const transportPlayBtn = document.getElementById('btn-transport-play') as HTMLButtonElement | null;
+  if (transportPlayBtn && currentParsed?.format === 'STY') {
+    if (currentAuditionStySection !== null) {
+      transportPlayBtn.textContent = '⏹ 停止播放';
+      transportPlayBtn.classList.add('playing');
+    } else {
+      transportPlayBtn.textContent = currentActiveStySection ? `▶ 播放伴奏段落 [${currentActiveStySection}]` : '▶ 播放伴奏段落';
+      transportPlayBtn.classList.remove('playing');
+    }
+  }
 }
 
 function renderSections(parsed: YamahaFileParsed) {
@@ -6288,6 +6334,44 @@ function formatAbsolutePosition(
   return { bar, beat, tickInBeat, fractionOfBeat, beatText, summary, standard };
 }
 
+/**
+ * 將鋼琴卷軸容器動態掛載至目前操作模式最合適的視覺區塊：
+ * - PAD 模式：掛載於上方 4 顆打擊墊卡片下方
+ * - STY 模式：掛載於下方 8 聲部互動混音器表格下方
+ */
+function mountPianoRollContainer(mode: 'PAD' | 'STY') {
+  const container = document.getElementById('pad-detail-container');
+  if (!container) return;
+
+  const ensembleGroup = document.getElementById('ensemble-chips-container')?.parentElement;
+  const recBtn = document.getElementById('btn-transport-record');
+  const padBarCtrl = document.getElementById('btn-pad-dec-bar')?.parentElement;
+  const padCopyCtrl = document.getElementById('select-copy-src-bar')?.parentElement;
+  const padDelCtrl = document.getElementById('select-delete-target-bar')?.parentElement;
+
+  if (mode === 'STY') {
+    const tableContainer = document.querySelector('.parts-table-container');
+    if (tableContainer && container.parentElement !== tableContainer.parentElement) {
+      tableContainer.parentElement?.appendChild(container);
+    }
+    if (ensembleGroup) ensembleGroup.style.display = 'none';
+    if (recBtn) recBtn.style.display = 'none';
+    if (padBarCtrl) padBarCtrl.style.display = 'none';
+    if (padCopyCtrl) padCopyCtrl.style.display = 'none';
+    if (padDelCtrl) padDelCtrl.style.display = 'none';
+  } else {
+    const sectionsList = document.getElementById('sections-list');
+    if (sectionsList && container.parentElement !== sectionsList.parentElement) {
+      sectionsList.parentElement?.appendChild(container);
+    }
+    if (ensembleGroup) ensembleGroup.style.display = 'inline-flex';
+    if (recBtn) recBtn.style.display = 'inline-block';
+    if (padBarCtrl) padBarCtrl.style.display = 'inline-flex';
+    if (padCopyCtrl) padCopyCtrl.style.display = 'inline-flex';
+    if (padDelCtrl) padDelCtrl.style.display = 'inline-flex';
+  }
+}
+
 // 展開並繪製指定 Pad 的詳細音符
 function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection | null | undefined, padLabel: string, padNum: number) {
   const container = document.getElementById('pad-detail-container');
@@ -6298,6 +6382,7 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection | null 
   const canvas = document.getElementById('pad-note-canvas') as HTMLCanvasElement | null;
 
   if (!container || !titleEl || !summaryEl || !badgeEl || !canvas) return;
+  mountPianoRollContainer('PAD');
   container.style.display = 'block';
 
   // 僅在切換不同 Pad 時才重設視野起始小節，編輯同一個 Pad 時保留當前檢視小節
@@ -6425,6 +6510,165 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection | null 
       deselectNote();
     }
   }
+}
+
+// 展開並繪製指定 STY 伴奏段落 + 伴奏聲部 (Channel 8~15 或 0~7) 的詳細音符
+function showStyPartNotesDetail(parsed: YamahaFileParsed, sectionName: string, channel: number) {
+  const container = document.getElementById('pad-detail-container');
+  const titleEl = document.getElementById('pad-detail-title');
+  const summaryEl = document.getElementById('pad-detail-summary');
+  const badgeEl = document.getElementById('pad-detail-badge');
+  const startBadgeEl = document.getElementById('pad-detail-start-badge');
+  const canvas = document.getElementById('pad-note-canvas') as HTMLCanvasElement | null;
+
+  if (!container || !titleEl || !summaryEl || !badgeEl || !canvas) return;
+
+  mountPianoRollContainer('STY');
+  container.style.display = 'block';
+
+  // 僅在切換不同聲部時才重設視野起始小節
+  if (currentActiveStyPartChannel !== channel) {
+    rollStartBar = 1;
+    selectedRulerBar = null;
+  }
+  currentActiveStyPartChannel = channel;
+  currentCanvasPadNum = channel + 1;
+  resetHoverInfo();
+
+  const range = StyleRemixer.getSectionTickRange(parsed, sectionName);
+  if (!range) return;
+
+  const notes = StyleRemixer.extractSectionChannelNotes(parsed, range.startTick, range.endTick, channel);
+  notes.sort((a, b) => a.startTick - b.startTick || a.note - b.note);
+
+  const ticksPerBeat = parsed.division || 480;
+  const beatsPerBar = parsed.timeSignature?.numerator || 4;
+  const ticksPerBar = ticksPerBeat * beatsPerBar;
+  const explicitBars = range.measureCount;
+
+  let actualBars = explicitBars;
+  let firstNoteTick = 0;
+  let lastNoteTick = explicitBars * ticksPerBar;
+  let minNote = 48; // C3
+  let maxNote = 72; // C5
+  let avgVel = 100;
+
+  if (notes.length > 0) {
+    minNote = Math.min(...notes.map(n => n.note));
+    maxNote = Math.max(...notes.map(n => n.note));
+    avgVel = Math.round(notes.reduce((sum, n) => sum + n.velocity, 0) / notes.length);
+    firstNoteTick = Math.min(...notes.map(n => n.startTick));
+    lastNoteTick = Math.max(...notes.map(n => n.startTick + n.durationTick));
+    const gridStartTick = Math.floor(firstNoteTick / ticksPerBar) * ticksPerBar;
+    actualBars = Math.max(1, Math.ceil((lastNoteTick - gridStartTick) / ticksPerBar), explicitBars);
+  }
+
+  // 提取音色與聲部資訊
+  const part = parsed.parts.find(p => p.channel === channel);
+  const override = StyleRemixer.getSectionChannelOverride(parsed, range.startTick, range.endTick, channel);
+  const msb = override.bankMsb ?? part?.bankMsb ?? (channel === 9 ? 127 : 0);
+  const lsb = override.bankLsb ?? part?.bankLsb ?? (channel === 9 ? 0 : 112);
+  const pc = override.pc ?? part?.programChange ?? 0;
+
+  const meta = STY_PART_META[channel] || {
+    id: 'Phrase2' as StylePartId,
+    name: part?.partName || `Part (Ch ${channel + 1})`,
+    shortName: `Part ${channel + 1}`,
+    icon: '🎵',
+    color: '#94a3b8',
+    bg: 'rgba(148, 163, 184, 0.15)',
+    border: 'rgba(148, 163, 184, 0.35)',
+  };
+
+  const yVoice = findYamahaVoice(msb, lsb, pc);
+  const matchedInst = PRESET_INSTRUMENTS.find(i => i.pc === pc && (msb === 0 || i.msb === msb))
+    || PRESET_INSTRUMENTS.find(i => i.pc === pc);
+  const voiceName = yVoice
+    ? `${yVoice.name} (${yVoice.chineseName})`
+    : (matchedInst ? matchedInst.label : `自訂音色 (PC ${pc}, Bank ${msb}-${lsb})`);
+
+  const { instrumentId: instId, isDrum } = resolveAuditionInstrumentId(msb, lsb, pc, channel);
+  currentCanvasPadInstrument = {
+    instrumentId: instId,
+    pc,
+    msb,
+    lsb,
+    channel,
+    isDrum,
+  };
+
+  // 同步走帶播放按鈕狀態
+  const transportPlayBtn = document.getElementById('btn-transport-play');
+  if (transportPlayBtn) {
+    const isPlaying = currentAuditionStySection === sectionName;
+    transportPlayBtn.textContent = isPlaying ? '⏹ 停止播放' : `▶ 播放伴奏段落 [${sectionName}]`;
+    transportPlayBtn.classList.toggle('playing', isPlaying);
+  }
+
+  titleEl.innerHTML = `<span style="color: #38bdf8; font-weight: 700;">🎯 [${escapeHtml(sectionName)}]</span> - <span style="color: ${meta.color}; font-weight: 700;">${meta.icon} ${meta.name}</span> <small style="color: #94a3b8; font-weight: normal;">(Ch ${channel + 1})</small> 詳細音符內容`;
+
+  const absStartBar = Math.floor(range.startTick / ticksPerBar) + 1;
+  const absEndBar = Math.floor(range.endTick / ticksPerBar);
+
+  if (notes.length === 0) {
+    if (startBadgeEl) {
+      startBadgeEl.textContent = `📍 段落時間軸: Tick ${range.startTick} ~ ${range.endTick} (全曲第 ${absStartBar} ~ ${absEndBar} 小節)`;
+      startBadgeEl.title = '此伴奏聲部在此段落為空白 (無音符演奏)';
+    }
+    badgeEl.textContent = `共 ${explicitBars} 小節 (本段未演奏)`;
+    summaryEl.innerHTML = `<span style="display: inline-block; padding: 2px 8px; border-radius: 4px; background: ${meta.bg}; color: ${meta.color}; border: 1px solid ${meta.border}; font-weight: 600; margin-right: 8px;">演奏音色: ${voiceName}</span> <span>共 0 顆音符 (空白)</span> | <span>音域: C3 (48) ~ C5 (72)</span>`;
+  } else {
+    if (startBadgeEl) {
+      startBadgeEl.textContent = `📍 段落時間軸: Tick ${range.startTick} ~ ${range.endTick} (全曲第 ${absStartBar} ~ ${absEndBar} 小節)`;
+      startBadgeEl.title = `段落時序: 起始 Tick ${range.startTick}，結束 Tick ${range.endTick}，長度共 ${explicitBars} 小節`;
+    }
+    badgeEl.textContent = `⏱️ 音符範圍 Tick: ${firstNoteTick} ~ ${lastNoteTick} (共 ${actualBars} 小節)`;
+    summaryEl.innerHTML = `<span style="display: inline-block; padding: 2px 8px; border-radius: 4px; background: ${meta.bg}; color: ${meta.color}; border: 1px solid ${meta.border}; font-weight: 600; margin-right: 8px;">演奏音色: ${voiceName}</span> <span>共 ${notes.length} 顆音符</span> | <span>音域: ${midiNoteToName(minNote)} (${minNote}) ~ ${midiNoteToName(maxNote)} (${maxNote})</span> | <span>平均力度: ${avgVel}</span>`;
+  }
+
+  drawNoteRoll(canvas, notes, channel + 1, ticksPerBeat, beatsPerBar, explicitBars);
+  setupMeasureControls();
+  setupOctaveAndQuantizeControls();
+  updateMeasureControlsUI(actualBars);
+  updateStyTableSelectedRow();
+
+  // 若有選取的音符，維持選取態
+  if (selectedNoteBoxes.length > 0) {
+    const reFoundList: RenderedNoteBox[] = [];
+    for (const prev of selectedNoteBoxes) {
+      const found = lastRenderedNoteBoxes.find(b => b.startTick === prev.startTick && b.note === prev.note);
+      if (found) reFoundList.push(found);
+    }
+    selectedNoteBoxes = reFoundList;
+    if (selectedNoteBoxes.length === 1) {
+      selectedNoteBox = selectedNoteBoxes[0];
+      updateInspectorFields(selectedNoteBox);
+    } else if (selectedNoteBoxes.length > 1) {
+      selectedNoteBox = selectedNoteBoxes[0];
+      updateBatchInspectorUI();
+    } else {
+      deselectNote();
+    }
+  } else if (selectedNoteBox) {
+    const reFound = lastRenderedNoteBoxes.find(b => b.startTick === selectedNoteBox!.startTick && b.note === selectedNoteBox!.note);
+    if (reFound) {
+      selectedNoteBox = reFound;
+      selectedNoteBoxes = [reFound];
+      updateInspectorFields(reFound);
+    } else {
+      deselectNote();
+    }
+  }
+}
+
+function updateStyTableSelectedRow() {
+  document.querySelectorAll<HTMLTableRowElement>('.sty-table-row').forEach(tr => {
+    const classMatch = tr.className.match(/sty-table-row-(\d+)/);
+    if (!classMatch) return;
+    const ch = parseInt(classMatch[1], 10);
+    const isSelected = currentActiveStyPartChannel === ch;
+    tr.classList.toggle('row-selected-canvas', isSelected);
+  });
 }
 
 function formatNoteDuration(ticks: number, ticksPerBeat: number, beatsPerBar: number = 4): string {
@@ -6626,7 +6870,8 @@ function drawNoteRoll(
   notes: Array<{ note: number; velocity: number; startTick: number; durationTick: number }>,
   padNum: number,
   ticksPerBeat: number = 96,
-  beatsPerBar: number = 4
+  beatsPerBar: number = 4,
+  explicitBarsOverride?: number
 ) {
   // 垂直音高基準 (保留適度邊距；若為空白 Pad 預設顯示舒適雙八度 C3 ~ C5)
   const hasNotes = notes.length > 0;
@@ -6660,7 +6905,19 @@ function drawNoteRoll(
   }
 
   const ticksPerBar = ticksPerBeat * beatsPerBar;
-  const explicitBars = currentParsed ? YamahaPadModifier.getPadBarLength(currentParsed, padNum) : 4;
+  let explicitBars = 4;
+  if (explicitBarsOverride !== undefined && explicitBarsOverride > 0) {
+    explicitBars = explicitBarsOverride;
+  } else if (currentParsed) {
+    if (currentParsed.format === 'STY') {
+      if (currentActiveStySection) {
+        const range = StyleRemixer.getSectionTickRange(currentParsed, currentActiveStySection);
+        explicitBars = range ? range.measureCount : 4;
+      }
+    } else {
+      explicitBars = YamahaPadModifier.getPadBarLength(currentParsed, padNum);
+    }
+  }
   const firstNoteTick = notes.length > 0 ? Math.min(...notes.map(n => n.startTick)) : 0;
   const lastNoteTick = notes.length > 0 ? Math.max(...notes.map(n => n.startTick + n.durationTick)) : explicitBars * ticksPerBar;
 
@@ -6814,7 +7071,8 @@ function drawNoteRoll(
         ctx.fillStyle = '#fbbf24';
         ctx.font = 'bold 10px sans-serif';
         ctx.textAlign = 'right';
-        ctx.fillText(`⮜ Pad 循環結尾 (共 ${totalBars} 小節)`, activeEndX - 6, rulerH + 16);
+        const loopEndDesc = currentParsed?.format === 'STY' ? `⮜ 段落結尾 (共 ${totalBars} 小節)` : `⮜ Pad 循環結尾 (共 ${totalBars} 小節)`;
+        ctx.fillText(loopEndDesc, activeEndX - 6, rulerH + 16);
       }
     }
 
@@ -6951,7 +7209,14 @@ function drawNoteRoll(
       { fill: '#f59e0b', border: '#fbbf24' }, // Pad 3 琥珀
       { fill: '#ec4899', border: '#f472b6' }, // Pad 4 粉紅
     ];
-    const theme = themeColors[(padNum - 1) % themeColors.length];
+    let theme = themeColors[(padNum - 1) % themeColors.length];
+    if (currentParsed && currentParsed.format === 'STY') {
+      const partCh = currentActiveStyPartChannel ?? (padNum - 1);
+      const meta = STY_PART_META[partCh];
+      if (meta) {
+        theme = { fill: meta.color, border: '#ffffff' };
+      }
+    }
 
     const boxes: RenderedNoteBox[] = [];
 
@@ -7251,7 +7516,14 @@ function drawVelocityLane(
     { stalk: '#f59e0b', handle: '#fbbf24' },
     { stalk: '#ec4899', handle: '#f472b6' },
   ];
-  const theme = themeColors[(padNum - 1) % themeColors.length];
+  let theme = themeColors[(padNum - 1) % themeColors.length];
+  if (currentParsed && currentParsed.format === 'STY') {
+    const partCh = currentActiveStyPartChannel ?? (padNum - 1);
+    const meta = STY_PART_META[partCh];
+    if (meta) {
+      theme = { stalk: meta.color, handle: '#ffffff' };
+    }
+  }
 
   const stalks: RenderedVelocityStalk[] = [];
 
@@ -8925,10 +9197,16 @@ function auditionSelectedNotes(boxes: RenderedNoteBox[]) {
 
 function refreshCurrentPadDetail() {
   if (!currentParsed) return;
-  const sec = currentParsed.sections[currentCanvasPadNum - 1];
-  const nameInput = document.querySelector(`.pad-card-${currentCanvasPadNum} .pad-name-input`) as HTMLInputElement | null;
-  const currentName = nameInput ? nameInput.value : `Pad ${currentCanvasPadNum}`;
-  showPadNotesDetail(currentParsed, sec, currentName, currentCanvasPadNum);
+  if (currentParsed.format === 'STY') {
+    if (currentActiveStySection && currentActiveStyPartChannel !== null) {
+      showStyPartNotesDetail(currentParsed, currentActiveStySection, currentActiveStyPartChannel);
+    }
+  } else {
+    const sec = currentParsed.sections[currentCanvasPadNum - 1];
+    const nameInput = document.querySelector(`.pad-card-${currentCanvasPadNum} .pad-name-input`) as HTMLInputElement | null;
+    const currentName = nameInput ? nameInput.value : `Pad ${currentCanvasPadNum}`;
+    showPadNotesDetail(currentParsed, sec, currentName, currentCanvasPadNum);
+  }
 }
 
 function initNoteInspectorEvents() {
@@ -9964,6 +10242,24 @@ function renderParts(parsed: YamahaFileParsed) {
         restartCurrentStySectionAudition();
       });
 
+      // 點擊此列在下方鋼琴卷軸 (Piano Roll) 中檢視該伴奏聲部音符
+      tr.addEventListener('click', (e) => {
+        const target = e.target as HTMLElement;
+        if (target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.tagName === 'SELECT') return;
+        if (!currentActiveStySection) {
+          const musicalSections = StyleRemixer.getMusicalSections(parsed);
+          currentActiveStySection = musicalSections[0]?.name || parsed.sections[0]?.name || 'Main A';
+          updateStySectionCardsSelection();
+        }
+        currentActiveStyPartChannel = ch;
+        updateStyTableSelectedRow();
+        showStyPartNotesDetail(parsed, currentActiveStySection, ch);
+        const container = document.getElementById('pad-detail-container');
+        if (container) {
+          container.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      });
+
       partsTbody.appendChild(tr);
     }
 
@@ -10116,9 +10412,17 @@ function updateStyPartsSectionLinkage(parsed: YamahaFileParsed, sectionName: str
           secStatusHtml = `<span class="part-section-silent-badge">⚪ 本段: 0 音符 (未演奏)</span>`;
         }
 
+        const isRowCanvasSelected = currentActiveStyPartChannel === ch;
+        const selectedRollBadge = isRowCanvasSelected
+          ? `<span style="font-size: 0.68rem; color: #38bdf8; font-weight: 700; background: rgba(56,189,248,0.15); padding: 1px 5px; border-radius: 3px; border: 1px solid rgba(56,189,248,0.3); width: fit-content;">🎹 卷軸檢視中</span>`
+          : '';
+
         noteCell.innerHTML = `
           <div style="display: flex; flex-direction: column; gap: 3px;">
-            <span style="color: #94a3b8; font-family: monospace; font-weight: 600;">Ch ${ch + 1}</span>
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span style="color: #94a3b8; font-family: monospace; font-weight: 600;">Ch ${ch + 1}</span>
+              ${selectedRollBadge}
+            </div>
             ${secStatusHtml}
             <span class="part-total-notes-badge">全曲總計: ${totalNotes} 音符</span>
           </div>
@@ -10147,9 +10451,16 @@ function updateStyPartsSectionLinkage(parsed: YamahaFileParsed, sectionName: str
           }
         }
       } else {
+        const isRowCanvasSelected = currentActiveStyPartChannel === ch;
+        const selectedRollBadge = isRowCanvasSelected
+          ? `<span style="font-size: 0.68rem; color: #38bdf8; font-weight: 700; background: rgba(56,189,248,0.15); padding: 1px 5px; border-radius: 3px; border: 1px solid rgba(56,189,248,0.3); width: fit-content;">🎹 卷軸檢視中</span>`
+          : '';
         noteCell.innerHTML = `
           <div style="display: flex; flex-direction: column; gap: 2px;">
-            <span style="color: #94a3b8; font-family: monospace; font-weight: 600;">Ch ${ch + 1}</span>
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span style="color: #94a3b8; font-family: monospace; font-weight: 600;">Ch ${ch + 1}</span>
+              ${selectedRollBadge}
+            </div>
             <span style="font-size: 0.72rem; color: ${totalNotes > 0 ? '#10b981' : '#64748b'};">
               ${totalNotes > 0 ? `♪ ${totalNotes} 音符` : '無音符'}
             </span>
@@ -10157,6 +10468,9 @@ function updateStyPartsSectionLinkage(parsed: YamahaFileParsed, sectionName: str
         `;
       }
     }
+
+    const isRowCanvasSelected = currentActiveStyPartChannel === ch;
+    tr.classList.toggle('row-selected-canvas', isRowCanvasSelected);
 
     if (sectionName && range) {
       tr.classList.toggle('part-active-in-section', secNotes > 0 && !isSecMuted);
