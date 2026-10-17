@@ -8336,6 +8336,23 @@ function setupMeasureControls() {
   if (btnInc) {
     btnInc.addEventListener('click', () => {
       if (!currentParsed) return;
+      if (currentParsed.format === 'STY') {
+        if (!currentActiveStySection) return;
+        const curLen = YamahaStyleModifier.getSectionMeasureCount(currentParsed, currentActiveStySection);
+        const newLen = curLen + 1;
+        YamahaStyleModifier.resizeSectionMeasures(currentParsed, currentActiveStySection, newLen);
+        markModified(`已將伴奏段落 [${currentActiveStySection}] 長度擴展為 ${newLen} 小節`);
+        renderSections(currentParsed);
+        updateStyPartsSectionLinkage(currentParsed, currentActiveStySection);
+        refreshCurrentPadDetail();
+        const hoverInfoEl = document.getElementById('canvas-hover-info');
+        if (hoverInfoEl) {
+          hoverInfoEl.innerHTML = `➕ <span style="color:#10b981;font-weight:700;">已擴展伴奏段落 [${currentActiveStySection}] 長度</span>：由 ${curLen} 小節 ➔ <strong>${newLen} 小節</strong>！`;
+          hoverInfoEl.style.backgroundColor = 'rgba(16, 185, 129, 0.16)';
+        }
+        return;
+      }
+
       const curLen = YamahaPadModifier.getPadBarLength(currentParsed, currentCanvasPadNum);
       const newLen = curLen + 1;
       YamahaPadModifier.setPadBarLength(currentParsed, currentCanvasPadNum, newLen);
@@ -8352,6 +8369,54 @@ function setupMeasureControls() {
   if (btnDec) {
     btnDec.addEventListener('click', () => {
       if (!currentParsed) return;
+      if (currentParsed.format === 'STY') {
+        if (!currentActiveStySection) return;
+        const curLen = YamahaStyleModifier.getSectionMeasureCount(currentParsed, currentActiveStySection);
+        if (curLen <= 1) {
+          alert('伴奏段落最少需保留 1 個小節！');
+          return;
+        }
+
+        const range = StyleRemixer.getSectionTickRange(currentParsed, currentActiveStySection);
+        if (range) {
+          const ticksPerBeat = currentParsed.division || 480;
+          const beatsPerBar = currentParsed.timeSignature?.numerator || 4;
+          const ticksPerBar = ticksPerBeat * beatsPerBar;
+          const lastBarStartTick = (curLen - 1) * ticksPerBar;
+          let hasNotesInLastBar = false;
+          const targetChannel = currentActiveStyPartChannel ?? -1;
+          if (targetChannel >= 0) {
+            const chNotes = StyleRemixer.extractSectionChannelNotes(currentParsed, range.startTick, range.endTick, targetChannel);
+            hasNotesInLastBar = chNotes.some(n => n.startTick >= lastBarStartTick);
+          } else {
+            for (let ch = 0; ch < 16; ch++) {
+              const chNotes = StyleRemixer.extractSectionChannelNotes(currentParsed, range.startTick, range.endTick, ch);
+              if (chNotes.some(n => n.startTick >= lastBarStartTick)) {
+                hasNotesInLastBar = true;
+                break;
+              }
+            }
+          }
+          if (hasNotesInLastBar) {
+            const ok = window.confirm(`伴奏段落 [${currentActiveStySection}] 的第 ${curLen} 小節包含演奏音符，確定要縮減為 ${curLen - 1} 小節嗎？(裁切小節內的音符將被移除)`);
+            if (!ok) return;
+          }
+        }
+
+        const newLen = curLen - 1;
+        YamahaStyleModifier.resizeSectionMeasures(currentParsed, currentActiveStySection, newLen);
+        markModified(`已將伴奏段落 [${currentActiveStySection}] 長度縮減為 ${newLen} 小節`);
+        renderSections(currentParsed);
+        updateStyPartsSectionLinkage(currentParsed, currentActiveStySection);
+        refreshCurrentPadDetail();
+        const hoverInfoEl = document.getElementById('canvas-hover-info');
+        if (hoverInfoEl) {
+          hoverInfoEl.innerHTML = `➖ <span style="color:#f59e0b;font-weight:700;">已縮減伴奏段落 [${currentActiveStySection}] 長度</span>：為 <strong>${newLen} 小節</strong>。`;
+          hoverInfoEl.style.backgroundColor = 'rgba(245, 158, 11, 0.16)';
+        }
+        return;
+      }
+
       const curLen = YamahaPadModifier.getPadBarLength(currentParsed, currentCanvasPadNum);
       if (curLen <= 1) return;
 
@@ -8392,6 +8457,34 @@ function setupMeasureControls() {
         return;
       }
 
+      if (currentParsed.format === 'STY') {
+        if (!currentActiveStySection) return;
+        const channel = currentActiveStyPartChannel ?? -1;
+        const result = YamahaStyleModifier.copySectionMeasure(currentParsed, currentActiveStySection, channel, srcBar, destBar, mode);
+        if (result.success) {
+          deselectNote();
+          const modeText = mode === 'insert' ? '插入順移' : '覆蓋替換';
+          const partLabel = channel >= 0 ? `聲部 Ch ${channel + 1}` : '全體伴奏聲部';
+          markModified(`已將伴奏段落 [${currentActiveStySection}] ${partLabel} 第 ${srcBar} 小節以【${modeText}】至第 ${destBar} 小節 (共複製 ${result.copiedCount} 顆音符，總長度: ${result.newTotalBars} 小節)`);
+          if (mode === 'insert' || result.newTotalBars !== YamahaStyleModifier.getSectionMeasureCount(currentParsed, currentActiveStySection)) {
+            renderSections(currentParsed);
+            updateStyPartsSectionLinkage(currentParsed, currentActiveStySection);
+          }
+          refreshCurrentPadDetail();
+          const hoverInfoEl = document.getElementById('canvas-hover-info');
+          if (hoverInfoEl) {
+            const actionMsg = mode === 'insert'
+              ? `已將第 ${srcBar} 小節【插入】至第 ${destBar} 小節，原目標及後續小節已自動向後順移 (+1 小節)`
+              : `已將第 ${srcBar} 小節【覆蓋替換】至第 ${destBar} 小節`;
+            hoverInfoEl.innerHTML = `🎉 <span style="color:#10b981;font-weight:700;">複製成功 (${modeText})</span>：${actionMsg} (共複製 ${result.copiedCount} 顆音符，總長度: ${result.newTotalBars} 小節)！`;
+            hoverInfoEl.style.backgroundColor = 'rgba(16, 185, 129, 0.16)';
+          }
+        } else {
+          alert(`伴奏段落 [${currentActiveStySection}] 第 ${srcBar} 小節沒有音符可供複製！`);
+        }
+        return;
+      }
+
       const result = YamahaPadModifier.copyPadMeasure(currentParsed, currentCanvasPadNum, srcBar, destBar, mode);
       if (result.success) {
         deselectNote();
@@ -8415,6 +8508,35 @@ function setupMeasureControls() {
   if (btnDup) {
     btnDup.addEventListener('click', () => {
       if (!currentParsed) return;
+      if (currentParsed.format === 'STY') {
+        if (!currentActiveStySection) return;
+        const curLen = YamahaStyleModifier.getSectionMeasureCount(currentParsed, currentActiveStySection);
+        let srcBar = selectSrc ? parseInt(selectSrc.value, 10) : curLen;
+        if (selectedRulerBar) {
+          srcBar = selectedRulerBar;
+        } else if (selectedNoteBox) {
+          const ticksPerBar = (currentParsed.division || 480) * (currentParsed.timeSignature?.numerator || 4);
+          srcBar = Math.floor((selectedNoteBox.startTick - currentGridStartTick) / ticksPerBar) + 1;
+        }
+
+        const channel = currentActiveStyPartChannel ?? -1;
+        const result = YamahaStyleModifier.duplicateSectionMeasure(currentParsed, currentActiveStySection, channel, srcBar);
+        if (result.success) {
+          markModified(`已將伴奏段落 [${currentActiveStySection}] 第 ${srcBar} 小節倍增複製至第 ${result.newTargetBar} 小節`);
+          renderSections(currentParsed);
+          updateStyPartsSectionLinkage(currentParsed, currentActiveStySection);
+          refreshCurrentPadDetail();
+          const hoverInfoEl = document.getElementById('canvas-hover-info');
+          if (hoverInfoEl) {
+            hoverInfoEl.innerHTML = `🔁 <span style="color:#10b981;font-weight:700;">已一鍵倍增</span>：第 ${srcBar} 小節 ➔ 第 ${result.newTargetBar} 小節 (總長度: ${result.newTargetBar} 小節)！`;
+            hoverInfoEl.style.backgroundColor = 'rgba(16, 185, 129, 0.16)';
+          }
+        } else {
+          alert(`第 ${srcBar} 小節沒有音符可供倍增！`);
+        }
+        return;
+      }
+
       const curLen = YamahaPadModifier.getPadBarLength(currentParsed, currentCanvasPadNum);
       let srcBar = selectSrc ? parseInt(selectSrc.value, 10) : curLen;
       if (selectedRulerBar) {
@@ -8442,6 +8564,45 @@ function setupMeasureControls() {
   if (btnRipple) {
     btnRipple.addEventListener('click', () => {
       if (!currentParsed || !selectDel) return;
+      if (currentParsed.format === 'STY') {
+        if (!currentActiveStySection) return;
+        const curLen = YamahaStyleModifier.getSectionMeasureCount(currentParsed, currentActiveStySection);
+        const targetBar = parseInt(selectDel.value, 10);
+        if (isNaN(targetBar) || targetBar < 1 || targetBar > curLen) return;
+
+        if (curLen <= 1) {
+          alert('伴奏段落最少需保留 1 個小節，無法再剪除結構！若欲清空內容請使用「清空音符」。');
+          return;
+        }
+
+        const channel = currentActiveStyPartChannel ?? -1;
+        const partLabel = channel >= 0 ? `聲部 Ch ${channel + 1}` : '全體伴奏聲部';
+
+        const ok = window.confirm(
+          `確定要剪除伴奏段落 [${currentActiveStySection}] ${partLabel} 的【第 ${targetBar} 小節】嗎？\n\n` +
+          `• 該小節內所有伴奏音符將自動清除\n` +
+          `• 後方小節音符將自動往前順移 1 個小節\n` +
+          `• 段落總長度將由 ${curLen} 縮減為 ${curLen - 1} 小節`
+        );
+        if (!ok) return;
+
+        const result = YamahaStyleModifier.deleteSectionMeasure(currentParsed, currentActiveStySection, channel, targetBar, 'ripple');
+        if (result.success) {
+          selectedRulerBar = null;
+          deselectNote();
+          markModified(`已剪除伴奏段落 [${currentActiveStySection}] 第 ${targetBar} 小節 (共移除 ${result.deletedCount} 顆音符，總長度: ${result.newTotalBars} 小節)`);
+          renderSections(currentParsed);
+          updateStyPartsSectionLinkage(currentParsed, currentActiveStySection);
+          refreshCurrentPadDetail();
+          const hoverInfoEl = document.getElementById('canvas-hover-info');
+          if (hoverInfoEl) {
+            hoverInfoEl.innerHTML = `✂️ <span style="color:#f87171;font-weight:700;">小節剪除成功</span>：已剪除第 ${targetBar} 小節 (共移除 ${result.deletedCount} 顆音符)，後續音符已自動順移遞補，總長度為 <strong>${result.newTotalBars} 小節</strong>！`;
+            hoverInfoEl.style.backgroundColor = 'rgba(239, 68, 68, 0.16)';
+          }
+        }
+        return;
+      }
+
       const curLen = YamahaPadModifier.getPadBarLength(currentParsed, currentCanvasPadNum);
       const targetBar = parseInt(selectDel.value, 10);
       if (isNaN(targetBar) || targetBar < 1 || targetBar > curLen) return;
@@ -8479,6 +8640,32 @@ function setupMeasureControls() {
   if (btnClear) {
     btnClear.addEventListener('click', () => {
       if (!currentParsed || !selectDel) return;
+      if (currentParsed.format === 'STY') {
+        if (!currentActiveStySection) return;
+        const curLen = YamahaStyleModifier.getSectionMeasureCount(currentParsed, currentActiveStySection);
+        const targetBar = parseInt(selectDel.value, 10);
+        if (isNaN(targetBar) || targetBar < 1 || targetBar > curLen) return;
+
+        const channel = currentActiveStyPartChannel ?? -1;
+        const partLabel = channel >= 0 ? `聲部 Ch ${channel + 1}` : '所有聲部';
+        const ok = window.confirm(`確定要清空伴奏段落 [${currentActiveStySection}] ${partLabel} 的【第 ${targetBar} 小節】所有音符嗎？\n\n• 該小節將變為完全靜音的空白小節\n• 後方小節音符位置與段落總長度 (${curLen} 小節) 將維持不變`);
+        if (!ok) return;
+
+        const result = YamahaStyleModifier.deleteSectionMeasure(currentParsed, currentActiveStySection, channel, targetBar, 'clear');
+        if (result.success) {
+          selectedRulerBar = null;
+          deselectNote();
+          markModified(`已清空伴奏段落 [${currentActiveStySection}] ${partLabel} 第 ${targetBar} 小節音符 (共清空 ${result.deletedCount} 顆音符)`);
+          refreshCurrentPadDetail();
+          const hoverInfoEl = document.getElementById('canvas-hover-info');
+          if (hoverInfoEl) {
+            hoverInfoEl.innerHTML = `🧹 <span style="color:#fbbf24;font-weight:700;">音符清空成功</span>：已清空第 ${targetBar} 小節所有音符 (共清空 ${result.deletedCount} 顆音符)，後方音符與段落總小節數 (${result.newTotalBars} 小節) 保持不變。`;
+            hoverInfoEl.style.backgroundColor = 'rgba(245, 158, 11, 0.16)';
+          }
+        }
+        return;
+      }
+
       const curLen = YamahaPadModifier.getPadBarLength(currentParsed, currentCanvasPadNum);
       const targetBar = parseInt(selectDel.value, 10);
       if (isNaN(targetBar) || targetBar < 1 || targetBar > curLen) return;
@@ -9809,6 +9996,33 @@ function initNoteInspectorEvents() {
             targetBar = destSelect ? parseInt(destSelect.value, 10) : (clipboardCopiedBar + 1);
           }
           const mode = e.shiftKey ? 'insert' : ((copyModeSelect?.value as 'replace' | 'insert') || 'replace');
+
+          if (currentParsed?.format === 'STY') {
+            if (!currentActiveStySection) return;
+            const channel = currentActiveStyPartChannel ?? -1;
+            const res = YamahaStyleModifier.copySectionMeasure(currentParsed, currentActiveStySection, channel, clipboardCopiedBar, targetBar, mode);
+            if (res.success) {
+              deselectNote();
+              const modeText = mode === 'insert' ? '插入順移' : '覆蓋替換';
+              const partLabel = channel >= 0 ? `聲部 Ch ${channel + 1}` : '全體伴奏聲部';
+              markModified(`已將伴奏段落 [${currentActiveStySection}] ${partLabel} 第 ${clipboardCopiedBar} 小節以【${modeText}】至第 ${targetBar} 小節 (共複製 ${res.copiedCount} 顆音符)`);
+              if (mode === 'insert' || res.newTotalBars !== YamahaStyleModifier.getSectionMeasureCount(currentParsed, currentActiveStySection)) {
+                renderSections(currentParsed);
+                updateStyPartsSectionLinkage(currentParsed, currentActiveStySection);
+              }
+              refreshCurrentPadDetail();
+              if (hoverInfoEl) {
+                const actionMsg = mode === 'insert'
+                  ? `已【插入順移】至第 ${targetBar} 小節，後續小節自動往後推移 (+1 小節)`
+                  : `已【覆蓋替換】至第 ${targetBar} 小節`;
+                hoverInfoEl.innerHTML = `🎉 <span style="color:#10b981;font-weight:700;">已貼上 (${modeText})</span>：第 ${clipboardCopiedBar} 小節 ➔ ${actionMsg} (共 ${res.copiedCount} 顆音符，總長度: ${res.newTotalBars} 小節)！`;
+                hoverInfoEl.style.backgroundColor = 'rgba(16, 185, 129, 0.16)';
+              }
+            }
+            e.preventDefault();
+            return;
+          }
+
           const res = YamahaPadModifier.copyPadMeasure(currentParsed, currentCanvasPadNum, clipboardCopiedBar, targetBar, mode);
           if (res.success) {
             deselectNote();
@@ -9831,6 +10045,25 @@ function initNoteInspectorEvents() {
         if (!srcBar && selectedNoteBox) {
           srcBar = Math.floor((selectedNoteBox.startTick - currentGridStartTick) / (currentTicksPerBeat * currentBeatsPerBar)) + 1;
         }
+
+        if (currentParsed?.format === 'STY') {
+          if (!currentActiveStySection) return;
+          const channel = currentActiveStyPartChannel ?? -1;
+          const res = YamahaStyleModifier.duplicateSectionMeasure(currentParsed, currentActiveStySection, channel, srcBar ?? undefined);
+          if (res.success) {
+            markModified(`已將伴奏段落 [${currentActiveStySection}] 第 ${srcBar || 1} 小節倍增至第 ${res.newTargetBar} 小節`);
+            renderSections(currentParsed);
+            updateStyPartsSectionLinkage(currentParsed, currentActiveStySection);
+            refreshCurrentPadDetail();
+            if (hoverInfoEl) {
+              hoverInfoEl.innerHTML = `🔁 <span style="color:#10b981;font-weight:700;">已一鍵倍增</span>：新第 ${res.newTargetBar} 小節 (總長度: ${res.newTargetBar} 小節)！`;
+              hoverInfoEl.style.backgroundColor = 'rgba(16, 185, 129, 0.16)';
+            }
+          }
+          e.preventDefault();
+          return;
+        }
+
         const res = YamahaPadModifier.duplicatePadMeasure(currentParsed, currentCanvasPadNum, srcBar ?? undefined);
         if (res.success) {
           markModified(`已將 Pad ${currentCanvasPadNum} 第 ${srcBar || 1} 小節倍增至第 ${res.newTargetBar} 小節`);

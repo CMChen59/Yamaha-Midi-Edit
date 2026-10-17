@@ -71,4 +71,101 @@ describe('步驟 2.3: STY 段落小節長度動態裁切與延伸 (Measure Cut &
     const newNotesCount = StyleRemixer.countNotesInChannel(parsed, rangeAfter.startTick, rangeAfter.endTick, 9);
     expect(newNotesCount).toBeGreaterThan(oldNotesCount);
   });
+
+  it('3. 步驟 3.3 小節覆蓋複製 (Replace Mode)：能將第 1 小節音符複製覆蓋至第 2 小節', () => {
+    const buffer = fs.readFileSync(sampleStyPath);
+    const parsed = YamahaParser.parse(new Uint8Array(buffer), 'STY');
+
+    const rangeBefore = StyleRemixer.getSectionTickRange(parsed, 'Main A')!;
+    const curBars = YamahaStyleModifier.getSectionMeasureCount(parsed, 'Main A');
+    expect(curBars).toBe(8);
+
+    // 複製第 1 小節至第 2 小節 (聲部 Ch 9, 覆蓋模式)
+    const res = YamahaStyleModifier.copySectionMeasure(parsed, 'Main A', 9, 1, 2, 'replace');
+    expect(res.success).toBe(true);
+    expect(res.copiedCount).toBeGreaterThan(0);
+    expect(res.newTotalBars).toBe(8);
+
+    // 驗證總長度未變，且第 2 小節音符數與第 1 小節相同
+    const rangeAfter = StyleRemixer.getSectionTickRange(parsed, 'Main A')!;
+    expect(rangeAfter.measureCount).toBe(8);
+
+    const ticksPerMeasure = 7680;
+    const bar1Notes = StyleRemixer.extractSectionChannelNotes(parsed, rangeAfter.startTick, rangeAfter.endTick, 9)
+      .filter(n => n.startTick < ticksPerMeasure);
+    const bar2Notes = StyleRemixer.extractSectionChannelNotes(parsed, rangeAfter.startTick, rangeAfter.endTick, 9)
+      .filter(n => n.startTick >= ticksPerMeasure && n.startTick < ticksPerMeasure * 2);
+
+    expect(bar2Notes.length).toBe(bar1Notes.length);
+  });
+
+  it('4. 步驟 3.3 小節插入順移 (Insert Mode)：能將第 1 小節插入至第 2 小節，總長度由 8 變為 9 小節並順移後續段落', () => {
+    const buffer = fs.readFileSync(sampleStyPath);
+    const parsed = YamahaParser.parse(new Uint8Array(buffer), 'STY');
+
+    const mainBBefore = parsed.sections.find(s => s.name === 'Main B')!;
+    const mainBStartBefore = mainBBefore.startTick;
+
+    // 插入複製第 1 小節至第 2 小節 (全軌模式 channel = -1)
+    const res = YamahaStyleModifier.copySectionMeasure(parsed, 'Main A', -1, 1, 2, 'insert');
+    expect(res.success).toBe(true);
+    expect(res.newTotalBars).toBe(9);
+
+    const rangeAfter = StyleRemixer.getSectionTickRange(parsed, 'Main A')!;
+    expect(rangeAfter.measureCount).toBe(9);
+
+    // 驗證 Main B 自動向後順移 7680 ticks
+    const mainBAfter = parsed.sections.find(s => s.name === 'Main B')!;
+    expect(mainBAfter.startTick).toBe(mainBStartBefore + 7680);
+  });
+
+  it('5. 步驟 3.3 一鍵倍增小節 (Duplicate Section Measure / Ctrl+D)', () => {
+    const buffer = fs.readFileSync(sampleStyPath);
+    const parsed = YamahaParser.parse(new Uint8Array(buffer), 'STY');
+
+    // 倍增第 1 小節，應插入至第 2 小節，總長度變為 9 小節
+    const res = YamahaStyleModifier.duplicateSectionMeasure(parsed, 'Main A', 9, 1);
+    expect(res.success).toBe(true);
+    expect(res.newTargetBar).toBe(2);
+
+    const rangeAfter = StyleRemixer.getSectionTickRange(parsed, 'Main A')!;
+    expect(rangeAfter.measureCount).toBe(9);
+  });
+
+  it('6. 步驟 3.3 清空小節音符 (Clear Mode)：能清空第 2 小節音符且保持總長度不變', () => {
+    const buffer = fs.readFileSync(sampleStyPath);
+    const parsed = YamahaParser.parse(new Uint8Array(buffer), 'STY');
+
+    const res = YamahaStyleModifier.deleteSectionMeasure(parsed, 'Main A', 9, 2, 'clear');
+    expect(res.success).toBe(true);
+    expect(res.newTotalBars).toBe(8);
+
+    const rangeAfter = StyleRemixer.getSectionTickRange(parsed, 'Main A')!;
+    const ticksPerMeasure = 7680;
+    const bar2Notes = StyleRemixer.extractSectionChannelNotes(parsed, rangeAfter.startTick, rangeAfter.endTick, 9)
+      .filter(n => n.startTick >= ticksPerMeasure && n.startTick < ticksPerMeasure * 2);
+
+    expect(bar2Notes.length).toBe(0);
+  });
+
+  it('7. 步驟 3.3 剪除小節順移 (Ripple Delete)：能剪除第 2 小節，總長度由 8 變為 7 小節，後續小節與段落往前平移', () => {
+    const buffer = fs.readFileSync(sampleStyPath);
+    const parsed = YamahaParser.parse(new Uint8Array(buffer), 'STY');
+
+    const mainBBefore = parsed.sections.find(s => s.name === 'Main B')!;
+    const mainBStartBefore = mainBBefore.startTick;
+
+    const res = YamahaStyleModifier.deleteSectionMeasure(parsed, 'Main A', 9, 2, 'ripple');
+    expect(res.success).toBe(true);
+    expect(res.newTotalBars).toBe(7);
+
+    const rangeAfter = StyleRemixer.getSectionTickRange(parsed, 'Main A')!;
+    expect(rangeAfter.measureCount).toBe(7);
+
+    // 驗證 Main B 向前平移 7680 ticks
+    const mainBAfter = parsed.sections.find(s => s.name === 'Main B')!;
+    expect(mainBAfter.startTick).toBe(mainBStartBefore - 7680);
+  });
 });
+
+

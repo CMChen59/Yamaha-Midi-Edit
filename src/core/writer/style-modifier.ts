@@ -882,5 +882,284 @@ export class YamahaStyleModifier {
     const count = this.batchUpdateSectionNotes(parsed, sectionName, channel, updates);
     return { success: count > 0, quantizedCount: count };
   }
+
+  /**
+   * 步驟 3.3: 取得指定伴奏段落的總小節數
+   */
+  public static getSectionMeasureCount(parsed: YamahaFileParsed, sectionName: string): number {
+    const range = StyleRemixer.getSectionTickRange(parsed, sectionName);
+    return range ? range.measureCount : 4;
+  }
+
+  /**
+   * 步驟 3.3: 複製指定伴奏段落內的特定小節音符至目標小節 (支援覆蓋 replace 或 插入順移 insert)
+   * @param channel 若指定 channel (0~15)，僅複製該聲部；若為 -1 則複製全體伴奏聲部
+   * @param sourceBar 1-indexed, 例如 1
+   * @param targetBar 1-indexed, 例如 2 或 3
+   * @param mode 'replace' (覆蓋替換) | 'insert' (插入順移，段落長度 +1)
+   */
+  public static copySectionMeasure(
+    parsed: YamahaFileParsed,
+    sectionName: string,
+    channel: number,
+    sourceBar: number,
+    targetBar: number,
+    mode: 'replace' | 'insert' = 'replace'
+  ): { success: boolean; copiedCount: number; newTotalBars: number } {
+    if (!parsed || !parsed.tracks || parsed.tracks.length === 0) {
+      return { success: false, copiedCount: 0, newTotalBars: 1 };
+    }
+    const range = StyleRemixer.getSectionTickRange(parsed, sectionName);
+    if (!range) return { success: false, copiedCount: 0, newTotalBars: 1 };
+
+    const curLen = range.measureCount;
+    if (sourceBar <= 0 || targetBar <= 0 || (sourceBar === targetBar && mode !== 'insert') || sourceBar > curLen) {
+      return { success: false, copiedCount: 0, newTotalBars: curLen };
+    }
+
+    const division = parsed.division || 480;
+    const timeSig = parsed.timeSignature || { numerator: 4, denominator: 4 };
+    const ticksPerMeasure = Math.round(division * timeSig.numerator * (4 / timeSig.denominator));
+
+    const sourceRelStart = (sourceBar - 1) * ticksPerMeasure;
+    const sourceRelEnd = sourceRelStart + ticksPerMeasure;
+
+    const channelsToCopy = channel >= 0 ? [channel] : [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+    const sourceNotesByChannel: Array<{ channel: number; note: number; velocity: number; startTick: number; durationTick: number }> = [];
+
+    for (const ch of channelsToCopy) {
+      const chNotes = StyleRemixer.extractSectionChannelNotes(parsed, range.startTick, range.endTick, ch);
+      const inBar = chNotes.filter(n => n.startTick >= sourceRelStart && n.startTick < sourceRelEnd);
+      for (const n of inBar) {
+        sourceNotesByChannel.push({ ...n, channel: ch });
+      }
+    }
+
+    if (sourceNotesByChannel.length === 0) {
+      return { success: false, copiedCount: 0, newTotalBars: curLen };
+    }
+
+    let finalBars = curLen;
+
+    if (mode === 'insert') {
+      finalBars = curLen + 1;
+      const targetAbsStart = range.startTick + (targetBar - 1) * ticksPerMeasure;
+
+      // 1. 平移 Track 0 事件：
+      //    - 目標小節及之後事件（包含本段後續小節與後續所有伴奏段落及標記）皆向後推移 1 小節
+      //    - 不推移本段落起始 Marker 及小節 1 之前的中繼事件
+      for (const track of parsed.tracks) {
+        if (!track || !track.events) continue;
+        let curTick = 0;
+        const annotated = track.events.map((ev, index) => {
+          curTick += ev.delta;
+          return { ev: { ...ev }, absTick: curTick, index };
+        });
+
+        for (const item of annotated) {
+          const isMeta = item.ev.type === 'meta';
+          if (isMeta && item.absTick <= range.startTick) {
+            continue;
+          }
+          if (item.absTick >= targetAbsStart) {
+            item.absTick += ticksPerMeasure;
+          }
+        }
+
+        annotated.sort((a, b) => {
+          if (a.absTick !== b.absTick) return a.absTick - b.absTick;
+          const aIsMeta = a.ev.type === 'meta';
+          const bIsMeta = b.ev.type === 'meta';
+          if (aIsMeta && !bIsMeta) return -1;
+          if (!aIsMeta && bIsMeta) return 1;
+          return a.index - b.index;
+        });
+
+        let prev = 0;
+        track.events = annotated.map((item) => {
+          item.ev.delta = Math.max(0, item.absTick - prev);
+          prev = item.absTick;
+          return item.ev;
+        });
+        YamahaPadModifier.rebuildTrackRawChunk(track);
+      }
+
+      // 2. 更新 parsed.sections 結構
+      for (const s of parsed.sections) {
+        if (s.name.trim().toLowerCase() === sectionName.trim().toLowerCase()) {
+          s.measureCount = finalBars;
+          s.endTick = (s.endTick ?? range.endTick) + ticksPerMeasure;
+        } else if (s.startTick >= range.endTick) {
+          s.startTick += ticksPerMeasure;
+          if (s.endTick !== undefined) {
+            s.endTick += ticksPerMeasure;
+          }
+        }
+      }
+    } else {
+      if (targetBar > curLen) {
+        finalBars = targetBar;
+        this.resizeSectionMeasures(parsed, sectionName, finalBars);
+      }
+
+      const targetRelStart = (targetBar - 1) * ticksPerMeasure;
+      const targetRelEnd = targetRelStart + ticksPerMeasure;
+
+      for (const ch of channelsToCopy) {
+        const chNotes = StyleRemixer.extractSectionChannelNotes(parsed, range.startTick, range.endTick, ch);
+        const existingInTarget = chNotes.filter(n => n.startTick >= targetRelStart && n.startTick < targetRelEnd);
+        if (existingInTarget.length > 0) {
+          this.batchDeleteSectionNotes(parsed, sectionName, ch, existingInTarget.map(n => ({
+            note: n.note,
+            startTick: n.startTick,
+            oldDurationTick: n.durationTick,
+          })));
+        }
+      }
+    }
+
+    const targetRelStart = (targetBar - 1) * ticksPerMeasure;
+    for (const s of sourceNotesByChannel) {
+      const offsetInBar = s.startTick - sourceRelStart;
+      const newStartRel = targetRelStart + offsetInBar;
+      this.addSectionNote(parsed, sectionName, s.channel, {
+        note: s.note,
+        startTick: newStartRel,
+        durationTick: s.durationTick,
+        velocity: s.velocity,
+      });
+    }
+
+    return { success: true, copiedCount: sourceNotesByChannel.length, newTotalBars: finalBars };
+  }
+
+  /**
+   * 步驟 3.3: 一鍵倍增指定小節 (Duplicate Section Measure / Ctrl+D)
+   */
+  public static duplicateSectionMeasure(
+    parsed: YamahaFileParsed,
+    sectionName: string,
+    channel: number,
+    sourceBar?: number
+  ): { success: boolean; copiedCount: number; newTargetBar: number } {
+    const range = StyleRemixer.getSectionTickRange(parsed, sectionName);
+    if (!range) return { success: false, copiedCount: 0, newTargetBar: 1 };
+    const curLen = range.measureCount;
+    const src = sourceBar !== undefined && sourceBar > 0 ? sourceBar : curLen;
+    const target = src + 1;
+    const res = this.copySectionMeasure(parsed, sectionName, channel, src, target, 'insert');
+    return { success: res.success, copiedCount: res.copiedCount, newTargetBar: target };
+  }
+
+  /**
+   * 步驟 3.3: 刪除或清空指定伴奏段落內的特定小節
+   * @param mode 'clear' (清空該小節音符為靜音空白，總長度不變) | 'ripple' (剪除該小節，後續小節往前平移，總長度 -1)
+   */
+  public static deleteSectionMeasure(
+    parsed: YamahaFileParsed,
+    sectionName: string,
+    channel: number,
+    targetBar: number,
+    mode: 'ripple' | 'clear' = 'clear'
+  ): { success: boolean; deletedCount: number; newTotalBars: number } {
+    if (!parsed || !parsed.tracks || parsed.tracks.length === 0) {
+      return { success: false, deletedCount: 0, newTotalBars: 1 };
+    }
+    const range = StyleRemixer.getSectionTickRange(parsed, sectionName);
+    if (!range) return { success: false, deletedCount: 0, newTotalBars: 1 };
+
+    const curLen = range.measureCount;
+    if (targetBar < 1 || targetBar > curLen) {
+      return { success: false, deletedCount: 0, newTotalBars: curLen };
+    }
+
+    const division = parsed.division || 480;
+    const timeSig = parsed.timeSignature || { numerator: 4, denominator: 4 };
+    const ticksPerMeasure = Math.round(division * timeSig.numerator * (4 / timeSig.denominator));
+
+    const targetRelStart = (targetBar - 1) * ticksPerMeasure;
+    const targetRelEnd = targetRelStart + ticksPerMeasure;
+
+    // 清空目標小節音符
+    // mode === 'ripple' 時，因為整個小節被裁除、後續全部往前順移，針對所有伴奏聲部處理
+    const channelsToClear = mode === 'ripple' ? [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] : (channel >= 0 ? [channel] : [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+    let deletedCount = 0;
+
+    for (const ch of channelsToClear) {
+      const chNotes = StyleRemixer.extractSectionChannelNotes(parsed, range.startTick, range.endTick, ch);
+      const inTarget = chNotes.filter(n => n.startTick >= targetRelStart && n.startTick < targetRelEnd);
+      if (inTarget.length > 0) {
+        deletedCount += this.batchDeleteSectionNotes(parsed, sectionName, ch, inTarget.map(n => ({
+          note: n.note,
+          startTick: n.startTick,
+          oldDurationTick: n.durationTick,
+        })));
+      }
+    }
+
+    if (mode === 'clear') {
+      return { success: true, deletedCount, newTotalBars: curLen };
+    }
+
+    // mode === 'ripple': 後續小節往前平移 1 小節，且段落總長度 -1
+    if (curLen <= 1) {
+      return { success: true, deletedCount, newTotalBars: 1 };
+    }
+
+    // 將 targetBar 之後的事件向前平移 1 小節（包含後續段落與標記）
+    const targetAbsEnd = range.startTick + targetRelEnd;
+    for (const track of parsed.tracks) {
+      if (!track || !track.events) continue;
+      let curTick = 0;
+      const annotated = track.events.map((ev, index) => {
+        curTick += ev.delta;
+        return { ev: { ...ev }, absTick: curTick, index };
+      });
+
+      for (const item of annotated) {
+        const isMeta = item.ev.type === 'meta';
+        if (isMeta && item.absTick <= range.startTick) {
+          continue;
+        }
+        if (item.absTick >= targetAbsEnd) {
+          item.absTick -= ticksPerMeasure;
+        }
+      }
+
+      annotated.sort((a, b) => {
+        if (a.absTick !== b.absTick) return a.absTick - b.absTick;
+        const aIsMeta = a.ev.type === 'meta';
+        const bIsMeta = b.ev.type === 'meta';
+        if (aIsMeta && !bIsMeta) return -1;
+        if (!aIsMeta && bIsMeta) return 1;
+        return a.index - b.index;
+      });
+
+      let prev = 0;
+      track.events = annotated.map((item) => {
+        item.ev.delta = Math.max(0, item.absTick - prev);
+        prev = item.absTick;
+        return item.ev;
+      });
+      YamahaPadModifier.rebuildTrackRawChunk(track);
+    }
+
+    // 更新 parsed.sections 結構
+    const newTotalBars = curLen - 1;
+    for (const s of parsed.sections) {
+      if (s.name.trim().toLowerCase() === sectionName.trim().toLowerCase()) {
+        s.measureCount = newTotalBars;
+        s.endTick = (s.endTick ?? range.endTick) - ticksPerMeasure;
+      } else if (s.startTick >= range.endTick) {
+        s.startTick -= ticksPerMeasure;
+        if (s.endTick !== undefined) {
+          s.endTick -= ticksPerMeasure;
+        }
+      }
+    }
+
+    return { success: true, deletedCount, newTotalBars };
+  }
 }
+
 
