@@ -667,7 +667,7 @@ function initPadRecordModal() {
     });
   }
 
-  // 模擬琴端切換音色選單
+  // 模擬/指定琴端切換音色選單
   const simVoiceSelect = document.getElementById('rec-sim-voice-select') as HTMLSelectElement | null;
   if (simVoiceSelect) {
     simVoiceSelect.addEventListener('change', () => {
@@ -675,10 +675,19 @@ function initPadRecordModal() {
       if (!val) return;
       const v = YAMAHA_SX920_VOICES.find(item => item.name === val || item.name.toLowerCase().includes(val.toLowerCase())) || searchYamahaVoices(val)[0];
       if (v) {
-        midiManager.simulateVoiceChange({ msb: v.msb, lsb: v.lsb, pc: v.pc });
-        showStatus(`已模擬琴端切換音色: ${v.name} (${v.chineseName}) [Bank ${v.msb}-${v.lsb}, PC ${v.pc}]`);
+        midiManager.simulateVoiceChange({ msb: v.msb, lsb: v.lsb, pc: v.pc }, currentRecordPadNum - 1);
+        midiManager.sendVoiceChange(currentRecordPadNum - 1, { msb: v.msb, lsb: v.lsb, pc: v.pc });
+        showStatus(`已指定錄音音色: ${v.name} (${v.chineseName}) [Bank ${v.msb}-${v.lsb}, PC ${v.pc}]`);
       }
       simVoiceSelect.value = '';
+    });
+  }
+
+  // 錄音彈窗內的音色庫搜尋按鈕
+  const btnRecOpenVoice = document.getElementById('btn-rec-open-voice-modal');
+  if (btnRecOpenVoice) {
+    btnRecOpenVoice.addEventListener('click', () => {
+      openVoiceModal(currentRecordPadNum);
     });
   }
 
@@ -1098,14 +1107,27 @@ function openRecordModal(padNum: number = 1) {
 
 function updateMidiDeviceStatusUI() {
   const label = document.getElementById('rec-midi-device-label');
+  const toggleMonitor = document.getElementById('rec-toggle-monitor');
   if (!label) return;
   const inDev = midiManager.getSelectedInput();
   if (inDev) {
     label.textContent = `🟢 ${inDev.name}`;
     label.style.color = '#34d399';
+    // 實體琴已連線：預設關閉電腦即時監聽，享受琴端原廠音色零延遲，並徹底防止 USB Audio 雙重發聲疊音
+    isAudioMonitorEnabled = false;
+    if (toggleMonitor) {
+      toggleMonitor.className = 'toggle-btn inactive';
+      toggleMonitor.textContent = '🔇 電腦監聽: 關';
+    }
   } else {
     label.textContent = '⚪ 未連線 (已啟用電腦鍵盤模擬)';
     label.style.color = '#94a3b8';
+    // 無實體琴時啟用電腦發聲模擬
+    isAudioMonitorEnabled = true;
+    if (toggleMonitor) {
+      toggleMonitor.className = 'toggle-btn active-rp';
+      toggleMonitor.textContent = '🔊 電腦監聽: 開';
+    }
   }
 }
 
@@ -1451,6 +1473,23 @@ function bindVoiceToPad(
   // 4. 同步下方表格與卡片輸入框
   updatePartsTableRowVoice(padNum, voiceOrConfig.msb, voiceOrConfig.lsb, voiceOrConfig.pc);
   updatePadCardInstrumentSelect(padNum, voiceOrConfig.msb, voiceOrConfig.lsb, voiceOrConfig.pc);
+
+  // 4.5 若此 Pad 正在錄音工作台編輯中，同步更新錄音工作台的音色狀態
+  if (currentRecordPadNum === padNum) {
+    lastSniffedRawConfig = { msb: voiceOrConfig.msb, lsb: voiceOrConfig.lsb, pc: voiceOrConfig.pc };
+    const yvSniff = (voiceOrConfig as YamahaVoice).category ? (voiceOrConfig as YamahaVoice) : findYamahaVoice(voiceOrConfig.msb, voiceOrConfig.lsb, voiceOrConfig.pc);
+    lastSniffedVoice = yvSniff || null;
+    const snifferLabel = document.getElementById('rec-voice-sniffer-label');
+    if (snifferLabel) {
+      if (yvSniff) {
+        snifferLabel.textContent = `${yvSniff.name} (${yvSniff.chineseName || ''})`;
+        snifferLabel.style.color = '#38bdf8';
+      } else {
+        snifferLabel.textContent = `Bank ${voiceOrConfig.msb}-${voiceOrConfig.lsb} PC ${voiceOrConfig.pc}`;
+        snifferLabel.style.color = '#fbbf24';
+      }
+    }
+  }
 
   // 5. 若當前畫面正在檢視此 Pad，立即刷新詳細資訊面板
   if (currentActivePadNum === padNum) {
