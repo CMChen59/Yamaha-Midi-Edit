@@ -177,21 +177,43 @@ flowchart TD
 
 ---
 
-## 五、 Phase 3.0：外部 MIDI 轉 Yamaha Style 伴奏風格 (.sty) 架構設計
+## 五、 Phase 3.0：外部 MIDI 轉 Yamaha Style 伴奏風格 (.sty) 精靈
 
-1. **匯入分流導航 (Import Mode Router)**：
-   - 拖入 `.mid` 檔案時，彈出情境分流選擇：`[🎛️ 轉為 Multi Pad 打擊墊]` vs `[🎼 轉為 Yamaha Style 伴奏風格]`。
-2. **Style 伴奏 8 聲部智慧映射 (8-Part Track Mapping)**：
-   - 對應 Yamaha 標準 8 伴奏通道（MIDI Channel 9~16）：
-     - `Ch 9 / 10`：Rhythm 1 (打擊樂) & Rhythm 2 (主爵士鼓組)。
-     - `Ch 11`：Bass (低音貝斯)。
-     - `Ch 12 / 13`：Chord 1 (節奏和弦) & Chord 2 (管樂/副和弦)。
-     - `Ch 14`：Pad (長音弦樂背景鋪底)。
-     - `Ch 15 / 16`：Phrase 1 & Phrase 2 (主旋律對位與加花裝飾句)。
-3. **曲式多段落視覺化切片 (Multi-Section Slicing)**：
-   - 時間軸圈選小節切片：`Main A~D`、`Fill In AA~DD`、`Intro A~C`、`Ending A~C`。
-4. **SFF2 CASM 轉調與 OTS 二進位合成引擎**：
-   - 自動生成標準 Yamaha SFF2 `CASM` 轉調區塊與 `Ctb2`（Chord Table），確保在琴端左手按壓任何和弦皆能原廠規格完美自動伴奏。
+### 階段 3.1：Style 核心二進位結構與 SFF2 CASM 伴奏合成引擎 (Core Binary Engine) - 【✅ 已完工】
+- **需求與 Yamaha 原廠規範**：
+  - 與 Multi Pad (.PAD) 可支援 SMF 1 多軌不同，Yamaha Style (.STY) 檔案**嚴格要求採用 SMF 0 (Format 0) 單軌架構**。
+  - 所有的 8 個標準伴奏通道（Channels 8~15，對應樂器面板 MIDI Channel 9~16）與所有曲式段落標記（Section Markers：`Intro`、`Main A~D`、`Fill In`、`Ending` 等）全部交織在 Track 0。
+  - 必須包含標準 Yamaha SFF2 `CASM` 二進位自訂區塊（包含 `CSEG`、`Sdec` 與 47-byte `Ctb2` Chord Table），琴端左手和弦識別才能正確自動轉調。
+- **成果實現**：
+  1. **Style 核心資料模型 (`src/core/models/style-types.ts`)**：
+     - 定義 `StylePartId`（Rhythm1, Rhythm2, Bass, Chord1, Chord2, Pad, Phrase1, Phrase2）。
+     - 定義 8 大聲部預設通道、預設音色、音量 (CC7)、音場 (CC10)、殘響 (CC91)、合唱 (CC93) 及轉調規則。
+     - 定義 `StyleSectionType`、`StyleSectionConfig`、`StyleNoteEvent` 及 `NewStyleProjectOptions`。
+  2. **Style 二進位合成引擎 (`src/core/writer/style-synthesizer.ts`)**：
+     - `createBlankStyle()`：精確生成 Format 0 單軌 Style 結構，軌道開頭寫入 `SFF2` 與 `SInt` 標記、拍號、Tempo、8 聲部控制器初始化（Bank MSB/LSB, PC, Vol, Pan, Exp, Rev, Cho），並按小節間距精確注入段落標記與音符。
+     - `buildStandardStyleCasm()`：合成 100% 符合 Yamaha SFF2 規範之 CASM Chunk，為 8 聲部生成 47-byte `Ctb2` 和弦變換表（Rhythm 軌 Bypass 直通、Bass 根音轉調、和弦/長音/裝飾句支援全音域和弦轉換）。
+     - `getMusicalSections()`：智慧分離過濾掉開頭 SFF2/SInt 系統標頭標記，提供乾淨的音樂段落清單。
+     - `serializeToStyleFile()`：直接輸出標準 `.sty` 二進位 Uint8Array，可供硬體或解析器讀取。
+  3. **單元測試 100% 通過 (`tests/style-synthesizer.test.ts`)**：
+     - 驗證 SMF 0 單軌架構與 8 伴奏通道。
+     - 驗證 SFF2 CASM 區塊完整性與 Ctb2 和弦表長度。
+     - 驗證多段落音符注入與 `YamahaParser.parse(..., 'STY')` 雙向回讀。
+     - 全專案 17 組測試檔共 92/92 項測試全數綠燈通過。
+
+---
+
+### 後續執行階段規劃：
+- **階段 3.2 (進行中)**：外部 MIDI 匯入分流與 8 聲部智慧映射精靈 (Import Router & 8-Part Intelligent Mapper)
+  - 拖入 `.mid` 時彈出分流選擇：`[🎛️ 轉為 Multi Pad 打擊墊]` vs `[🎼 轉為 Yamaha Style 伴奏風格]`。
+  - 分析外部 MIDI 軌道特徵（音色 PC、Channel、音高音域、打擊樂 Channel 10 等），自動智慧推薦映射至 8 聲部伴奏軌。
+  - 提供可拖曳/下拉調度之聲部映射對照介面。
+- **階段 3.3**：曲式多段落視覺化切片與 C 調基準校正 (Section Slicer & Source Chord Normalization)
+  - 視覺化小節切片工具：圈選特定小節指派為 Main A~D, Fill In, Intro, Ending。
+  - C 調基準校正演算法：自動將來源片段轉調為 Yamaha 原廠要求的標準 C 調基準（CMaj/C7/Cmin），確保 CASM 在琴端左手換和弦時音準 100% 正確。
+- **階段 3.4**：Style Studio 伴奏編輯介面、合奏走帶試聽與 PSR-SX920 實機導出驗證 (UI, Web Audio Playback & Physical Hardware Export)
+  - 8 聲部獨立靜音/獨奏/音量混音面板。
+  - Web Audio 8 聲部合奏多軌走帶試聽。
+  - 一鍵導出標準 `.sty` 伴奏檔並以實體 PSR-SX920 驗收。
 
 ---
 
