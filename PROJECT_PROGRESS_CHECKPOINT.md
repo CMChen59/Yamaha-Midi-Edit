@@ -225,16 +225,21 @@ flowchart TD
   4. **標準 Style 伴奏合成與即時載入工作區 (`executeStyleImport`)**：
      - 依據選定小節切片（如 1~4 小節或 1~8 小節）與聲部映射，呼叫 `StyleImporter.synthesizeStyleFromImport`。
      - 精確生成符合 Yamaha SFF2 CASM 規範之 SMF 0 單軌 Style 檔案，並直接無縫載入主畫面（支援 CASM 檢視、段落標記、走帶與聲部混音）。
-  5. **單元測試 100% 通過 (`tests/style-importer.test.ts`)**：
+  5. **試聽切片對齊、零乾等即時發聲與 8 聲部合奏試聽 (`toggleStyleTrackAudition` & `toggleStyleEnsembleAudition`)**：
+     - **切片對齊試聽**：試聽按鈕自動對齊使用者所設定的切片小節（例如第 1~8 小節），若該軌在選定小節尚未進場，自動平移至該軌第一顆音符所在的真正開口小節，徹底消除數十秒的無聲乾等。
+     - **真實合成音色匹配**：鼓組 (Ch 10) 嚴格以鼓組音色發聲，貝斯、鋼琴、吉他、弦樂均自動對應正確的合成音色。
+     - **`[🎧 試聽所選小節合奏]` 一鍵多軌伴奏試聽**：整合 `AudioEngine.startBackingTrack`，在建立 Style 之前即可一鍵同時聆聽 8 個聲部在選定小節一起演奏的整體編曲融合度。
+  6. **單元測試 100% 通過 (`tests/style-importer.test.ts`)**：
      - 涵蓋特徵剖析、8 聲部防衝突分配、伴奏合成二進位 Roundtrip 回讀、自訂移調與控制器覆寫。
      - 全專案 18 組測試檔共 96/96 項測試全數綠燈通過。
 
 ---
 
 ### 後續執行階段規劃：
-- **階段 3.3 (即將執行)**：曲式多段落視覺化切片與 C 調基準校正 (Section Slicer & Source Chord Normalization)
-  - 視覺化小節切片工具：圈選特定小節指派為 Main A~D, Fill In, Intro, Ending。
-  - C 調基準校正演算法：自動將來源片段轉調為 Yamaha 原廠要求的標準 C 調基準（CMaj/C7/Cmin），確保 CASM 在琴端左手換和弦時音準 100% 正確。
+- **階段 3.3 (即將執行)**：曲式多段落視覺化切片、C 調基準校正與跨 STY 聲部混搭重組 (Section Slicer, Chord Normalization & Style Remixer)
+  - **曲式多段落視覺化切片工具**：提供全曲小節時間軸圈選，一次性將整首歌曲切片分配至多個曲式段落（例如小節 1~8 $\rightarrow$ Intro A、小節 9~24 $\rightarrow$ Main A、小節 25 $\rightarrow$ Fill In AA、小節 26~42 $\rightarrow$ Main B、小節 70~76 $\rightarrow$ Ending A）。
+  - **Yamaha 原廠 C 調基準校正演算法**：自動將來源片段轉調為 Yamaha 原廠要求的標準 C 調基準（CMaj/C7/Cmin），確保 CASM 在琴端左手換和弦時音準 100% 正確。
+  - **跨 STY 聲部混搭重組精靈 (Style Remixer)**：除外部 MID 外，同時支援開啟/匯入現存 Yamaha `.sty` 伴奏檔作為音軌來源池，跨伴奏風格自由借用並拼貼鼓組、貝斯、吉他或副和弦，組裝為全新 Style 伴奏或 Multi Pad。
 - **階段 3.4**：Style Studio 伴奏編輯介面、合奏走帶試聽與 PSR-SX920 實機導出驗證 (UI, Web Audio Playback & Physical Hardware Export)
   - 8 聲部獨立靜音/獨奏/音量混音面板。
   - Web Audio 8 聲部合奏多軌走帶試聽。
