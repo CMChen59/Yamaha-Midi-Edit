@@ -6526,11 +6526,10 @@ function showStyPartNotesDetail(parsed: YamahaFileParsed, sectionName: string, c
   mountPianoRollContainer('STY');
   container.style.display = 'block';
 
-  // 僅在切換不同聲部時才重設視野起始小節
-  if (currentActiveStyPartChannel !== channel) {
-    rollStartBar = 1;
-    selectedRulerBar = null;
-  }
+  // 伴奏段落預設使用全景自適應檢視 (顯示該段落全部小節，如 Intro A 10 小節)
+  rollViewMode = 'all';
+  rollStartBar = 1;
+  selectedRulerBar = null;
   currentActiveStyPartChannel = channel;
   currentCanvasPadNum = channel + 1;
   resetHoverInfo();
@@ -6559,8 +6558,8 @@ function showStyPartNotesDetail(parsed: YamahaFileParsed, sectionName: string, c
     avgVel = Math.round(notes.reduce((sum, n) => sum + n.velocity, 0) / notes.length);
     firstNoteTick = Math.min(...notes.map(n => n.startTick));
     lastNoteTick = Math.max(...notes.map(n => n.startTick + n.durationTick));
-    const gridStartTick = Math.floor(firstNoteTick / ticksPerBar) * ticksPerBar;
-    actualBars = Math.max(1, Math.ceil((lastNoteTick - gridStartTick) / ticksPerBar), explicitBars);
+    // 伴奏段落一律以段落總小節數為底，若音符尾端延伸則自適應覆蓋
+    actualBars = Math.max(1, Math.ceil(lastNoteTick / ticksPerBar), explicitBars);
   }
 
   // 提取音色與聲部資訊
@@ -6618,12 +6617,14 @@ function showStyPartNotesDetail(parsed: YamahaFileParsed, sectionName: string, c
     badgeEl.textContent = `共 ${explicitBars} 小節 (本段未演奏)`;
     summaryEl.innerHTML = `<span style="display: inline-block; padding: 2px 8px; border-radius: 4px; background: ${meta.bg}; color: ${meta.color}; border: 1px solid ${meta.border}; font-weight: 600; margin-right: 8px;">演奏音色: ${voiceName}</span> <span>共 0 顆音符 (空白)</span> | <span>音域: C3 (48) ~ C5 (72)</span>`;
   } else {
+    const firstNoteBar = Math.floor(firstNoteTick / ticksPerBar) + 1;
+    const lastNoteBar = Math.floor(lastNoteTick / ticksPerBar) + 1;
     if (startBadgeEl) {
       startBadgeEl.textContent = `📍 段落時間軸: Tick ${range.startTick} ~ ${range.endTick} (全曲第 ${absStartBar} ~ ${absEndBar} 小節)`;
       startBadgeEl.title = `段落時序: 起始 Tick ${range.startTick}，結束 Tick ${range.endTick}，長度共 ${explicitBars} 小節`;
     }
-    badgeEl.textContent = `⏱️ 音符範圍 Tick: ${firstNoteTick} ~ ${lastNoteTick} (共 ${actualBars} 小節)`;
-    summaryEl.innerHTML = `<span style="display: inline-block; padding: 2px 8px; border-radius: 4px; background: ${meta.bg}; color: ${meta.color}; border: 1px solid ${meta.border}; font-weight: 600; margin-right: 8px;">演奏音色: ${voiceName}</span> <span>共 ${notes.length} 顆音符</span> | <span>音域: ${midiNoteToName(minNote)} (${minNote}) ~ ${midiNoteToName(maxNote)} (${maxNote})</span> | <span>平均力度: ${avgVel}</span>`;
+    badgeEl.textContent = `⏱️ 音符範圍: 第 ${firstNoteBar} ~ ${lastNoteBar} 小節 (段落共 ${actualBars} 小節)`;
+    summaryEl.innerHTML = `<span style="display: inline-block; padding: 2px 8px; border-radius: 4px; background: ${meta.bg}; color: ${meta.color}; border: 1px solid ${meta.border}; font-weight: 600; margin-right: 8px;">演奏音色: ${voiceName}</span> <span>共 ${notes.length} 顆音符 (第 ${firstNoteBar} 小節開始演奏)</span> | <span>音域: ${midiNoteToName(minNote)} (${minNote}) ~ ${midiNoteToName(maxNote)} (${maxNote})</span> | <span>平均力度: ${avgVel}</span>`;
   }
 
   drawNoteRoll(canvas, notes, channel + 1, ticksPerBeat, beatsPerBar, explicitBars);
@@ -6921,12 +6922,13 @@ function drawNoteRoll(
   const firstNoteTick = notes.length > 0 ? Math.min(...notes.map(n => n.startTick)) : 0;
   const lastNoteTick = notes.length > 0 ? Math.max(...notes.map(n => n.startTick + n.durationTick)) : explicitBars * ticksPerBar;
 
-  // 時間基準：向左對齊至整數小節起點
-  const gridStartTick = Math.floor(firstNoteTick / ticksPerBar) * ticksPerBar;
+  const isStyMode = currentParsed?.format === 'STY';
+  // 時間基準：STY 伴奏段落一律自段落第 1 小節 (Tick 0) 起始對齊，維持樂段小節絕對對應性
+  const gridStartTick = isStyMode ? 0 : Math.floor(firstNoteTick / ticksPerBar) * ticksPerBar;
   currentGridStartTick = gridStartTick;
   const totalDurationTicks = Math.max(lastNoteTick - gridStartTick, ticksPerBar);
   const notesBars = Math.max(1, Math.ceil(totalDurationTicks / ticksPerBar));
-  const totalBars = Math.max(notesBars, explicitBars);
+  const totalBars = isStyMode ? Math.max(explicitBars, notesBars) : Math.max(notesBars, explicitBars);
   currentTotalBars = totalBars;
 
   // 畫面區域配置 (Layout Margins)

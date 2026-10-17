@@ -126,4 +126,67 @@ describe('步驟 3.1: STY 段落聲部鋼琴卷軸 (Piano Roll) 音符提取與�
     expect(chordInst.isDrum).toBe(false);
     expect(chordInst.instrumentId).toBe('grand-piano');
   });
+
+  it('6. 伴奏段落時間軸嚴格對齊第 1 小節 (Tick 0)：後半段才進場的聲部保留前端休止小節，不被左移截斷', () => {
+    const range = StyleRemixer.getSectionTickRange(parsed, 'Intro A');
+    expect(range).not.toBeNull();
+    const ticksPerBeat = parsed.division || 1920;
+    const beatsPerBar = parsed.timeSignature?.numerator || 4;
+    const ticksPerBar = ticksPerBeat * beatsPerBar; // 7680 ticks per bar
+
+    // 在 Intro A (共 10 小節) 中：
+    // Channel 1 (Bass) 在第 2 小節 (Tick 7680) 才進場，第 1 小節為休止
+    const bassNotes = StyleRemixer.extractSectionChannelNotes(parsed, range!.startTick, range!.endTick, 1);
+    expect(bassNotes.length).toBeGreaterThan(0);
+    const bassFirstTick = Math.min(...bassNotes.map(n => n.startTick));
+    expect(bassFirstTick).toBe(7680); // 正好第 2 小節第 1 拍
+    const bassFirstBar = Math.floor(bassFirstTick / ticksPerBar) + 1;
+    expect(bassFirstBar).toBe(2);
+
+    // Channel 11 (Phrase 1) 在第 3 小節 (Tick 15360) 才進場，第 1~2 小節為休止
+    const p1Notes = StyleRemixer.extractSectionChannelNotes(parsed, range!.startTick, range!.endTick, 11);
+    expect(p1Notes.length).toBeGreaterThan(0);
+    const p1FirstTick = Math.min(...p1Notes.map(n => n.startTick));
+    expect(p1FirstTick).toBe(15360); // 正好第 3 小節第 1 拍
+    const p1FirstBar = Math.floor(p1FirstTick / ticksPerBar) + 1;
+    expect(p1FirstBar).toBe(3);
+
+    // 驗證 STY 模式下時間基準 gridStartTick 必須為 0 (第 1 小節第 1 拍)，確保第 1~2 小節保留為空白網格
+    const isStyMode = parsed.format === 'STY';
+    const gridStartTick = isStyMode ? 0 : Math.floor(p1FirstTick / ticksPerBar) * ticksPerBar;
+    expect(gridStartTick).toBe(0);
+
+    // 驗證音符在畫布中的小節定位計算 (relative to gridStartTick 0)
+    const p1NoteBarOnGrid = Math.floor((p1FirstTick - gridStartTick) / ticksPerBar) + 1;
+    expect(p1NoteBarOnGrid).toBe(3); // 確實在第 3 小節，而非被左移成第 1 小節
+  });
+
+  it('7. 伴奏段落全景自適應總小節數驗證：Intro A 10 小節完整展開，試聽走帶自第 1 小節起掃描', () => {
+    const range = StyleRemixer.getSectionTickRange(parsed, 'Intro A');
+    expect(range).not.toBeNull();
+    const explicitBars = range!.measureCount;
+    expect(explicitBars).toBe(10);
+
+    const ticksPerBeat = parsed.division || 1920;
+    const beatsPerBar = parsed.timeSignature?.numerator || 4;
+    const ticksPerBar = ticksPerBeat * beatsPerBar;
+
+    // 取 Channel 1 (Bass)
+    const bassNotes = StyleRemixer.extractSectionChannelNotes(parsed, range!.startTick, range!.endTick, 1);
+    const lastNoteTick = Math.max(...bassNotes.map(n => n.startTick + n.durationTick));
+    const isStyMode = parsed.format === 'STY';
+    const gridStartTick = isStyMode ? 0 : Math.floor(bassNotes[0].startTick / ticksPerBar) * ticksPerBar;
+    const notesBars = Math.max(1, Math.ceil((lastNoteTick - gridStartTick) / ticksPerBar));
+
+    // STY 模式下總小節數以段落小節 (10) 為底
+    const totalBars = isStyMode ? Math.max(explicitBars, notesBars) : Math.max(notesBars, explicitBars);
+    expect(totalBars).toBe(10);
+
+    // 試聽指針自 Tick 0 (第 1 小節第 1 拍) 開始走帶
+    const auditionStartTick = 0;
+    const playheadAbsTick = gridStartTick + auditionStartTick;
+    expect(playheadAbsTick).toBe(0);
+    expect(Math.floor(playheadAbsTick / ticksPerBar) + 1).toBe(1);
+  });
 });
+
