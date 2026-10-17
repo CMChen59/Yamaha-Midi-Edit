@@ -181,57 +181,13 @@ function updatePadCardInstrumentSelect(padNum: number, msb: number, lsb: number,
 // ========================================================
 // Yamaha PSR-SX920 原廠音色搜尋與替換面板控制 (Voice Modal)
 // ========================================================
-let targetModalType: 'PAD' | 'STY' | 'R1' | 'R2' = 'PAD';
+let targetModalType: 'PAD' | 'STY' = 'PAD';
 let targetModalPadNum: number = 1;
 let targetModalStyChannel: number = 8;
 let currentModalCategory: VoiceCategory | 'ALL' = 'ALL';
 let currentModalSuitabilityFilter: VoiceSuitabilityFilter = 'ALL';
 let currentModalSearchQuery: string = '';
 let currentModalRenderLimit: number = 60;
-
-// ========================================================
-// 鍵盤主奏聲部狀態管理 (Keyboard Parts: Right 1 & Right 2)
-// 對標 Yamaha PSR-SX900 Mixer Panel
-// ========================================================
-interface KeyboardPartState {
-  enabled: boolean;
-  linkedChannel: number | null; // 例如 4 代表關聯 Channel 5，null 代表純現場鍵盤手彈
-  msb: number;
-  lsb: number;
-  pc: number;
-  name: string;
-  volume: number;
-  pan: number;
-  reverb: number;
-}
-
-let keyboardPartsState: {
-  r1: KeyboardPartState;
-  r2: KeyboardPartState;
-} = {
-  r1: {
-    enabled: true,
-    linkedChannel: null,
-    msb: 0,
-    lsb: 112,
-    pc: 0,
-    name: 'Concert Grand',
-    volume: 100,
-    pan: 64,
-    reverb: 40,
-  },
-  r2: {
-    enabled: true,
-    linkedChannel: null,
-    msb: 0,
-    lsb: 112,
-    pc: 49,
-    name: 'Warm Pad',
-    volume: 80,
-    pan: 64,
-    reverb: 40,
-  },
-};
 
 // Yamaha STY 伴奏聲部主題與視覺配置 (支援 SFF1 Channel 0 ~ 7 與 SFF2 Channel 8 ~ 15)
 const STY_PART_META: Record<number, { id: StylePartId; name: string; shortName: string; icon: string; color: string; bg: string; border: string }> = {
@@ -474,30 +430,14 @@ function initVoiceSearchModal() {
   }
 }
 
-function openVoiceModal(targetNum: number, targetType: 'PAD' | 'STY' | 'R1' | 'R2' = 'PAD') {
+function openVoiceModal(targetNum: number, targetType: 'PAD' | 'STY' = 'PAD') {
   const modal = document.getElementById('voice-search-modal');
   const badge = document.getElementById('modal-target-pad-badge');
   const searchInput = document.getElementById('voice-search-input') as HTMLInputElement | null;
   if (!modal) return;
 
   targetModalType = targetType;
-  if (targetType === 'R1') {
-    if (badge) {
-      badge.textContent = '🎹 Right 1 (主旋律 1)';
-      badge.style.background = 'rgba(245, 158, 11, 0.2)';
-      badge.style.color = '#fde047';
-      badge.style.borderColor = '#f59e0b';
-    }
-    currentModalCategory = 'Piano';
-  } else if (targetType === 'R2') {
-    if (badge) {
-      badge.textContent = '🎹 Right 2 (副旋律 / 疊音)';
-      badge.style.background = 'rgba(168, 85, 247, 0.2)';
-      badge.style.color = '#e9d5ff';
-      badge.style.borderColor = '#a855f7';
-    }
-    currentModalCategory = 'Strings';
-  } else if (targetType === 'STY') {
+  if (targetType === 'STY') {
     targetModalStyChannel = targetNum;
     const meta = STY_PART_META[targetNum];
     const partName = meta?.name || `伴奏聲部 (Ch ${targetNum + 1})`;
@@ -4549,45 +4489,6 @@ function applyVoiceToPad(padNum: number, voice: YamahaVoice) {
   }
 }
 
-function applyVoiceToKeyboardPart(partKey: 'r1' | 'r2', voice: YamahaVoice) {
-  const state = keyboardPartsState[partKey];
-  state.msb = voice.msb;
-  state.lsb = voice.lsb;
-  state.pc = voice.pc;
-  state.name = voice.name;
-
-  updateKeyboardPartsUI();
-
-  // 若有連動 STY 伴奏音軌，同步更新該伴奏音軌的音色與輸入框
-  if (state.linkedChannel !== null && currentParsed && currentParsed.format === 'STY') {
-    YamahaStyleModifier.setPartMixing(currentParsed, state.linkedChannel, {
-      bankMsb: state.msb,
-      bankLsb: state.lsb,
-      programChange: state.pc,
-    });
-    // 更新混音台該列的輸入框
-    const msbInput = document.querySelector(`.bank-msb-sty-${state.linkedChannel}`) as HTMLInputElement | null;
-    const lsbInput = document.querySelector(`.bank-lsb-sty-${state.linkedChannel}`) as HTMLInputElement | null;
-    const pcInput = document.querySelector(`.pc-sty-${state.linkedChannel}`) as HTMLInputElement | null;
-    if (msbInput) msbInput.value = `${state.msb}`;
-    if (lsbInput) lsbInput.value = `${state.lsb}`;
-    if (pcInput) pcInput.value = `${state.pc}`;
-
-    // 實體琴伴奏通道同步
-    midiManager.sendVoiceChange(state.linkedChannel, { msb: state.msb, lsb: state.lsb, pc: state.pc });
-    restartCurrentStySectionAudition();
-  }
-
-  // 實體琴琴端面板主奏通道同步 (Right 1 為 MIDI Channel 0 即 Ch 1，Right 2 為 MIDI Channel 1 即 Ch 2)
-  const panelCh = partKey === 'r1' ? 0 : 1;
-  midiManager.sendVoiceChange(panelCh, { msb: state.msb, lsb: state.lsb, pc: state.pc });
-
-  closeVoiceModal();
-  const title = partKey === 'r1' ? 'Right 1 (主旋律 1)' : 'Right 2 (副旋律 / 疊音)';
-  markModified(`已將鍵盤主奏 ${title} 音色變更為: ${voice.name} (${state.msb}-${state.lsb}-${state.pc})`);
-  showStatus(`已將鍵盤主奏 ${title} 音色變更為: ${voice.name}`);
-}
-
 function applyVoiceToStylePart(channel: number, voice: YamahaVoice) {
   if (!currentParsed || currentParsed.format !== 'STY') return;
 
@@ -4707,13 +4608,9 @@ function renderVoiceModalList() {
       suitabilityHtml = `<span class="voice-suitability-badge voice-suitability-warning" title="${escapeHtml(voice.suitabilityReason || '避坑警示')}">⚠️ 避坑</span>`;
     }
 
-    const targetTitle = targetModalType === 'R1'
-      ? '套用至 🎹 Right 1 (主旋律 1)'
-      : (targetModalType === 'R2'
-        ? '套用至 🎹 Right 2 (副旋律 / 疊音)'
-        : (targetModalType === 'STY'
-          ? `套用至 ${getStylePartDisplayName(targetModalStyChannel)} (Ch ${targetModalStyChannel + 1})`
-          : `套用至 Pad ${targetModalPadNum}`));
+    const targetTitle = targetModalType === 'STY'
+      ? `套用至 ${getStylePartDisplayName(targetModalStyChannel)} (Ch ${targetModalStyChannel + 1})`
+      : `套用至 Pad ${targetModalPadNum}`;
 
     tr.innerHTML = `
       <td style="text-align: center; font-size: 1.2rem;">${catIcon}</td>
@@ -4745,11 +4642,7 @@ function renderVoiceModalList() {
     const btnApply = tr.querySelector('.btn-apply-voice') as HTMLButtonElement;
     btnApply.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (targetModalType === 'R1') {
-        applyVoiceToKeyboardPart('r1', voice);
-      } else if (targetModalType === 'R2') {
-        applyVoiceToKeyboardPart('r2', voice);
-      } else if (targetModalType === 'STY') {
+      if (targetModalType === 'STY') {
         applyVoiceToStylePart(targetModalStyChannel, voice);
       } else {
         applyVoiceToPad(targetModalPadNum, voice);
@@ -5117,9 +5010,6 @@ function initEvents() {
 
   // Phase 2.2-F: 初始化 Web MIDI 實體琴直連控制
   setupWebMidiControls();
-
-  // 鍵盤主奏聲部 (Right 1 & Right 2) 控制面板事件初始化
-  initKeyboardPartsEvents();
 }
 
 /**
@@ -10063,311 +9953,8 @@ function renderParts(parsed: YamahaFileParsed) {
   }
 }
 
-function updateKeyboardPartsPanel(parsed: YamahaFileParsed, sectionName: string | null) {
-  const panel = document.getElementById('section-keyboard-parts');
-  if (!panel) return;
-  if (!parsed || parsed.format !== 'STY') {
-    panel.style.display = 'none';
-    return;
-  }
-
-  panel.style.display = 'block';
-
-  const range = sectionName ? StyleRemixer.getSectionTickRange(parsed, sectionName) : null;
-
-  const selectR1 = document.getElementById('select-r1-linked-channel') as HTMLSelectElement | null;
-  const selectR2 = document.getElementById('select-r2-linked-channel') as HTMLSelectElement | null;
-
-  const channelOptions: Array<{ channel: number; label: string; notes: number; isMelody: boolean }> = [];
-  for (const part of parsed.parts) {
-    const ch = part.channel;
-    const secNotes = range ? StyleRemixer.countNotesInChannel(parsed, range.startTick, range.endTick, ch) : countPartTotalNotes(parsed, ch);
-    const melody = range ? StyleRemixer.analyzeSectionChannelMelody(parsed, range.startTick, range.endTick, ch) : { isMelody: false };
-    const meta = STY_PART_META[ch];
-    const name = meta ? `${meta.icon} ${meta.name}` : `Ch ${ch + 1}`;
-    const melodyTag = melody.isMelody ? ' ★導奏主旋律' : '';
-    channelOptions.push({
-      channel: ch,
-      label: `Ch ${ch + 1}: ${name} (♪ ${secNotes} 音符${melodyTag})`,
-      notes: secNotes,
-      isMelody: !!melody.isMelody,
-    });
-  }
-
-  // 智慧預設連動 (若尚未連動，且該段落偵測到旋律)：
-  const melodyChannels = channelOptions.filter(o => o.isMelody && o.notes > 0).map(o => o.channel);
-  if (keyboardPartsState.r1.linkedChannel === null && melodyChannels.length > 0) {
-    keyboardPartsState.r1.linkedChannel = melodyChannels[0];
-    const part = parsed.parts.find(p => p.channel === melodyChannels[0]);
-    if (part) {
-      keyboardPartsState.r1.msb = part.bankMsb ?? 0;
-      keyboardPartsState.r1.lsb = part.bankLsb ?? 112;
-      keyboardPartsState.r1.pc = part.programChange ?? 0;
-      keyboardPartsState.r1.volume = part.volume ?? 100;
-      const matched = PRESET_INSTRUMENTS.find(i => i.pc === part.programChange && (part.bankMsb === 0 || i.msb === part.bankMsb));
-      if (matched) keyboardPartsState.r1.name = matched.label;
-    }
-  }
-  if (keyboardPartsState.r2.linkedChannel === null && melodyChannels.length > 1) {
-    keyboardPartsState.r2.linkedChannel = melodyChannels[1];
-    const part = parsed.parts.find(p => p.channel === melodyChannels[1]);
-    if (part) {
-      keyboardPartsState.r2.msb = part.bankMsb ?? 0;
-      keyboardPartsState.r2.lsb = part.bankLsb ?? 112;
-      keyboardPartsState.r2.pc = part.programChange ?? 0;
-      keyboardPartsState.r2.volume = part.volume ?? 80;
-      const matched = PRESET_INSTRUMENTS.find(i => i.pc === part.programChange && (part.bankMsb === 0 || i.msb === part.bankMsb));
-      if (matched) keyboardPartsState.r2.name = matched.label;
-    }
-  }
-
-  const renderSelectOptions = (selectEl: HTMLSelectElement | null, currentLinked: number | null) => {
-    if (!selectEl) return;
-    let html = '<option value="-1">(無 / 純現場鍵盤演奏)</option>';
-    for (const opt of channelOptions) {
-      html += `<option value="${opt.channel}" ${opt.channel === currentLinked ? 'selected' : ''}>${escapeHtml(opt.label)}</option>`;
-    }
-    selectEl.innerHTML = html;
-  };
-
-  renderSelectOptions(selectR1, keyboardPartsState.r1.linkedChannel);
-  renderSelectOptions(selectR2, keyboardPartsState.r2.linkedChannel);
-
-  updateKeyboardPartsUI();
-}
-
-function updateKeyboardPartsUI() {
-  const r1 = keyboardPartsState.r1;
-  const r2 = keyboardPartsState.r2;
-
-  // R1 UI
-  const cardR1 = document.getElementById('card-keyboard-r1');
-  const badgeR1 = document.getElementById('badge-r1-status');
-  const btnToggleR1 = document.getElementById('btn-toggle-r1') as HTMLButtonElement | null;
-  const labelR1Name = document.getElementById('label-r1-voice-name');
-  const labelR1Code = document.getElementById('label-r1-voice-code');
-  const sliderR1Vol = document.getElementById('slider-r1-volume') as HTMLInputElement | null;
-  const labelR1Vol = document.getElementById('label-r1-volume');
-  const sliderR1Pan = document.getElementById('slider-r1-pan') as HTMLInputElement | null;
-  const labelR1Pan = document.getElementById('label-r1-pan');
-  const sliderR1Rev = document.getElementById('slider-r1-reverb') as HTMLInputElement | null;
-  const labelR1Rev = document.getElementById('label-r1-reverb');
-
-  if (cardR1) cardR1.classList.toggle('card-muted', !r1.enabled);
-  if (badgeR1) {
-    badgeR1.className = `r-part-status-badge ${r1.enabled ? 'active-on' : 'active-off'}`;
-    badgeR1.textContent = r1.enabled ? '🟢 演奏中' : '🔴 已靜音 (不發聲)';
-  }
-  if (btnToggleR1) {
-    btnToggleR1.className = `btn-toggle-r-part ${r1.enabled ? 'active-toggle' : 'muted-toggle'}`;
-    btnToggleR1.textContent = r1.enabled ? '🔊 開啟 (ON)' : '🔇 關閉 (MUTE)';
-  }
-  if (labelR1Name) labelR1Name.textContent = r1.name;
-  if (labelR1Code) labelR1Code.textContent = `(${r1.msb}-${r1.lsb}-${r1.pc})`;
-  if (sliderR1Vol) sliderR1Vol.value = `${r1.volume}`;
-  if (labelR1Vol) labelR1Vol.textContent = `${r1.volume}`;
-  if (sliderR1Pan) sliderR1Pan.value = `${r1.pan}`;
-  if (labelR1Pan) labelR1Pan.textContent = formatPan(r1.pan);
-  if (sliderR1Rev) sliderR1Rev.value = `${r1.reverb}`;
-  if (labelR1Rev) labelR1Rev.textContent = `${r1.reverb}`;
-
-  // R2 UI
-  const cardR2 = document.getElementById('card-keyboard-r2');
-  const badgeR2 = document.getElementById('badge-r2-status');
-  const btnToggleR2 = document.getElementById('btn-toggle-r2') as HTMLButtonElement | null;
-  const labelR2Name = document.getElementById('label-r2-voice-name');
-  const labelR2Code = document.getElementById('label-r2-voice-code');
-  const sliderR2Vol = document.getElementById('slider-r2-volume') as HTMLInputElement | null;
-  const labelR2Vol = document.getElementById('label-r2-volume');
-  const sliderR2Pan = document.getElementById('slider-r2-pan') as HTMLInputElement | null;
-  const labelR2Pan = document.getElementById('label-r2-pan');
-  const sliderR2Rev = document.getElementById('slider-r2-reverb') as HTMLInputElement | null;
-  const labelR2Rev = document.getElementById('label-r2-reverb');
-
-  if (cardR2) cardR2.classList.toggle('card-muted', !r2.enabled);
-  if (badgeR2) {
-    badgeR2.className = `r-part-status-badge ${r2.enabled ? 'active-on' : 'active-off'}`;
-    badgeR2.textContent = r2.enabled ? '🟢 演奏中' : '🔴 已靜音 (不發聲)';
-  }
-  if (btnToggleR2) {
-    btnToggleR2.className = `btn-toggle-r-part ${r2.enabled ? 'active-toggle' : 'muted-toggle'}`;
-    btnToggleR2.textContent = r2.enabled ? '🔊 開啟 (ON)' : '🔇 關閉 (MUTE)';
-  }
-  if (labelR2Name) labelR2Name.textContent = r2.name;
-  if (labelR2Code) labelR2Code.textContent = `(${r2.msb}-${r2.lsb}-${r2.pc})`;
-  if (sliderR2Vol) sliderR2Vol.value = `${r2.volume}`;
-  if (labelR2Vol) labelR2Vol.textContent = `${r2.volume}`;
-  if (sliderR2Pan) sliderR2Pan.value = `${r2.pan}`;
-  if (labelR2Pan) labelR2Pan.textContent = formatPan(r2.pan);
-  if (sliderR2Rev) sliderR2Rev.value = `${r2.reverb}`;
-  if (labelR2Rev) labelR2Rev.textContent = `${r2.reverb}`;
-}
-
-function initKeyboardPartsEvents() {
-  const btnPickerR1 = document.getElementById('btn-picker-r1-voice');
-  const btnPickerR2 = document.getElementById('btn-picker-r2-voice');
-  const btnToggleR1 = document.getElementById('btn-toggle-r1');
-  const btnToggleR2 = document.getElementById('btn-toggle-r2');
-  const selectR1 = document.getElementById('select-r1-linked-channel') as HTMLSelectElement | null;
-  const selectR2 = document.getElementById('select-r2-linked-channel') as HTMLSelectElement | null;
-  const sliderR1Vol = document.getElementById('slider-r1-volume') as HTMLInputElement | null;
-  const sliderR2Vol = document.getElementById('slider-r2-volume') as HTMLInputElement | null;
-  const sliderR1Pan = document.getElementById('slider-r1-pan') as HTMLInputElement | null;
-  const sliderR2Pan = document.getElementById('slider-r2-pan') as HTMLInputElement | null;
-  const sliderR1Rev = document.getElementById('slider-r1-reverb') as HTMLInputElement | null;
-  const sliderR2Rev = document.getElementById('slider-r2-reverb') as HTMLInputElement | null;
-
-  btnPickerR1?.addEventListener('click', () => openVoiceModal(0, 'R1'));
-  btnPickerR2?.addEventListener('click', () => openVoiceModal(1, 'R2'));
-
-  btnToggleR1?.addEventListener('click', () => {
-    keyboardPartsState.r1.enabled = !keyboardPartsState.r1.enabled;
-    const enabled = keyboardPartsState.r1.enabled;
-    if (keyboardPartsState.r1.linkedChannel !== null && currentActiveStySection) {
-      if (!styleSectionPartMuteState[currentActiveStySection]) {
-        styleSectionPartMuteState[currentActiveStySection] = {};
-      }
-      styleSectionPartMuteState[currentActiveStySection][keyboardPartsState.r1.linkedChannel] = !enabled;
-      midiManager.sendMixerControllers(keyboardPartsState.r1.linkedChannel, { volume: enabled ? keyboardPartsState.r1.volume : 0 });
-    }
-    // 同步實體琴鍵盤聲部 (Ch 0)
-    midiManager.sendMixerControllers(0, { volume: enabled ? keyboardPartsState.r1.volume : 0 });
-    updateKeyboardPartsUI();
-    if (currentParsed) updateStyPartsSectionLinkage(currentParsed, currentActiveStySection);
-    restartCurrentStySectionAudition();
-    showStatus(`已將 🎹 Right 1 (主旋律 1) ${enabled ? '🟢 開啟' : '🔴 關閉靜音'}`);
-  });
-
-  btnToggleR2?.addEventListener('click', () => {
-    keyboardPartsState.r2.enabled = !keyboardPartsState.r2.enabled;
-    const enabled = keyboardPartsState.r2.enabled;
-    if (keyboardPartsState.r2.linkedChannel !== null && currentActiveStySection) {
-      if (!styleSectionPartMuteState[currentActiveStySection]) {
-        styleSectionPartMuteState[currentActiveStySection] = {};
-      }
-      styleSectionPartMuteState[currentActiveStySection][keyboardPartsState.r2.linkedChannel] = !enabled;
-      midiManager.sendMixerControllers(keyboardPartsState.r2.linkedChannel, { volume: enabled ? keyboardPartsState.r2.volume : 0 });
-    }
-    // 同步實體琴鍵盤聲部 (Ch 1)
-    midiManager.sendMixerControllers(1, { volume: enabled ? keyboardPartsState.r2.volume : 0 });
-    updateKeyboardPartsUI();
-    if (currentParsed) updateStyPartsSectionLinkage(currentParsed, currentActiveStySection);
-    restartCurrentStySectionAudition();
-    showStatus(`已將 🎹 Right 2 (副旋律) ${enabled ? '🟢 開啟' : '🔴 關閉靜音'}`);
-  });
-
-  selectR1?.addEventListener('change', () => {
-    const val = parseInt(selectR1.value, 10);
-    keyboardPartsState.r1.linkedChannel = val >= 0 ? val : null;
-    if (keyboardPartsState.r1.linkedChannel !== null && currentParsed) {
-      const part = currentParsed.parts.find(p => p.channel === val);
-      if (part) {
-        keyboardPartsState.r1.volume = part.volume ?? 100;
-        keyboardPartsState.r1.msb = part.bankMsb ?? 0;
-        keyboardPartsState.r1.lsb = part.bankLsb ?? 112;
-        keyboardPartsState.r1.pc = part.programChange ?? 0;
-        const matched = PRESET_INSTRUMENTS.find(i => i.pc === part.programChange && (part.bankMsb === 0 || i.msb === part.bankMsb));
-        if (matched) keyboardPartsState.r1.name = matched.label;
-      }
-    }
-    updateKeyboardPartsUI();
-    if (currentParsed) updateStyPartsSectionLinkage(currentParsed, currentActiveStySection);
-    showStatus(`Right 1 已關聯至伴奏聲部: ${selectR1.options[selectR1.selectedIndex]?.text || ''}`);
-  });
-
-  selectR2?.addEventListener('change', () => {
-    const val = parseInt(selectR2.value, 10);
-    keyboardPartsState.r2.linkedChannel = val >= 0 ? val : null;
-    if (keyboardPartsState.r2.linkedChannel !== null && currentParsed) {
-      const part = currentParsed.parts.find(p => p.channel === val);
-      if (part) {
-        keyboardPartsState.r2.volume = part.volume ?? 80;
-        keyboardPartsState.r2.msb = part.bankMsb ?? 0;
-        keyboardPartsState.r2.lsb = part.bankLsb ?? 112;
-        keyboardPartsState.r2.pc = part.programChange ?? 0;
-        const matched = PRESET_INSTRUMENTS.find(i => i.pc === part.programChange && (part.bankMsb === 0 || i.msb === part.bankMsb));
-        if (matched) keyboardPartsState.r2.name = matched.label;
-      }
-    }
-    updateKeyboardPartsUI();
-    if (currentParsed) updateStyPartsSectionLinkage(currentParsed, currentActiveStySection);
-    showStatus(`Right 2 已關聯至伴奏聲部: ${selectR2.options[selectR2.selectedIndex]?.text || ''}`);
-  });
-
-  sliderR1Vol?.addEventListener('input', () => {
-    const v = parseInt(sliderR1Vol.value, 10);
-    keyboardPartsState.r1.volume = v;
-    const label = document.getElementById('label-r1-volume');
-    if (label) label.textContent = `${v}`;
-    if (keyboardPartsState.r1.linkedChannel !== null && currentParsed) {
-      YamahaStyleModifier.setPartMixing(currentParsed, keyboardPartsState.r1.linkedChannel, { volume: v });
-      const tableSlider = document.querySelector(`.vol-range-sty-${keyboardPartsState.r1.linkedChannel}`) as HTMLInputElement | null;
-      const tableLabel = document.querySelector(`.vol-label-sty-${keyboardPartsState.r1.linkedChannel}`) as HTMLElement | null;
-      if (tableSlider) tableSlider.value = `${v}`;
-      if (tableLabel) tableLabel.textContent = `${v}`;
-      midiManager.sendMixerControllers(keyboardPartsState.r1.linkedChannel, { volume: v });
-    }
-    midiManager.sendMixerControllers(0, { volume: v });
-  });
-
-  sliderR2Vol?.addEventListener('input', () => {
-    const v = parseInt(sliderR2Vol.value, 10);
-    keyboardPartsState.r2.volume = v;
-    const label = document.getElementById('label-r2-volume');
-    if (label) label.textContent = `${v}`;
-    if (keyboardPartsState.r2.linkedChannel !== null && currentParsed) {
-      YamahaStyleModifier.setPartMixing(currentParsed, keyboardPartsState.r2.linkedChannel, { volume: v });
-      const tableSlider = document.querySelector(`.vol-range-sty-${keyboardPartsState.r2.linkedChannel}`) as HTMLInputElement | null;
-      const tableLabel = document.querySelector(`.vol-label-sty-${keyboardPartsState.r2.linkedChannel}`) as HTMLElement | null;
-      if (tableSlider) tableSlider.value = `${v}`;
-      if (tableLabel) tableLabel.textContent = `${v}`;
-      midiManager.sendMixerControllers(keyboardPartsState.r2.linkedChannel, { volume: v });
-    }
-    midiManager.sendMixerControllers(1, { volume: v });
-  });
-
-  sliderR1Pan?.addEventListener('input', () => {
-    const p = parseInt(sliderR1Pan.value, 10);
-    keyboardPartsState.r1.pan = p;
-    const label = document.getElementById('label-r1-pan');
-    if (label) label.textContent = formatPan(p);
-    if (keyboardPartsState.r1.linkedChannel !== null) midiManager.sendMixerControllers(keyboardPartsState.r1.linkedChannel, { pan: p });
-    midiManager.sendMixerControllers(0, { pan: p });
-  });
-
-  sliderR2Pan?.addEventListener('input', () => {
-    const p = parseInt(sliderR2Pan.value, 10);
-    keyboardPartsState.r2.pan = p;
-    const label = document.getElementById('label-r2-pan');
-    if (label) label.textContent = formatPan(p);
-    if (keyboardPartsState.r2.linkedChannel !== null) midiManager.sendMixerControllers(keyboardPartsState.r2.linkedChannel, { pan: p });
-    midiManager.sendMixerControllers(1, { pan: p });
-  });
-
-  sliderR1Rev?.addEventListener('input', () => {
-    const r = parseInt(sliderR1Rev.value, 10);
-    keyboardPartsState.r1.reverb = r;
-    const label = document.getElementById('label-r1-reverb');
-    if (label) label.textContent = `${r}`;
-    if (keyboardPartsState.r1.linkedChannel !== null) midiManager.sendMixerControllers(keyboardPartsState.r1.linkedChannel, { reverb: r });
-    midiManager.sendMixerControllers(0, { reverb: r });
-  });
-
-  sliderR2Rev?.addEventListener('input', () => {
-    const r = parseInt(sliderR2Rev.value, 10);
-    keyboardPartsState.r2.reverb = r;
-    const label = document.getElementById('label-r2-reverb');
-    if (label) label.textContent = `${r}`;
-    if (keyboardPartsState.r2.linkedChannel !== null) midiManager.sendMixerControllers(keyboardPartsState.r2.linkedChannel, { reverb: r });
-    midiManager.sendMixerControllers(1, { reverb: r });
-  });
-}
-
 function updateStyPartsSectionLinkage(parsed: YamahaFileParsed, sectionName: string | null) {
   if (!parsed || parsed.format !== 'STY') return;
-
-  // 更新鍵盤主奏聲部 (Right 1 & Right 2) 面板
-  updateKeyboardPartsPanel(parsed, sectionName);
 
   const panelPartsTitle = document.getElementById('panel-parts-title');
   const range = sectionName ? StyleRemixer.getSectionTickRange(parsed, sectionName) : null;
@@ -10435,26 +10022,6 @@ function updateStyPartsSectionLinkage(parsed: YamahaFileParsed, sectionName: str
       }
     } else if (melodyBadge) {
       melodyBadge.remove();
-    }
-
-    // 顯示與 Right 1 / Right 2 的關聯標記
-    let rLinkBadge = tr.querySelector('.badge-linked-rpart');
-    if (ch === keyboardPartsState.r1.linkedChannel) {
-      if (!rLinkBadge) {
-        rLinkBadge = document.createElement('span');
-        tr.querySelector('.part-badge')?.parentElement?.appendChild(rLinkBadge);
-      }
-      rLinkBadge.textContent = '🎹 關聯 Right 1';
-      rLinkBadge.className = 'badge-linked-rpart badge-r1-link';
-    } else if (ch === keyboardPartsState.r2.linkedChannel) {
-      if (!rLinkBadge) {
-        rLinkBadge = document.createElement('span');
-        tr.querySelector('.part-badge')?.parentElement?.appendChild(rLinkBadge);
-      }
-      rLinkBadge.textContent = '🎹 關聯 Right 2';
-      rLinkBadge.className = 'badge-linked-rpart badge-r2-link';
-    } else if (rLinkBadge) {
-      rLinkBadge.remove();
     }
 
     const noteCell = tr.querySelector('.part-notes-cell') || tr.cells[1];
