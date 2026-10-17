@@ -6,6 +6,7 @@
 
 import { YamahaPadModifier } from './pad-modifier';
 import { StyleRemixer } from './style-remixer';
+import { PadRecorder, type QuantizeGrid } from './pad-recorder';
 import { DEFAULT_STYLE_PARTS } from '../models/style-types';
 import type {
   YamahaFileParsed,
@@ -424,4 +425,462 @@ export class YamahaStyleModifier {
 
     return true;
   }
+
+  /**
+   * 步驟 3.2: 更新指定伴奏段落 (Section) 內指定通道的單顆音符事件 (音高、起音 Tick、音長、力度)
+   */
+  public static updateSectionNote(
+    parsed: YamahaFileParsed,
+    sectionName: string,
+    channel: number,
+    target: { note: number; startTick: number; oldDurationTick?: number },
+    updates: { note?: number; startTick?: number; durationTick?: number; velocity?: number }
+  ): boolean {
+    if (!parsed || !parsed.tracks || parsed.tracks.length === 0) return false;
+    const track0 = parsed.tracks[0];
+    if (!track0 || !track0.events) return false;
+
+    const range = StyleRemixer.getSectionTickRange(parsed, sectionName);
+    if (!range) return false;
+
+    const targetAbsStart = range.startTick + target.startTick;
+
+    let curTick = 0;
+    const annotated = track0.events.map((ev, index) => {
+      curTick += ev.delta;
+      return { ev: { ...ev }, absTick: curTick, index };
+    });
+
+    const onEntry = annotated.find(
+      (item) =>
+        item.ev.channel === channel &&
+        item.ev.type === 'noteOn' &&
+        item.ev.noteNumber === target.note &&
+        (item.ev.velocity ?? 0) > 0 &&
+        Math.abs(item.absTick - targetAbsStart) <= 12
+    );
+    if (!onEntry) return false;
+
+    const offEntry = annotated.find(
+      (item) =>
+        item.index > onEntry.index &&
+        item.ev.channel === channel &&
+        item.ev.noteNumber === target.note &&
+        (item.ev.type === 'noteOff' || (item.ev.type === 'noteOn' && (item.ev.velocity ?? 0) === 0))
+    );
+    if (!offEntry) return false;
+
+    const oldAbsStart = onEntry.absTick;
+    const oldAbsEnd = offEntry.absTick;
+    const oldDur = Math.max(1, oldAbsEnd - oldAbsStart);
+
+    const newNote = updates.note !== undefined ? Math.max(0, Math.min(127, Math.round(updates.note))) : onEntry.ev.noteNumber!;
+    const newVel = updates.velocity !== undefined ? Math.max(1, Math.min(127, Math.round(updates.velocity))) : onEntry.ev.velocity!;
+    const newAbsStart = updates.startTick !== undefined ? range.startTick + Math.max(0, Math.round(updates.startTick)) : oldAbsStart;
+    const newDur = updates.durationTick !== undefined ? Math.max(12, Math.round(updates.durationTick)) : oldDur;
+    const newAbsEnd = newAbsStart + newDur;
+
+    onEntry.ev.noteNumber = newNote;
+    onEntry.ev.velocity = newVel;
+    onEntry.absTick = newAbsStart;
+
+    offEntry.ev.noteNumber = newNote;
+    offEntry.absTick = newAbsEnd;
+
+    annotated.sort((a, b) => {
+      if (a.absTick !== b.absTick) return a.absTick - b.absTick;
+      const aIsOff = a.ev.type === 'noteOff' || (a.ev.type === 'noteOn' && (a.ev.velocity ?? 0) === 0);
+      const bIsOff = b.ev.type === 'noteOff' || (b.ev.type === 'noteOn' && (b.ev.velocity ?? 0) === 0);
+      if (aIsOff && !bIsOff) return -1;
+      if (!aIsOff && bIsOff) return 1;
+      return a.index - b.index;
+    });
+
+    let prev = 0;
+    track0.events = annotated.map((item) => {
+      item.ev.delta = Math.max(0, item.absTick - prev);
+      prev = item.absTick;
+      return item.ev;
+    });
+
+    YamahaPadModifier.sanitizeTrackDuplicateNotes(track0);
+    YamahaPadModifier.rebuildTrackRawChunk(track0);
+    return true;
+  }
+
+  /**
+   * 步驟 3.2: 刪除指定伴奏段落 (Section) 內指定通道的單顆音符事件
+   */
+  public static deleteSectionNote(
+    parsed: YamahaFileParsed,
+    sectionName: string,
+    channel: number,
+    target: { note: number; startTick: number; oldDurationTick?: number }
+  ): boolean {
+    return this.batchDeleteSectionNotes(parsed, sectionName, channel, [target]) > 0;
+  }
+
+  /**
+   * 步驟 3.2: 批次刪除指定伴奏段落 (Section) 內指定通道的多顆音符事件
+   */
+  public static batchDeleteSectionNotes(
+    parsed: YamahaFileParsed,
+    sectionName: string,
+    channel: number,
+    targets: Array<{ note: number; startTick: number; oldDurationTick?: number }>
+  ): number {
+    if (!parsed || !parsed.tracks || parsed.tracks.length === 0 || targets.length === 0) return 0;
+    const track0 = parsed.tracks[0];
+    if (!track0 || !track0.events) return 0;
+
+    const range = StyleRemixer.getSectionTickRange(parsed, sectionName);
+    if (!range) return 0;
+
+    let curTick = 0;
+    const annotated = track0.events.map((ev, index) => {
+      curTick += ev.delta;
+      return { ev: { ...ev }, absTick: curTick, index };
+    });
+
+    const deletedIndices = new Set<number>();
+
+    for (const t of targets) {
+      const targetAbsStart = range.startTick + t.startTick;
+      const onEntry = annotated.find(
+        (item) =>
+          !deletedIndices.has(item.index) &&
+          item.ev.channel === channel &&
+          item.ev.type === 'noteOn' &&
+          item.ev.noteNumber === t.note &&
+          (item.ev.velocity ?? 0) > 0 &&
+          Math.abs(item.absTick - targetAbsStart) <= 12
+      );
+      if (!onEntry) continue;
+
+      const offEntry = annotated.find(
+        (item) =>
+          !deletedIndices.has(item.index) &&
+          item.index > onEntry.index &&
+          item.ev.channel === channel &&
+          item.ev.noteNumber === t.note &&
+          (item.ev.type === 'noteOff' || (item.ev.type === 'noteOn' && (item.ev.velocity ?? 0) === 0))
+      );
+      if (!offEntry) continue;
+
+      deletedIndices.add(onEntry.index);
+      deletedIndices.add(offEntry.index);
+    }
+
+    if (deletedIndices.size === 0) return 0;
+
+    const remaining = annotated.filter((item) => !deletedIndices.has(item.index));
+    let prev = 0;
+    track0.events = remaining.map((item) => {
+      item.ev.delta = Math.max(0, item.absTick - prev);
+      prev = item.absTick;
+      return item.ev;
+    });
+
+    YamahaPadModifier.rebuildTrackRawChunk(track0);
+    return Math.floor(deletedIndices.size / 2);
+  }
+
+  /**
+   * 步驟 3.2: 在指定伴奏段落 (Section) 內指定通道新增一顆音符事件
+   */
+  public static addSectionNote(
+    parsed: YamahaFileParsed,
+    sectionName: string,
+    channel: number,
+    noteData: { note: number; startTick: number; durationTick: number; velocity: number }
+  ): boolean {
+    if (!parsed || !parsed.tracks || parsed.tracks.length === 0) return false;
+    const track0 = parsed.tracks[0];
+    if (!track0 || !track0.events) return false;
+
+    const range = StyleRemixer.getSectionTickRange(parsed, sectionName);
+    if (!range) return false;
+
+    const absStart = range.startTick + Math.max(0, Math.round(noteData.startTick));
+    const dur = Math.max(12, Math.round(noteData.durationTick));
+    const absEnd = absStart + dur;
+
+    let curTick = 0;
+    const annotated = track0.events.map((ev, index) => {
+      curTick += ev.delta;
+      return { ev: { ...ev }, absTick: curTick, index };
+    });
+
+    const dup = annotated.find(
+      (item) =>
+        item.ev.channel === channel &&
+        item.ev.type === 'noteOn' &&
+        item.ev.noteNumber === noteData.note &&
+        Math.abs(item.absTick - absStart) <= 6
+    );
+    if (dup) return false;
+
+    const onEv: MidiEvent = {
+      delta: 0,
+      type: 'noteOn',
+      channel,
+      noteNumber: Math.max(0, Math.min(127, Math.round(noteData.note))),
+      velocity: Math.max(1, Math.min(127, Math.round(noteData.velocity))),
+    };
+    const offEv: MidiEvent = {
+      delta: 0,
+      type: 'noteOff',
+      channel,
+      noteNumber: Math.max(0, Math.min(127, Math.round(noteData.note))),
+      velocity: 0,
+    };
+
+    annotated.push({ ev: onEv, absTick: absStart, index: 999990 });
+    annotated.push({ ev: offEv, absTick: absEnd, index: 999991 });
+
+    annotated.sort((a, b) => {
+      if (a.absTick !== b.absTick) return a.absTick - b.absTick;
+      const aIsOff = a.ev.type === 'noteOff' || (a.ev.type === 'noteOn' && (a.ev.velocity ?? 0) === 0);
+      const bIsOff = b.ev.type === 'noteOff' || (b.ev.type === 'noteOn' && (b.ev.velocity ?? 0) === 0);
+      if (aIsOff && !bIsOff) return -1;
+      if (!aIsOff && bIsOff) return 1;
+      return a.index - b.index;
+    });
+
+    let prev = 0;
+    track0.events = annotated.map((item) => {
+      item.ev.delta = Math.max(0, item.absTick - prev);
+      prev = item.absTick;
+      return item.ev;
+    });
+
+    YamahaPadModifier.sanitizeTrackDuplicateNotes(track0);
+    YamahaPadModifier.rebuildTrackRawChunk(track0);
+    return true;
+  }
+
+  /**
+   * 步驟 3.2: 批次修改指定伴奏段落 (Section) 內指定通道的多顆音符事件 (多選移調/調力度/伸縮時長)
+   */
+  public static batchUpdateSectionNotes(
+    parsed: YamahaFileParsed,
+    sectionName: string,
+    channel: number,
+    updates: Array<{
+      target: { note: number; startTick: number; oldDurationTick?: number };
+      newProps?: { note?: number; startTick?: number; durationTick?: number; velocity?: number };
+      updates?: { note?: number; startTick?: number; durationTick?: number; velocity?: number };
+    }>
+  ): number {
+    if (!parsed || !parsed.tracks || parsed.tracks.length === 0 || updates.length === 0) return 0;
+    const track0 = parsed.tracks[0];
+    if (!track0 || !track0.events) return 0;
+
+    const range = StyleRemixer.getSectionTickRange(parsed, sectionName);
+    if (!range) return 0;
+
+    let curTick = 0;
+    const annotated = track0.events.map((ev, index) => {
+      curTick += ev.delta;
+      return { ev: { ...ev }, absTick: curTick, index };
+    });
+
+    let successCount = 0;
+
+    for (const u of updates) {
+      const props = u.newProps || u.updates || {};
+      const targetAbsStart = range.startTick + u.target.startTick;
+      const onEntry = annotated.find(
+        (item) =>
+          item.ev.channel === channel &&
+          item.ev.type === 'noteOn' &&
+          item.ev.noteNumber === u.target.note &&
+          (item.ev.velocity ?? 0) > 0 &&
+          Math.abs(item.absTick - targetAbsStart) <= 12
+      );
+      if (!onEntry) continue;
+
+      const offEntry = annotated.find(
+        (item) =>
+          item.index > onEntry.index &&
+          item.ev.channel === channel &&
+          item.ev.noteNumber === u.target.note &&
+          (item.ev.type === 'noteOff' || (item.ev.type === 'noteOn' && (item.ev.velocity ?? 0) === 0))
+      );
+      if (!offEntry) continue;
+
+      const oldDur = Math.max(1, offEntry.absTick - onEntry.absTick);
+
+      if (props.note !== undefined) {
+        const nn = Math.max(0, Math.min(127, Math.round(props.note)));
+        onEntry.ev.noteNumber = nn;
+        offEntry.ev.noteNumber = nn;
+      }
+      if (props.velocity !== undefined) {
+        onEntry.ev.velocity = Math.max(1, Math.min(127, Math.round(props.velocity)));
+      }
+      if (props.startTick !== undefined) {
+        onEntry.absTick = range.startTick + Math.max(0, Math.round(props.startTick));
+      }
+      if (props.durationTick !== undefined) {
+        const nd = Math.max(12, Math.round(props.durationTick));
+        offEntry.absTick = onEntry.absTick + nd;
+      } else if (props.startTick !== undefined) {
+        offEntry.absTick = onEntry.absTick + oldDur;
+      }
+
+      successCount++;
+    }
+
+    if (successCount === 0) return 0;
+
+    annotated.sort((a, b) => {
+      if (a.absTick !== b.absTick) return a.absTick - b.absTick;
+      const aIsOff = a.ev.type === 'noteOff' || (a.ev.type === 'noteOn' && (a.ev.velocity ?? 0) === 0);
+      const bIsOff = b.ev.type === 'noteOff' || (b.ev.type === 'noteOn' && (b.ev.velocity ?? 0) === 0);
+      if (aIsOff && !bIsOff) return -1;
+      if (!aIsOff && bIsOff) return 1;
+      return a.index - b.index;
+    });
+
+    let prev = 0;
+    track0.events = annotated.map((item) => {
+      item.ev.delta = Math.max(0, item.absTick - prev);
+      prev = item.absTick;
+      return item.ev;
+    });
+
+    YamahaPadModifier.sanitizeTrackDuplicateNotes(track0);
+    YamahaPadModifier.rebuildTrackRawChunk(track0);
+    return successCount;
+  }
+
+  /**
+   * 步驟 3.2: 八度快捷移調 (+/- 12 semitones)
+   */
+  public static shiftSectionOctave(
+    parsed: YamahaFileParsed,
+    sectionName: string,
+    channel: number,
+    direction: 1 | -1,
+    targetStartTick?: number,
+    targetNote?: number
+  ): { success: boolean; shiftedCount: number } {
+    if (!parsed || !parsed.tracks || parsed.tracks.length === 0) return { success: false, shiftedCount: 0 };
+    const track0 = parsed.tracks[0];
+    if (!track0 || !track0.events) return { success: false, shiftedCount: 0 };
+
+    const range = StyleRemixer.getSectionTickRange(parsed, sectionName);
+    if (!range) return { success: false, shiftedCount: 0 };
+
+    const semitones = direction * 12;
+    let curTick = 0;
+    const annotated = track0.events.map((ev, index) => {
+      curTick += ev.delta;
+      return { ev: { ...ev }, absTick: curTick, index };
+    });
+
+    let shiftedCount = 0;
+
+    if (targetStartTick !== undefined && targetNote !== undefined) {
+      const targetAbsStart = range.startTick + targetStartTick;
+      const onEntry = annotated.find(
+        (i) =>
+          i.ev.channel === channel &&
+          i.ev.type === 'noteOn' &&
+          i.ev.noteNumber === targetNote &&
+          (i.ev.velocity ?? 0) > 0 &&
+          Math.abs(i.absTick - targetAbsStart) <= 12
+      );
+      if (!onEntry) return { success: false, shiftedCount: 0 };
+
+      const offEntry = annotated.find(
+        (i) =>
+          i.index > onEntry.index &&
+          i.ev.channel === channel &&
+          i.ev.noteNumber === targetNote &&
+          (i.ev.type === 'noteOff' || (i.ev.type === 'noteOn' && (i.ev.velocity ?? 0) === 0))
+      );
+
+      const newNote = Math.max(0, Math.min(127, targetNote + semitones));
+      onEntry.ev.noteNumber = newNote;
+      if (offEntry) offEntry.ev.noteNumber = newNote;
+      shiftedCount = 1;
+    } else {
+      // 全軌移調 (該段落該通道所有音符)
+      for (const item of annotated) {
+        if (item.absTick >= range.startTick && item.absTick < range.endTick && item.ev.channel === channel) {
+          if ((item.ev.type === 'noteOn' || item.ev.type === 'noteOff') && item.ev.noteNumber !== undefined) {
+            item.ev.noteNumber = Math.max(0, Math.min(127, item.ev.noteNumber + semitones));
+            if (item.ev.type === 'noteOn' && (item.ev.velocity ?? 0) > 0) {
+              shiftedCount++;
+            }
+          }
+        }
+      }
+    }
+
+    if (shiftedCount === 0) return { success: false, shiftedCount: 0 };
+
+    let prev = 0;
+    track0.events = annotated.map((item) => {
+      item.ev.delta = Math.max(0, item.absTick - prev);
+      prev = item.absTick;
+      return item.ev;
+    });
+
+    YamahaPadModifier.rebuildTrackRawChunk(track0);
+    return { success: true, shiftedCount };
+  }
+
+  /**
+   * 步驟 3.2: 段落聲部音符量化 (Quantize)
+   */
+  public static quantizeSectionTrack(
+    parsed: YamahaFileParsed,
+    sectionName: string,
+    channel: number,
+    grid: QuantizeGrid,
+    targetStartTick?: number,
+    targetNote?: number
+  ): { success: boolean; quantizedCount: number } {
+    if (!parsed || !parsed.tracks || parsed.tracks.length === 0) return { success: false, quantizedCount: 0 };
+    const track0 = parsed.tracks[0];
+    if (!track0 || !track0.events) return { success: false, quantizedCount: 0 };
+
+    const range = StyleRemixer.getSectionTickRange(parsed, sectionName);
+    if (!range) return { success: false, quantizedCount: 0 };
+
+    const notes = StyleRemixer.extractSectionChannelNotes(parsed, range.startTick, range.endTick, channel);
+    if (notes.length === 0) return { success: false, quantizedCount: 0 };
+
+    const ppq = parsed.division || 480;
+    const minDur = PadRecorder.getMinGridDuration(grid, ppq);
+    const isSingle = targetStartTick !== undefined && targetNote !== undefined;
+
+    const updates: Array<{
+      target: { note: number; startTick: number; oldDurationTick?: number };
+      newProps: { startTick: number; durationTick: number };
+    }> = [];
+
+    for (const n of notes) {
+      if (isSingle && (n.note !== targetNote || Math.abs(n.startTick - targetStartTick!) > 12)) {
+        continue;
+      }
+      const qStart = PadRecorder.snapTickToGrid(n.startTick, grid, ppq);
+      const qEnd = PadRecorder.snapTickToGrid(n.startTick + n.durationTick, grid, ppq);
+      const qDur = Math.max(minDur, qEnd - qStart);
+
+      updates.push({
+        target: { note: n.note, startTick: n.startTick, oldDurationTick: n.durationTick },
+        newProps: { startTick: qStart, durationTick: qDur },
+      });
+    }
+
+    if (updates.length === 0) return { success: false, quantizedCount: 0 };
+
+    const count = this.batchUpdateSectionNotes(parsed, sectionName, channel, updates);
+    return { success: count > 0, quantizedCount: count };
+  }
 }
+

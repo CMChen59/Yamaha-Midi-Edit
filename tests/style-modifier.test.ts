@@ -205,7 +205,115 @@ describe('Phase 4.1: YamahaStyleModifier 伴奏風格 8 聲部混音與音色修
     expect(resDrum.isDrum).toBe(true);
     expect(resDrum.instrumentId).toBe('standard-drum-kit');
   });
+
+  it('步驟 3.2: 能在指定伴奏段落 (Intro A) 中更新單音 (音高/力度/位置/長度) 並無損寫入 Track 0', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const sampleStyPath = path.resolve(__dirname, '../public/samples/4006_SX900.T547.sty');
+    const sampleStyBuffer = fs.readFileSync(sampleStyPath);
+    const parsed = YamahaParser.parse(new Uint8Array(sampleStyBuffer), 'STY');
+
+    const range = StyleRemixer.getSectionTickRange(parsed, 'Intro A');
+    expect(range).not.toBeNull();
+
+    // 取 Channel 8 (Sub Rhythm, PC 75 跳躍撥弦)
+    const origNotes = StyleRemixer.extractSectionChannelNotes(parsed, range!.startTick, range!.endTick, 8);
+    expect(origNotes.length).toBeGreaterThan(0);
+    const firstNote = origNotes[0];
+
+    // 更新第一個音符：音高 +2 半音 (70 -> 72), 力度設為 110, 時長拉長 100 ticks
+    const target = {
+      note: firstNote.note,
+      startTick: firstNote.startTick,
+      oldDurationTick: firstNote.durationTick,
+    };
+
+    const ok = YamahaStyleModifier.updateSectionNote(parsed, 'Intro A', 8, target, {
+      note: firstNote.note + 2,
+      velocity: 110,
+      durationTick: firstNote.durationTick + 100,
+    });
+    expect(ok).toBe(true);
+
+    // 重新提取驗證
+    const updatedNotes = StyleRemixer.extractSectionChannelNotes(parsed, range!.startTick, range!.endTick, 8);
+    const updatedFirst = updatedNotes.find(
+      (n) => Math.abs(n.startTick - firstNote.startTick) <= 12 && n.note === firstNote.note + 2
+    );
+    expect(updatedFirst).toBeDefined();
+    expect(updatedFirst!.note).toBe(firstNote.note + 2);
+    expect(updatedFirst!.velocity).toBe(110);
+    expect(updatedFirst!.durationTick).toBe(firstNote.durationTick + 100);
+  });
+
+  it('步驟 3.2: 能在指定伴奏段落 (Intro A) 中新增、刪除單音與批次刪除音符', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const sampleStyPath = path.resolve(__dirname, '../public/samples/4006_SX900.T547.sty');
+    const sampleStyBuffer = fs.readFileSync(sampleStyPath);
+    const parsed = YamahaParser.parse(new Uint8Array(sampleStyBuffer), 'STY');
+    const range = StyleRemixer.getSectionTickRange(parsed, 'Intro A')!;
+
+    const beforeNotes = StyleRemixer.extractSectionChannelNotes(parsed, range.startTick, range.endTick, 8);
+    const countBefore = beforeNotes.length;
+
+    // 1. 新增音符在第 1 小節第 1 拍 (tick 0)
+    const addOk = YamahaStyleModifier.addSectionNote(parsed, 'Intro A', 8, {
+      note: 60, // C4
+      startTick: 0,
+      durationTick: 480,
+      velocity: 96,
+    });
+    expect(addOk).toBe(true);
+
+    const afterAdd = StyleRemixer.extractSectionChannelNotes(parsed, range.startTick, range.endTick, 8);
+    expect(afterAdd.length).toBe(countBefore + 1);
+    const added = afterAdd.find((n) => n.note === 60 && n.startTick === 0);
+    expect(added).toBeDefined();
+    expect(added!.velocity).toBe(96);
+    expect(added!.durationTick).toBe(480);
+
+    // 2. 刪除該新增音符
+    const delOk = YamahaStyleModifier.deleteSectionNote(parsed, 'Intro A', 8, {
+      note: 60,
+      startTick: 0,
+      oldDurationTick: 480,
+    });
+    expect(delOk).toBe(true);
+
+    const afterDel = StyleRemixer.extractSectionChannelNotes(parsed, range.startTick, range.endTick, 8);
+    expect(afterDel.length).toBe(countBefore);
+  });
+
+  it('步驟 3.2: 能為指定伴奏段落聲部執行一鍵移調 (+/- 12) 與網格節奏量化 (Quantize)', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const sampleStyPath = path.resolve(__dirname, '../public/samples/4006_SX900.T547.sty');
+    const sampleStyBuffer = fs.readFileSync(sampleStyPath);
+    const parsed = YamahaParser.parse(new Uint8Array(sampleStyBuffer), 'STY');
+    const range = StyleRemixer.getSectionTickRange(parsed, 'Main A')!;
+
+    // 取 Channel 1 (Bass)
+    const bassBefore = StyleRemixer.extractSectionChannelNotes(parsed, range.startTick, range.endTick, 1);
+    expect(bassBefore.length).toBeGreaterThan(0);
+    const minNoteBefore = Math.min(...bassBefore.map((n) => n.note));
+
+    // 1. 全軌 Bass 升八度 (+12)
+    const shiftRes = YamahaStyleModifier.shiftSectionOctave(parsed, 'Main A', 1, 1);
+    expect(shiftRes.success).toBe(true);
+    expect(shiftRes.shiftedCount).toBe(bassBefore.length);
+
+    const bassAfterShift = StyleRemixer.extractSectionChannelNotes(parsed, range.startTick, range.endTick, 1);
+    const minNoteAfter = Math.min(...bassAfterShift.map((n) => n.note));
+    expect(minNoteAfter).toBe(minNoteBefore + 12);
+
+    // 2. 節奏量化至 1/8 網格
+    const qRes = YamahaStyleModifier.quantizeSectionTrack(parsed, 'Main A', 1, '1/8');
+    expect(qRes.success).toBe(true);
+    expect(qRes.quantizedCount).toBeGreaterThan(0);
+  });
 });
+
 
 
 

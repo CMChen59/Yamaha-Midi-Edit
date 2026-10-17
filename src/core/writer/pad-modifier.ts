@@ -817,31 +817,34 @@ export class YamahaPadModifier {
       return { ev, absTick: curTick, index };
     });
 
-    const activeCounts = new Map<number, number>();
+    const activeCounts = new Map<string, number>();
     const seenNoteOnTicks = new Set<string>();
     const kept: typeof annotated = [];
     let modified = false;
 
     for (const item of annotated) {
       const ev = item.ev;
+      const ch = ev.channel ?? 0;
       if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0 && ev.noteNumber !== undefined) {
-        const key = `${ev.noteNumber}_${item.absTick}`;
+        const key = `${ch}_${ev.noteNumber}_${item.absTick}`;
         if (seenNoteOnTicks.has(key)) {
-          // 同一音高且完全同一個起始 Tick，視為重複 Note-On，予以剃除
+          // 同一通道、同一音高且完全同一個起始 Tick，視為重複 Note-On，予以剃除
           modified = true;
           continue;
         }
         seenNoteOnTicks.add(key);
-        activeCounts.set(ev.noteNumber, (activeCounts.get(ev.noteNumber) || 0) + 1);
+        const countKey = `${ch}_${ev.noteNumber}`;
+        activeCounts.set(countKey, (activeCounts.get(countKey) || 0) + 1);
         kept.push(item);
       } else if ((ev.type === 'noteOff' || (ev.type === 'noteOn' && ev.velocity === 0)) && ev.noteNumber !== undefined) {
-        const count = activeCounts.get(ev.noteNumber) || 0;
+        const countKey = `${ch}_${ev.noteNumber}`;
+        const count = activeCounts.get(countKey) || 0;
         if (count <= 0) {
           // 沒有對應進行中的 Note-On，此為孤立/重複 Note-Off，予以剃除
           modified = true;
           continue;
         }
-        activeCounts.set(ev.noteNumber, count - 1);
+        activeCounts.set(countKey, count - 1);
         kept.push(item);
       } else {
         kept.push(item);

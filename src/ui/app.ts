@@ -7649,6 +7649,130 @@ function drawVelocityLane(
   }
 }
 
+/**
+ * 步驟 3.2: 統一音符修改分發器 (支援 STY 伴奏段落音軌與 PAD 音軌)
+ */
+function updateActiveNoteEvent(
+  target: { note: number; startTick: number; oldDurationTick?: number },
+  updates: { note?: number; startTick?: number; durationTick?: number; velocity?: number }
+): boolean {
+  if (!currentParsed) return false;
+  if (currentParsed.format === 'STY') {
+    if (!currentActiveStySection || currentActiveStyPartChannel === null) return false;
+    return YamahaStyleModifier.updateSectionNote(
+      currentParsed,
+      currentActiveStySection,
+      currentActiveStyPartChannel,
+      target,
+      updates
+    );
+  } else {
+    const padTarget = {
+      note: target.note,
+      startTick: target.startTick,
+      oldDurationTick: target.oldDurationTick ?? 24,
+    };
+    return YamahaPadModifier.updateNoteEvent(currentParsed, currentCanvasPadNum, padTarget, updates);
+  }
+}
+
+function deleteActiveNoteEvent(
+  target: { note: number; startTick: number; oldDurationTick?: number }
+): boolean {
+  if (!currentParsed) return false;
+  if (currentParsed.format === 'STY') {
+    if (!currentActiveStySection || currentActiveStyPartChannel === null) return false;
+    return YamahaStyleModifier.deleteSectionNote(
+      currentParsed,
+      currentActiveStySection,
+      currentActiveStyPartChannel,
+      target
+    );
+  } else {
+    const padTarget = {
+      note: target.note,
+      startTick: target.startTick,
+      oldDurationTick: target.oldDurationTick ?? 24,
+    };
+    return YamahaPadModifier.deleteNoteEvent(currentParsed, currentCanvasPadNum, padTarget);
+  }
+}
+
+function addActiveNoteEvent(
+  noteData: { note: number; startTick: number; durationTick: number; velocity: number }
+): boolean {
+  if (!currentParsed) return false;
+  if (currentParsed.format === 'STY') {
+    if (!currentActiveStySection || currentActiveStyPartChannel === null) return false;
+    return YamahaStyleModifier.addSectionNote(
+      currentParsed,
+      currentActiveStySection,
+      currentActiveStyPartChannel,
+      noteData
+    );
+  } else {
+    return YamahaPadModifier.addNoteEvent(currentParsed, currentCanvasPadNum, noteData);
+  }
+}
+
+function batchUpdateActiveNotes(
+  updates: Array<{
+    target: { note: number; startTick: number; oldDurationTick?: number };
+    updates?: { note?: number; startTick?: number; durationTick?: number; velocity?: number };
+    newProps?: { note?: number; startTick?: number; durationTick?: number; velocity?: number };
+  }>
+): number {
+  if (!currentParsed || updates.length === 0) return 0;
+  if (currentParsed.format === 'STY') {
+    if (!currentActiveStySection || currentActiveStyPartChannel === null) return 0;
+    return YamahaStyleModifier.batchUpdateSectionNotes(
+      currentParsed,
+      currentActiveStySection,
+      currentActiveStyPartChannel,
+      updates
+    );
+  } else {
+    const padUpdates = updates.map(u => ({
+      target: {
+        note: u.target.note,
+        startTick: u.target.startTick,
+        oldDurationTick: u.target.oldDurationTick ?? 24,
+      },
+      updates: u.updates || u.newProps || {},
+    }));
+    return YamahaPadModifier.batchUpdateNotes(currentParsed, currentCanvasPadNum, padUpdates);
+  }
+}
+
+function batchDeleteActiveNotes(
+  targets: Array<{ note: number; startTick: number; oldDurationTick?: number }>
+): number {
+  if (!currentParsed || targets.length === 0) return 0;
+  if (currentParsed.format === 'STY') {
+    if (!currentActiveStySection || currentActiveStyPartChannel === null) return 0;
+    return YamahaStyleModifier.batchDeleteSectionNotes(
+      currentParsed,
+      currentActiveStySection,
+      currentActiveStyPartChannel,
+      targets
+    );
+  } else {
+    const padTargets = targets.map(t => ({
+      note: t.note,
+      startTick: t.startTick,
+      oldDurationTick: t.oldDurationTick ?? 24,
+    }));
+    return YamahaPadModifier.batchDeleteNotes(currentParsed, currentCanvasPadNum, padTargets);
+  }
+}
+
+function getActiveTrackDesc(): string {
+  if (currentParsed?.format === 'STY') {
+    return `STY [${currentActiveStySection || 'Section'}] 聲部 Ch ${(currentActiveStyPartChannel ?? 0) + 1}`;
+  }
+  return `Pad ${currentCanvasPadNum}`;
+}
+
 function setupVelocityLaneEvents(canvas: HTMLCanvasElement) {
   if (isVelocityEventsBound) return;
   isVelocityEventsBound = true;
@@ -7766,16 +7890,14 @@ function setupVelocityLaneEvents(canvas: HTMLCanvasElement) {
         hasJustDragged = true;
         try {
           if (currentParsed) {
-            YamahaPadModifier.updateNoteEvent(
-              currentParsed,
-              currentCanvasPadNum,
+            updateActiveNoteEvent(
               { note: target.note, startTick: target.startTick, oldDurationTick: target.durationTick },
               { velocity: finalVel }
             );
             if (selectedNoteBox) {
               selectedNoteBox.velocity = finalVel;
             }
-            markModified(`已微調 Pad ${currentCanvasPadNum} 音符 ${midiNoteToName(target.note)} 力度為 ${finalVel}`);
+            markModified(`已微調 ${getActiveTrackDesc()} 音符 ${midiNoteToName(target.note)} 力度為 ${finalVel}`);
             refreshCurrentPadDetail();
             auditionSelectedNote(target.note, target.durationTick, finalVel);
           }
@@ -7872,13 +7994,9 @@ function createNoteAtCanvasPos(mouseX: number, mouseY: number) {
   const snappedStartTick = Math.max(0, Math.round(rawTick / snapStep) * snapStep);
 
   // 預先檢查當前軌道是否已存在同音高同拍點之音符，若存在則直接選取並試聽，避免重複堆疊
-  const existingNotes = extractTrackNotes(currentParsed.tracks[currentCanvasPadNum]);
-  const duplicate = existingNotes.find(n => n.note === noteNum && n.startTick === snappedStartTick);
-  if (duplicate) {
-    const existingBox = lastRenderedNoteBoxes.find(b => b.startTick === snappedStartTick && b.note === noteNum);
-    if (existingBox) {
-      selectNote(existingBox);
-    }
+  const existingBox = lastRenderedNoteBoxes.find(b => b.note === noteNum && Math.abs(b.startTick - snappedStartTick) <= 6);
+  if (existingBox) {
+    selectNote(existingBox);
     return;
   }
 
@@ -7888,7 +8006,7 @@ function createNoteAtCanvasPos(mouseX: number, mouseY: number) {
 
   lastNoteCreationTimestamp = now;
 
-  const success = YamahaPadModifier.addNoteEvent(currentParsed, currentCanvasPadNum, {
+  const success = addActiveNoteEvent({
     note: noteNum,
     startTick: snappedStartTick,
     durationTick: durTick,
@@ -7896,7 +8014,7 @@ function createNoteAtCanvasPos(mouseX: number, mouseY: number) {
   });
 
   if (success) {
-    markModified(`已在 Pad ${currentCanvasPadNum} 新增音符 ${midiNoteToName(noteNum)} (${noteNum})`);
+    markModified(`已在 ${getActiveTrackDesc()} 新增音符 ${midiNoteToName(noteNum)} (${noteNum})`);
     refreshCurrentPadDetail();
 
     const newBox = lastRenderedNoteBoxes.find(b => b.startTick === snappedStartTick && b.note === noteNum);
@@ -7927,7 +8045,7 @@ function setupNoteCreationControls() {
       const durTick = selectedNoteBox ? selectedNoteBox.durationTick : currentTicksPerBeat;
       const vel = selectedNoteBox ? selectedNoteBox.velocity : 100;
 
-      const success = YamahaPadModifier.addNoteEvent(currentParsed, currentCanvasPadNum, {
+      const success = addActiveNoteEvent({
         note: pitch,
         startTick: targetTick,
         durationTick: durTick,
@@ -7935,7 +8053,7 @@ function setupNoteCreationControls() {
       });
 
       if (success) {
-        markModified(`已在 Pad ${currentCanvasPadNum} 新增音符 ${midiNoteToName(pitch)} (${pitch})`);
+        markModified(`已在 ${getActiveTrackDesc()} 新增音符 ${midiNoteToName(pitch)} (${pitch})`);
         refreshCurrentPadDetail();
         const newBox = lastRenderedNoteBoxes.find(b => b.startTick === targetTick && b.note === pitch);
         if (newBox) {
@@ -8001,14 +8119,14 @@ function initCanvasStepRecorder() {
       if (!currentParsed) return;
       if (entry.type === 'notes' && entry.notes.length > 0) {
         for (const n of entry.notes) {
-          YamahaPadModifier.addNoteEvent(currentParsed, currentCanvasPadNum, {
+          addActiveNoteEvent({
             note: n.note,
             startTick: n.startTick,
             durationTick: n.durationTick,
             velocity: n.velocity,
           });
         }
-        markModified(`畫布手彈步進寫入 ${entry.chordName || '音符'} (${entry.notes.length} 顆) 至 Pad ${currentCanvasPadNum}`);
+        markModified(`畫布手彈步進寫入 ${entry.chordName || '音符'} (${entry.notes.length} 顆) 至 ${getActiveTrackDesc()}`);
         refreshCurrentPadDetail();
 
         // 自動選取新增音符中的第一顆，以便檢查器即時顯示
@@ -8110,7 +8228,7 @@ function handleCanvasStepBack() {
   const ok = canvasStepRecorder.stepBack();
   if (ok && lastEntry.type === 'notes' && lastEntry.notes.length > 0) {
     for (const n of lastEntry.notes) {
-      YamahaPadModifier.deleteNoteEvent(currentParsed, currentCanvasPadNum, {
+      deleteActiveNoteEvent({
         note: n.note,
         startTick: n.startTick,
         oldDurationTick: n.durationTick,
@@ -8140,9 +8258,7 @@ function handleCanvasStepTie() {
   }
   const newDur = tiedEntry.durationTick;
   for (const n of tiedEntry.notes) {
-    YamahaPadModifier.updateNoteEvent(
-      currentParsed,
-      currentCanvasPadNum,
+    updateActiveNoteEvent(
       { note: n.note, startTick: n.startTick, oldDurationTick: oldDur },
       { durationTick: newDur }
     );
@@ -8407,9 +8523,31 @@ function setupOctaveAndQuantizeControls() {
   const handleOctaveShift = (direction: 1 | -1) => {
     if (!currentParsed) return;
     const isSingle = !!selectedNoteBox;
-    const res = isSingle
-      ? YamahaPadModifier.shiftPadOctave(currentParsed, currentCanvasPadNum, direction, selectedNoteBox!.startTick, selectedNoteBox!.note)
-      : YamahaPadModifier.shiftPadOctave(currentParsed, currentCanvasPadNum, direction);
+    let res: { success: boolean; shiftedCount: number; targetNoteInfo?: { oldNote: number; newNote: number } };
+
+    if (currentParsed.format === 'STY') {
+      if (!currentActiveStySection || currentActiveStyPartChannel === null) return;
+      const styRes = YamahaStyleModifier.shiftSectionOctave(
+        currentParsed,
+        currentActiveStySection,
+        currentActiveStyPartChannel,
+        direction,
+        isSingle ? selectedNoteBox!.startTick : undefined,
+        isSingle ? selectedNoteBox!.note : undefined
+      );
+      res = {
+        success: styRes.success,
+        shiftedCount: styRes.shiftedCount,
+        targetNoteInfo: isSingle && selectedNoteBox ? {
+          oldNote: selectedNoteBox.note,
+          newNote: Math.max(0, Math.min(127, selectedNoteBox.note + direction * 12))
+        } : undefined
+      };
+    } else {
+      res = isSingle
+        ? YamahaPadModifier.shiftPadOctave(currentParsed, currentCanvasPadNum, direction, selectedNoteBox!.startTick, selectedNoteBox!.note)
+        : YamahaPadModifier.shiftPadOctave(currentParsed, currentCanvasPadNum, direction);
+    }
 
     if (res.success) {
       const dirText = direction > 0 ? '升高 1 個八度 (+12 半音)' : '降低 1 個八度 (-12 半音)';
@@ -8417,16 +8555,16 @@ function setupOctaveAndQuantizeControls() {
         selectedNoteBox!.note = res.targetNoteInfo.newNote;
         const pitchEl = document.getElementById('insp-pitch-name');
         if (pitchEl) pitchEl.textContent = `${midiNoteToName(res.targetNoteInfo.newNote)} (${res.targetNoteInfo.newNote})`;
-        markModified(`Pad ${currentCanvasPadNum} 音符已${dirText}至 ${midiNoteToName(res.targetNoteInfo.newNote)} (${res.targetNoteInfo.newNote})`);
+        markModified(`${getActiveTrackDesc()} 音符已${dirText}至 ${midiNoteToName(res.targetNoteInfo.newNote)} (${res.targetNoteInfo.newNote})`);
         auditionSelectedNote(res.targetNoteInfo.newNote, selectedNoteBox!.durationTick, selectedNoteBox!.velocity);
         showStatus(`✨ 已將選取音符${dirText}至 ${midiNoteToName(res.targetNoteInfo.newNote)}！`);
       } else {
-        markModified(`Pad ${currentCanvasPadNum} 整軌 ${res.shiftedCount} 顆音符已${dirText}`);
-        showStatus(`✨ 已將 Pad ${currentCanvasPadNum} 整軌 ${res.shiftedCount} 顆音符${dirText}！`);
+        markModified(`${getActiveTrackDesc()} 整軌 ${res.shiftedCount} 顆音符已${dirText}`);
+        showStatus(`✨ 已將 ${getActiveTrackDesc()} 整軌 ${res.shiftedCount} 顆音符${dirText}！`);
       }
       refreshCurrentPadDetail();
     } else {
-      showStatus('音高已達 MIDI 邊界 (0~127) 或此 Pad 無音符', true);
+      showStatus('音高已達 MIDI 邊界 (0~127) 或此音軌無音符', true);
     }
   };
 
@@ -8442,18 +8580,31 @@ function setupOctaveAndQuantizeControls() {
       if (!currentParsed) return;
       const grid = (selectQuantizeGrid?.value || '1/16') as QuantizeGrid;
       const isSingle = !!selectedNoteBox;
+      let res: { success: boolean; quantizedCount: number };
 
-      const res = isSingle
-        ? YamahaPadModifier.quantizePadTrack(currentParsed, currentCanvasPadNum, grid, selectedNoteBox!.startTick, selectedNoteBox!.note)
-        : YamahaPadModifier.quantizePadTrack(currentParsed, currentCanvasPadNum, grid);
+      if (currentParsed.format === 'STY') {
+        if (!currentActiveStySection || currentActiveStyPartChannel === null) return;
+        res = YamahaStyleModifier.quantizeSectionTrack(
+          currentParsed,
+          currentActiveStySection,
+          currentActiveStyPartChannel,
+          grid,
+          isSingle ? selectedNoteBox!.startTick : undefined,
+          isSingle ? selectedNoteBox!.note : undefined
+        );
+      } else {
+        res = isSingle
+          ? YamahaPadModifier.quantizePadTrack(currentParsed, currentCanvasPadNum, grid, selectedNoteBox!.startTick, selectedNoteBox!.note)
+          : YamahaPadModifier.quantizePadTrack(currentParsed, currentCanvasPadNum, grid);
+      }
 
       if (res.success) {
         const targetDesc = isSingle ? '選取音符' : `整軌 ${res.quantizedCount} 顆音符`;
-        markModified(`Pad ${currentCanvasPadNum} ${targetDesc}已套用 ${grid} 量化律動`);
+        markModified(`${getActiveTrackDesc()} ${targetDesc}已套用 ${grid} 量化律動`);
         refreshCurrentPadDetail();
-        showStatus(`✨ 成功將 Pad ${currentCanvasPadNum} ${targetDesc}吸附至 ${grid} 網格！`);
+        showStatus(`✨ 成功將 ${getActiveTrackDesc()} ${targetDesc}吸附至 ${grid} 網格！`);
       } else {
-        showStatus('此 Pad 目前無音符可套用量化', true);
+        showStatus('此軌目前無音符可套用量化', true);
       }
     });
   }
@@ -8880,13 +9031,11 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
         hasJustDragged = true;
         try {
           if (currentParsed) {
-            YamahaPadModifier.updateNoteEvent(
-              currentParsed,
-              currentCanvasPadNum,
+            updateActiveNoteEvent(
               { note: target.note, startTick: target.startTick, oldDurationTick: resizingStartDuration },
               { durationTick: finalDuration }
             );
-            markModified(`已拖曳微調 Pad ${currentCanvasPadNum} 音符 ${midiNoteToName(target.note)} 音長為 ${finalDuration} Ticks`);
+            markModified(`已拖曳微調 ${getActiveTrackDesc()} 音符 ${midiNoteToName(target.note)} 音長為 ${finalDuration} Ticks`);
             refreshCurrentPadDetail();
             auditionSelectedNote(target.note, finalDuration, target.velocity);
           }
@@ -8922,14 +9071,12 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
             if (selectedNoteBox) {
               selectedNoteBox.startTick = finalStart;
             }
-            YamahaPadModifier.updateNoteEvent(
-              currentParsed,
-              currentCanvasPadNum,
+            updateActiveNoteEvent(
               { note: target.note, startTick: movingStartTick, oldDurationTick: target.durationTick },
               { startTick: finalStart }
             );
             const pos = formatNotePosition(finalStart - currentGridStartTick, currentTicksPerBeat, currentBeatsPerBar);
-            markModified(`已平移 Pad ${currentCanvasPadNum} 音符 ${midiNoteToName(target.note)} 位置至 ${pos.displayFull}`);
+            markModified(`已平移 ${getActiveTrackDesc()} 音符 ${midiNoteToName(target.note)} 位置至 ${pos.displayFull}`);
             refreshCurrentPadDetail();
             auditionSelectedNote(target.note, target.durationTick, target.velocity);
           }
@@ -9265,10 +9412,10 @@ function initNoteInspectorEvents() {
       oldDurationTick: selectedNoteBox.durationTick,
     };
     const noteName = midiNoteToName(target.note);
-    const success = YamahaPadModifier.deleteNoteEvent(currentParsed, currentCanvasPadNum, target);
+    const success = deleteActiveNoteEvent(target);
     if (success) {
       deselectNote();
-      markModified(`已刪除 Pad ${currentCanvasPadNum} 音符 ${noteName} (${target.note})`);
+      markModified(`已刪除 ${getActiveTrackDesc()} 音符 ${noteName} (${target.note})`);
       refreshCurrentPadDetail();
     }
   };
@@ -9287,16 +9434,14 @@ function initNoteInspectorEvents() {
       }
 
       const oldDur = selectedNoteBox.durationTick;
-      const success = YamahaPadModifier.updateNoteEvent(
-        currentParsed,
-        currentCanvasPadNum,
+      const success = updateActiveNoteEvent(
         { note: selectedNoteBox.note, startTick: selectedNoteBox.startTick, oldDurationTick: oldDur },
         { durationTick: newDur }
       );
 
       if (success) {
         selectedNoteBox.durationTick = newDur;
-        markModified(`已微調 Pad ${currentCanvasPadNum} 音符 ${midiNoteToName(selectedNoteBox.note)} 音長為 ${newDur} Ticks`);
+        markModified(`已微調 ${getActiveTrackDesc()} 音符 ${midiNoteToName(selectedNoteBox.note)} 音長為 ${newDur} Ticks`);
         refreshCurrentPadDetail();
         auditionSelectedNote(selectedNoteBox.note, newDur, selectedNoteBox.velocity);
       }
@@ -9309,16 +9454,14 @@ function initNoteInspectorEvents() {
       const newVel = Math.max(1, Math.min(127, parseInt(velInput.value, 10) || 80));
       velInput.value = `${newVel}`;
 
-      const success = YamahaPadModifier.updateNoteEvent(
-        currentParsed,
-        currentCanvasPadNum,
+      const success = updateActiveNoteEvent(
         { note: selectedNoteBox.note, startTick: selectedNoteBox.startTick, oldDurationTick: selectedNoteBox.durationTick },
         { velocity: newVel }
       );
 
       if (success) {
         selectedNoteBox.velocity = newVel;
-        markModified(`已微調 Pad ${currentCanvasPadNum} 音符 ${midiNoteToName(selectedNoteBox.note)} 力度為 ${newVel}`);
+        markModified(`已微調 ${getActiveTrackDesc()} 音符 ${midiNoteToName(selectedNoteBox.note)} 力度為 ${newVel}`);
         refreshCurrentPadDetail();
         auditionSelectedNote(selectedNoteBox.note, selectedNoteBox.durationTick, newVel);
       }
@@ -9337,9 +9480,7 @@ function initNoteInspectorEvents() {
     const newNote = Math.max(0, Math.min(127, oldNote + semiDelta));
     if (newNote === oldNote) return;
 
-    const success = YamahaPadModifier.updateNoteEvent(
-      currentParsed,
-      currentCanvasPadNum,
+    const success = updateActiveNoteEvent(
       { note: oldNote, startTick: selectedNoteBox.startTick, oldDurationTick: selectedNoteBox.durationTick },
       { note: newNote }
     );
@@ -9348,7 +9489,7 @@ function initNoteInspectorEvents() {
       selectedNoteBox.note = newNote;
       const pitchEl = document.getElementById('insp-pitch-name');
       if (pitchEl) pitchEl.textContent = `${midiNoteToName(newNote)} (${newNote})`;
-      markModified(`已移調 Pad ${currentCanvasPadNum} 音符 ${midiNoteToName(oldNote)} 至 ${midiNoteToName(newNote)} (${newNote})`);
+      markModified(`已移調 ${getActiveTrackDesc()} 音符 ${midiNoteToName(oldNote)} 至 ${midiNoteToName(newNote)} (${newNote})`);
       refreshCurrentPadDetail();
       auditionSelectedNote(newNote, selectedNoteBox.durationTick, selectedNoteBox.velocity);
     }
@@ -9379,9 +9520,7 @@ function initNoteInspectorEvents() {
     const newStart = Math.max(0, oldStart + tickDelta);
     if (newStart === oldStart) return;
 
-    const success = YamahaPadModifier.updateNoteEvent(
-      currentParsed,
-      currentCanvasPadNum,
+    const success = updateActiveNoteEvent(
       { note: selectedNoteBox.note, startTick: oldStart, oldDurationTick: selectedNoteBox.durationTick },
       { startTick: newStart }
     );
@@ -9389,7 +9528,7 @@ function initNoteInspectorEvents() {
     if (success) {
       selectedNoteBox.startTick = newStart;
       const pos = formatNotePosition(newStart - currentGridStartTick, currentTicksPerBeat, currentBeatsPerBar);
-      markModified(`已平移 Pad ${currentCanvasPadNum} 音符 ${midiNoteToName(selectedNoteBox.note)} 位置至 ${pos.displayFull}`);
+      markModified(`已平移 ${getActiveTrackDesc()} 音符 ${midiNoteToName(selectedNoteBox.note)} 位置至 ${pos.displayFull}`);
       refreshCurrentPadDetail();
       auditionSelectedNote(selectedNoteBox.note, selectedNoteBox.durationTick, selectedNoteBox.velocity);
     }
@@ -9435,8 +9574,8 @@ function initNoteInspectorEvents() {
           updates: { velocity: newVel }
         };
       });
-      YamahaPadModifier.batchUpdateNotes(currentParsed, currentCanvasPadNum, updates);
-      markModified(`已批次將 Pad ${currentCanvasPadNum} 的 ${selectedNoteBoxes.length} 顆音符力度 ${val > 0 ? '+' : ''}${val}`);
+      batchUpdateActiveNotes(updates);
+      markModified(`已批次將 ${getActiveTrackDesc()} 的 ${selectedNoteBoxes.length} 顆音符力度 ${val > 0 ? '+' : ''}${val}`);
     } else {
       const targetVel = Math.max(1, Math.min(127, Math.round(val)));
       const updates = selectedNoteBoxes.map(b => {
@@ -9446,8 +9585,8 @@ function initNoteInspectorEvents() {
           updates: { velocity: targetVel }
         };
       });
-      YamahaPadModifier.batchUpdateNotes(currentParsed, currentCanvasPadNum, updates);
-      markModified(`已批次將 Pad ${currentCanvasPadNum} 的 ${selectedNoteBoxes.length} 顆音符力度設為 ${targetVel}`);
+      batchUpdateActiveNotes(updates);
+      markModified(`已批次將 ${getActiveTrackDesc()} 的 ${selectedNoteBoxes.length} 顆音符力度設為 ${targetVel}`);
     }
 
     refreshCurrentPadDetail();
@@ -9518,8 +9657,8 @@ function initNoteInspectorEvents() {
         updates: { note: newNote }
       };
     });
-    YamahaPadModifier.batchUpdateNotes(currentParsed, currentCanvasPadNum, updates);
-    markModified(`已批次將 Pad ${currentCanvasPadNum} 的 ${selectedNoteBoxes.length} 顆音符移調 ${semiDelta > 0 ? '+' : ''}${semiDelta} 半音`);
+    batchUpdateActiveNotes(updates);
+    markModified(`已批次將 ${getActiveTrackDesc()} 的 ${selectedNoteBoxes.length} 顆音符移調 ${semiDelta > 0 ? '+' : ''}${semiDelta} 半音`);
     refreshCurrentPadDetail();
     auditionSelectedNotes(selectedNoteBoxes);
   };
@@ -9545,8 +9684,8 @@ function initNoteInspectorEvents() {
         updates: { durationTick: newDur }
       };
     });
-    YamahaPadModifier.batchUpdateNotes(currentParsed, currentCanvasPadNum, updates);
-    markModified(`已批次將 Pad ${currentCanvasPadNum} 的 ${selectedNoteBoxes.length} 顆音符音長調整為 ${desc}`);
+    batchUpdateActiveNotes(updates);
+    markModified(`已批次將 ${getActiveTrackDesc()} 的 ${selectedNoteBoxes.length} 顆音符音長調整為 ${desc}`);
     refreshCurrentPadDetail();
   };
 
@@ -9576,8 +9715,8 @@ function initNoteInspectorEvents() {
         updates: { startTick: newStart }
       };
     });
-    YamahaPadModifier.batchUpdateNotes(currentParsed, currentCanvasPadNum, updates);
-    markModified(`已批次平移 Pad ${currentCanvasPadNum} 的 ${selectedNoteBoxes.length} 顆音符位置`);
+    batchUpdateActiveNotes(updates);
+    markModified(`已批次平移 ${getActiveTrackDesc()} 的 ${selectedNoteBoxes.length} 顆音符位置`);
     refreshCurrentPadDetail();
   };
 
@@ -9606,8 +9745,8 @@ function initNoteInspectorEvents() {
           updates: { startTick: newStart }
         };
       });
-      YamahaPadModifier.batchUpdateNotes(currentParsed, currentCanvasPadNum, updates);
-      markModified(`已批次將 Pad ${currentCanvasPadNum} 的 ${selectedNoteBoxes.length} 顆音符量化吸附至 ${grid}`);
+      batchUpdateActiveNotes(updates);
+      markModified(`已批次將 ${getActiveTrackDesc()} 的 ${selectedNoteBoxes.length} 顆音符量化吸附至 ${grid}`);
       refreshCurrentPadDetail();
     });
   }
@@ -9624,8 +9763,8 @@ function initNoteInspectorEvents() {
     const count = selectedNoteBoxes.length;
     if (!confirm(`確定要刪除選取的 ${count} 顆音符嗎？`)) return;
     const targets = selectedNoteBoxes.map(b => ({ note: b.note, startTick: b.startTick, oldDurationTick: b.durationTick }));
-    const deletedCount = YamahaPadModifier.batchDeleteNotes(currentParsed, currentCanvasPadNum, targets);
-    markModified(`已批次刪除 Pad ${currentCanvasPadNum} 的 ${deletedCount} 顆音符`);
+    const deletedCount = batchDeleteActiveNotes(targets);
+    markModified(`已批次刪除 ${getActiveTrackDesc()} 的 ${deletedCount} 顆音符`);
     deselectNote();
     refreshCurrentPadDetail();
   };
