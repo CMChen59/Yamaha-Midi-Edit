@@ -1850,6 +1850,9 @@ function closeMidiImportModal() {
     audioEngine.stop();
     currentAuditioningTrackIndex = null;
   }
+
+  // 同步更新記憶體中已載入 MIDI 快速喚回狀態
+  updateResumeMidiUI();
 }
 
 function renderMidiSourceTracksList() {
@@ -2066,10 +2069,15 @@ function initMidiImportModal() {
   if (btnClose) btnClose.addEventListener('click', closeMidiImportModal);
   if (btnCancel) btnCancel.addEventListener('click', closeMidiImportModal);
 
-  // 背景點擊關閉
+  // 點擊背景遮罩防誤觸：不關閉視窗，給予柔和焦點回彈提示
   modal.addEventListener('click', (e) => {
     if (e.target === modal) {
-      closeMidiImportModal();
+      const dialog = modal.querySelector('.modal-dialog') as HTMLElement | null;
+      if (dialog) {
+        dialog.classList.remove('modal-dialog-pulse');
+        void dialog.offsetWidth;
+        dialog.classList.add('modal-dialog-pulse');
+      }
     }
   });
 
@@ -2215,9 +2223,45 @@ function initMidiImportModal() {
 let pendingMidiBytes: Uint8Array | null = null;
 let pendingMidiFileName: string = '';
 
+function selectMidiFileFromDisk() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.mid,.midi,.MID,.MIDI';
+  input.onchange = () => {
+    if (input.files && input.files[0]) {
+      handleFile(input.files[0]);
+    }
+  };
+  input.click();
+}
+
+function updateResumeMidiUI() {
+  const btnResume = document.getElementById('btn-resume-imported-midi');
+  const lblResumeName = document.getElementById('resume-midi-filename');
+  const cardResume = document.getElementById('drop-zone-resume-card');
+  const lblCardName = document.getElementById('drop-zone-resume-filename');
+
+  if (pendingMidiBytes && pendingMidiFileName) {
+    if (btnResume) {
+      btnResume.style.display = 'inline-flex';
+      btnResume.style.alignItems = 'center';
+      btnResume.style.gap = '6px';
+    }
+    if (lblResumeName) lblResumeName.textContent = pendingMidiFileName;
+    if (cardResume) {
+      cardResume.style.display = 'flex';
+    }
+    if (lblCardName) lblCardName.textContent = pendingMidiFileName;
+  } else {
+    if (btnResume) btnResume.style.display = 'none';
+    if (cardResume) cardResume.style.display = 'none';
+  }
+}
+
 function openMidiModeRouterModal(bytes: Uint8Array, fileName: string) {
   pendingMidiBytes = bytes;
   pendingMidiFileName = fileName;
+  updateResumeMidiUI();
 
   const modal = document.getElementById('midi-mode-router-modal');
   const subtitle = document.getElementById('midi-router-subtitle');
@@ -2232,6 +2276,7 @@ function openMidiModeRouterModal(bytes: Uint8Array, fileName: string) {
 function closeMidiModeRouterModal() {
   const modal = document.getElementById('midi-mode-router-modal');
   if (modal) modal.style.display = 'none';
+  updateResumeMidiUI();
 }
 
 function initMidiModeRouterModal() {
@@ -2242,15 +2287,33 @@ function initMidiModeRouterModal() {
   const btnCancel = document.getElementById('btn-cancel-midi-router');
   const btnChoosePad = document.getElementById('btn-router-choose-pad');
   const btnChooseStyle = document.getElementById('btn-router-choose-style');
+  const btnChooseAnother = document.getElementById('btn-router-choose-another');
 
   btnClose?.addEventListener('click', closeMidiModeRouterModal);
   btnCancel?.addEventListener('click', closeMidiModeRouterModal);
 
+  btnChooseAnother?.addEventListener('click', () => {
+    closeMidiModeRouterModal();
+    selectMidiFileFromDisk();
+  });
+
+  // 點擊背景遮罩防誤觸：不關閉視窗，給予柔和焦點回彈提示
   modal.addEventListener('click', (e) => {
     if (e.target === modal) {
-      closeMidiModeRouterModal();
+      const dialog = modal.querySelector('.modal-dialog') as HTMLElement | null;
+      if (dialog) {
+        dialog.classList.remove('modal-dialog-pulse');
+        void dialog.offsetWidth;
+        dialog.classList.add('modal-dialog-pulse');
+      }
     }
   });
+
+  const dialog = modal.querySelector('.modal-dialog');
+  if (dialog) {
+    dialog.addEventListener('click', (e) => e.stopPropagation());
+    dialog.addEventListener('mousedown', (e) => e.stopPropagation());
+  }
 
   btnChoosePad?.addEventListener('click', () => {
     closeMidiModeRouterModal();
@@ -2287,6 +2350,10 @@ const STYLE_PART_ORDER: { id: StylePartId; title: string; defaultCh: number; col
 ];
 
 function openStyleImportModal(bytes: Uint8Array, fileName: string) {
+  pendingMidiBytes = bytes;
+  pendingMidiFileName = fileName;
+  updateResumeMidiUI();
+
   const modal = document.getElementById('style-import-modal');
   if (!modal) return;
 
@@ -2347,6 +2414,9 @@ function closeStyleImportModal() {
   isStyleEnsemblePlaying = false;
   const btnAll = document.getElementById('btn-style-audition-all');
   if (btnAll) btnAll.innerHTML = '🎧 試聽所選小節合奏';
+
+  // 同步更新記憶體中已載入 MIDI 快速喚回狀態
+  updateResumeMidiUI();
 }
 
 function resetStyleMappingsToSmartRecommendation() {
@@ -2766,11 +2836,24 @@ function initStyleImportModal() {
   btnCancel?.addEventListener('click', closeStyleImportModal);
   btnAuditionAll?.addEventListener('click', toggleStyleEnsembleAudition);
 
+  // 點擊背景遮罩防誤觸：不關閉視窗，給予柔和焦點回彈提示
   modal.addEventListener('click', (e) => {
     if (e.target === modal) {
-      closeStyleImportModal();
+      const dialog = modal.querySelector('.modal-dialog') as HTMLElement | null;
+      if (dialog) {
+        dialog.classList.remove('modal-dialog-pulse');
+        void dialog.offsetWidth;
+        dialog.classList.add('modal-dialog-pulse');
+      }
     }
   });
+
+  // 阻止 dialog 內部點擊穿透冒泡
+  const dialog = modal.querySelector('.modal-dialog');
+  if (dialog) {
+    dialog.addEventListener('click', (e) => e.stopPropagation());
+    dialog.addEventListener('mousedown', (e) => e.stopPropagation());
+  }
 
   btnSmartAssign?.addEventListener('click', () => {
     resetStyleMappingsToSmartRecommendation();
@@ -2996,7 +3079,9 @@ function initEvents() {
 
   // 拖曳事件
   if (dropZone) {
-    dropZone.addEventListener('click', () => {
+    dropZone.addEventListener('click', (e) => {
+      // 若點擊的是喚回卡片內的按鈕，不要觸發本地檔案選擇視窗
+      if ((e.target as HTMLElement).closest('#drop-zone-resume-card')) return;
       if (fileInput) fileInput.click();
     });
 
@@ -3155,20 +3240,39 @@ function initEvents() {
     });
   }
 
-  // Phase 2.3: MIDI 匯入與範例按鈕
+  // Phase 2.3 & 3.2: MIDI 匯入與續接按鈕
   if (btnImportMidi) {
     btnImportMidi.addEventListener('click', () => {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = '.mid,.midi,.MID,.MIDI';
-      input.onchange = () => {
-        if (input.files && input.files[0]) {
-          handleFile(input.files[0]);
-        }
-      };
-      input.click();
+      if (pendingMidiBytes) {
+        openMidiModeRouterModal(pendingMidiBytes, pendingMidiFileName);
+      } else {
+        selectMidiFileFromDisk();
+      }
     });
   }
+
+  const btnResumeMidi = document.getElementById('btn-resume-imported-midi');
+  btnResumeMidi?.addEventListener('click', () => {
+    if (pendingMidiBytes) {
+      openStyleImportModal(pendingMidiBytes, pendingMidiFileName);
+    }
+  });
+
+  const btnDropzoneResumeStyle = document.getElementById('btn-dropzone-resume-style');
+  btnDropzoneResumeStyle?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (pendingMidiBytes) {
+      openStyleImportModal(pendingMidiBytes, pendingMidiFileName);
+    }
+  });
+
+  const btnDropzoneResumePad = document.getElementById('btn-dropzone-resume-pad');
+  btnDropzoneResumePad?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (pendingMidiBytes) {
+      openMidiImportModal(pendingMidiBytes, pendingMidiFileName);
+    }
+  });
 
   if (btnLoadSampleMid) {
     btnLoadSampleMid.addEventListener('click', () => {
