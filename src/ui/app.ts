@@ -2558,6 +2558,40 @@ function renderStyleSlicerUI() {
       const bars = Math.max(1, slice.endBar - slice.startBar + 1);
       const isAuditioning = currentAuditionSliceIndex === idx;
 
+      // 計算該段落切片中的鼓組音符數與總音符數
+      const division = currentStyleAnalysis?.division || 480;
+      const timeSig = currentStyleAnalysis?.timeSignature || { numerator: 4, denominator: 4 };
+      const ticksPerMeasure = Math.round(division * timeSig.numerator * (4 / timeSig.denominator));
+      const sliceStartTick = (slice.startBar - 1) * ticksPerMeasure;
+      const sliceEndTick = slice.endBar * ticksPerMeasure;
+
+      let sliceDrumNotesCount = 0;
+      let hasDrumTrackAssigned = false;
+      currentStyleMappings.forEach((m) => {
+        if (m.partId === 'Rhythm1' || m.partId === 'Rhythm2') {
+          if (m.sourceTrackIndex !== null && m.sourceTrackIndex !== undefined) {
+            hasDrumTrackAssigned = true;
+            const trk = currentStyleAnalysis?.tracks.find((t) => t.trackIndex === m.sourceTrackIndex);
+            if (trk) {
+              for (const n of trk.notes) {
+                if (n.startTick >= sliceStartTick && n.startTick < sliceEndTick) {
+                  sliceDrumNotesCount++;
+                }
+              }
+            }
+          }
+        }
+      });
+
+      let drumBadgeHtml = '';
+      if (hasDrumTrackAssigned) {
+        if (sliceDrumNotesCount > 0) {
+          drumBadgeHtml = `<span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); font-size: 0.68rem; padding: 1px 5px;" title="此小節區間內包含 ${sliceDrumNotesCount} 顆鼓組/打擊音符">🥁 ${sliceDrumNotesCount} 鼓音符</span>`;
+        } else {
+          drumBadgeHtml = `<span class="badge" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); font-size: 0.68rem; padding: 1px 5px;" title="注意：原曲在此小節區間內無鼓組音符 (原曲鼓組可能在後續小節進場)">⚠️ 無鼓聲 (原曲無鼓)</span>`;
+        }
+      }
+
       const typeOptions = sectionTypes.map(st =>
         `<option value="${st}" ${st === slice.sectionName ? 'selected' : ''}>${st}</option>`
       ).join('');
@@ -2569,12 +2603,13 @@ function renderStyleSlicerUI() {
           </select>
           <button type="button" class="btn-slicer-del" data-idx="${idx}" style="background: transparent; border: none; color: #ef4444; cursor: pointer; font-size: 0.85rem; padding: 0 4px;" title="刪除此段落切片">&times;</button>
         </div>
-        <div style="display: flex; align-items: center; gap: 4px; font-size: 0.76rem; color: #cbd5e1;">
+        <div style="display: flex; align-items: center; gap: 4px; font-size: 0.76rem; color: #cbd5e1; flex-wrap: wrap;">
           <span>小節:</span>
-          <input type="number" class="slicer-start-bar" data-idx="${idx}" min="1" max="${totalMeasures}" value="${slice.startBar}" style="width: 46px; background: #11131a; border: 1px solid #333846; border-radius: 3px; color: #fff; padding: 2px 4px; font-size: 0.76rem; text-align: center;" />
+          <input type="number" class="slicer-start-bar" data-idx="${idx}" min="1" max="${totalMeasures}" value="${slice.startBar}" style="width: 44px; background: #11131a; border: 1px solid #333846; border-radius: 3px; color: #fff; padding: 2px 4px; font-size: 0.76rem; text-align: center;" />
           <span style="color: #64748b;">~</span>
-          <input type="number" class="slicer-end-bar" data-idx="${idx}" min="1" max="${totalMeasures}" value="${slice.endBar}" style="width: 46px; background: #11131a; border: 1px solid #333846; border-radius: 3px; color: #fff; padding: 2px 4px; font-size: 0.76rem; text-align: center;" />
+          <input type="number" class="slicer-end-bar" data-idx="${idx}" min="1" max="${totalMeasures}" value="${slice.endBar}" style="width: 44px; background: #11131a; border: 1px solid #333846; border-radius: 3px; color: #fff; padding: 2px 4px; font-size: 0.76rem; text-align: center;" />
           <span class="badge" style="background: #1e293b; color: #94a3b8; font-size: 0.7rem; padding: 1px 6px;">${bars}m</span>
+          ${drumBadgeHtml}
         </div>
         <div style="display: flex; justify-content: flex-end; margin-top: 2px;">
           <button type="button" class="btn-audition btn-slicer-audition ${isAuditioning ? 'playing' : ''}" data-idx="${idx}" style="padding: 2px 8px; font-size: 0.72rem;">
@@ -2725,6 +2760,10 @@ function toggleStyleSliceAudition(sliceIdx: number) {
           instrumentId: isDrum ? 'standard-drum-kit' : 'grand-piano',
           channel: DEFAULT_STYLE_PARTS[mapping.partId].channel,
           isDrum,
+          msb: isDrum ? 127 : 0,
+          lsb: 0,
+          pc: track.programChange ?? 0,
+          volume: isDrum ? 110 : 95,
         },
       });
     }
@@ -2755,7 +2794,16 @@ function toggleStyleSliceAudition(sliceIdx: number) {
     },
   });
 
-  showStatus(`▶ 正在試聽切片段落: [${slice.sectionName}] (小節 ${startBar}~${endBar})...`);
+  const hasDrumInAudition = backingItems.some((b) => b.channelParams?.isDrum);
+  const drumNoteCountInAudition = backingItems
+    .filter((b) => b.channelParams?.isDrum)
+    .reduce((sum, b) => sum + b.notes.length, 0);
+
+  const drumNoteTip = hasDrumInAudition
+    ? `(含 ${drumNoteCountInAudition} 顆鼓組音符)`
+    : `(⚠️ 提示：此段落小節區間內原曲無鼓聲)`;
+
+  showStatus(`▶ 正在試聽切片段落: [${slice.sectionName}] (小節 ${startBar}~${endBar}) ${drumNoteTip}...`);
 }
 
 function openStyleImportModal(bytes: Uint8Array, fileName: string) {
@@ -3022,8 +3070,8 @@ function toggleStyleTrackAudition(trackIndex: number) {
     gridStartTick: 0,
     totalTicks: Math.max(playTotalTicks, 1),
     channelParams: {
-      msb: track.bankMsb ?? (isDrum ? 127 : 0),
-      lsb: track.bankLsb ?? (isDrum ? 0 : 112),
+      msb: isDrum ? 127 : (track.bankMsb ?? 0),
+      lsb: isDrum ? 0 : (track.bankLsb ?? 112),
       pc: track.programChange ?? 0,
       channel: midiChannel,
       isDrum,
@@ -3112,8 +3160,8 @@ function toggleStyleEnsembleAudition() {
       notes: relNotes,
       totalTicks: sliceTotalTicks,
       channelParams: {
-        msb: track.bankMsb ?? (isDrum ? 127 : 0),
-        lsb: track.bankLsb ?? (isDrum ? 0 : 112),
+        msb: isDrum ? 127 : (track.bankMsb ?? 0),
+        lsb: isDrum ? 0 : (track.bankLsb ?? 112),
         pc: track.programChange ?? 0,
         channel: targetChannel,
         isDrum,
@@ -5420,8 +5468,8 @@ function toggleStySectionAudition(sectionName: string) {
         reverb: voice.reverb ?? def.reverb,
         chorus: voice.chorus ?? def.chorus,
         instrumentId: instId,
-        msb: voice.msb ?? def.msb,
-        lsb: voice.lsb ?? def.lsb,
+        msb: isDrum ? 127 : (voice.msb ?? def.msb),
+        lsb: isDrum ? 0 : (voice.lsb ?? def.lsb),
         pc: voice.pc ?? def.pc,
         channel: def.channel,
         isDrum,

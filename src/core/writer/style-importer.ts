@@ -621,9 +621,14 @@ export class StyleImporter {
       if (!partDef) continue;
 
       if (mapping.voice) {
+        const isDrumPart = mapping.partId === 'Rhythm1' || mapping.partId === 'Rhythm2';
+        let safeMsb = mapping.voice.msb ?? partDef.msb;
+        if (isDrumPart && safeMsb !== 126 && safeMsb !== 127) {
+          safeMsb = 127;
+        }
         partsConfig[mapping.partId] = {
           ...partDef,
-          msb: mapping.voice.msb ?? partDef.msb,
+          msb: safeMsb,
           lsb: mapping.voice.lsb ?? partDef.lsb,
           pc: mapping.voice.pc ?? partDef.pc,
           volume: mapping.voice.volume ?? partDef.volume,
@@ -635,10 +640,20 @@ export class StyleImporter {
 
       if (mapping.sourceTrackIndex !== null && mapping.sourceTrackIndex !== undefined) {
         const sourceTrack = analysis.tracks.find((t) => t.trackIndex === mapping.sourceTrackIndex);
-        if (sourceTrack && !mapping.voice && sourceTrack.programChange !== undefined) {
-          partsConfig[mapping.partId].pc = sourceTrack.programChange;
-          if (sourceTrack.bankMsb !== undefined) partsConfig[mapping.partId].msb = sourceTrack.bankMsb;
-          if (sourceTrack.bankLsb !== undefined) partsConfig[mapping.partId].lsb = sourceTrack.bankLsb;
+        if (sourceTrack && !mapping.voice) {
+          const isDrumPart = mapping.partId === 'Rhythm1' || mapping.partId === 'Rhythm2';
+          if (sourceTrack.programChange !== undefined) {
+            partsConfig[mapping.partId].pc = sourceTrack.programChange;
+          }
+          if (isDrumPart) {
+            // Yamaha SFF2 / PSR-SX920 鼓組聲部 (Rhythm 1/2) Bank MSB 必須強制鎖定為 127 (標準鼓組) 或 126 (SFX)，絕不可為 0 (避免被琴端視為鋼琴或遭自動靜音)
+            partsConfig[mapping.partId].msb =
+              sourceTrack.bankMsb === 126 || sourceTrack.bankMsb === 127 ? sourceTrack.bankMsb : 127;
+            partsConfig[mapping.partId].lsb = sourceTrack.bankLsb ?? 0;
+          } else {
+            if (sourceTrack.bankMsb !== undefined) partsConfig[mapping.partId].msb = sourceTrack.bankMsb;
+            if (sourceTrack.bankLsb !== undefined) partsConfig[mapping.partId].lsb = sourceTrack.bankLsb;
+          }
         }
       }
     }

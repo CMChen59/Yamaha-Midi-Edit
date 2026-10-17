@@ -254,5 +254,41 @@ describe('Phase 3.2: StyleImporter 外部 MIDI 8 聲部智慧映射與伴奏合�
     );
     expect(synthBassNotes[0].noteNumber).toBe(originalBassNotes[0].note - 7);
   });
+
+  it('鼓組聲部 (Rhythm1/Rhythm2) 即使來源 MIDI 軌道 Bank MSB 為 0，仍強制鎖定為 Yamaha 原廠 127 鼓組音色，防止琴端靜音', () => {
+    const analysis = StyleImporter.analyzeForStyle(demoBytes, 'demo_groove.mid');
+
+    // 模擬來源 MIDI 軌道的 Bank MSB 標記為 0 (如 Roland GS 或 一般 GM 檔案)
+    analysis.tracks[4].bankMsb = 0;
+    analysis.tracks[4].bankLsb = 0;
+    analysis.tracks[4].programChange = 0;
+
+    const options: StyleImportOptions = {
+      projectName: 'Drum MSB Safe Style',
+      partMappings: [
+        { partId: 'Rhythm2', sourceTrackIndex: 4 },
+        { partId: 'Rhythm1', sourceTrackIndex: 4 },
+      ],
+    };
+
+    const style = StyleImporter.synthesizeStyleFromImport(analysis, options);
+
+    // 驗證 parts 設定中 Rhythm 1 (Ch 8) 與 Rhythm 2 (Ch 9) 的 Bank MSB 均為 127
+    const r1 = style.parts.find((p) => p.channel === 8);
+    const r2 = style.parts.find((p) => p.channel === 9);
+
+    expect(r1?.bankMsb).toBe(127);
+    expect(r2?.bankMsb).toBe(127);
+
+    // 驗證 Track 0 初始化事件中 CC 0 (Bank MSB) 在 Ch 8 與 Ch 9 均寫入 127
+    const cc0Events = style.tracks[0].events.filter(
+      (e) => e.type === 'controlChange' && e.controller === 0
+    );
+    const cc0Ch8 = cc0Events.find((e) => e.channel === 8);
+    const cc0Ch9 = cc0Events.find((e) => e.channel === 9);
+
+    expect(cc0Ch8?.value).toBe(127);
+    expect(cc0Ch9?.value).toBe(127);
+  });
 });
 

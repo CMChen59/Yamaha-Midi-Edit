@@ -820,9 +820,10 @@ export class AudioEngine {
     const ctx = this.ctx;
     const vol = (params.volume ?? 100) / 127;
     const vel = velocity / 127;
-    const gainFactor = vol * vel * 0.4;
-    const inst = params.instrumentId || 'grand-piano';
     const isDrum = params.isDrum || (params.pc !== undefined && params.pc >= 120);
+    // 鼓組為打擊瞬態音色，維持充足動態衝擊感 (punch)，非打擊樂器則採 0.4 緩和系數防止和弦複音過載失真
+    const gainFactor = isDrum ? vol * Math.min(1.0, vel * 1.25) * 0.95 : vol * vel * 0.4;
+    const inst = params.instrumentId || 'grand-piano';
 
     // 建立軌道聲道架構 (Gain -> Panner -> Sub-bus / Backing-bus / Master)
     const targetBus = customBus || this.currentPadGain || this.masterGain;
@@ -1076,53 +1077,166 @@ export class AudioEngine {
     osc.stop(start + dur + 0.1);
   }
 
-  /** 打擊樂器 (Drums)：大鼓、小鼓、Hi-Hat 噪音 */
+  /** 打擊樂器 (Drums)：大鼓、小鼓、Hi-Hat、銅鈸、通鼓與拉丁擊樂真實物理合成 */
   private synthesizeDrum(note: number, vel: number, start: number, target: AudioNode) {
     if (!this.ctx) return;
-    const velScale = Math.max(0.1, vel / 127);
+    const velScale = Math.max(0.2, Math.min(1.0, vel / 127));
 
     if (note === 35 || note === 36) {
-      // 大鼓 (Bass Drum / Kick)
+      // 1. 大鼓 (Bass Drum / Kick) - 具備開口瞬態 Click 與飽滿低頻 Punch (52~65Hz)
       const osc = this.createOscillator();
       const env = this.ctx.createGain();
-      osc.frequency.setValueAtTime(130, start);
-      osc.frequency.exponentialRampToValueAtTime(35, start + 0.09);
+      osc.type = 'sine';
+      // 快速音高掃頻：從 320Hz 瞬態極速下墜至 52Hz，小喇叭或耳機均能清楚辨識敲擊質感
+      osc.frequency.setValueAtTime(320, start);
+      osc.frequency.exponentialRampToValueAtTime(80, start + 0.035);
+      osc.frequency.exponentialRampToValueAtTime(52, start + 0.14);
 
-      env.gain.setValueAtTime(1.0 * velScale, start);
-      env.gain.exponentialRampToValueAtTime(0.001, start + 0.22);
+      env.gain.setValueAtTime(1.25 * velScale, start);
+      env.gain.exponentialRampToValueAtTime(0.001, start + 0.28);
 
       osc.connect(env);
       env.connect(target);
       osc.start(start);
-      osc.stop(start + 0.25);
+      osc.stop(start + 0.3);
+
+      // 大鼓擊鎚高頻敲擊瞬態 (Beater Click, 2.5kHz)
+      this.playNoise(start, 0.015, 2500, target, 0.6 * velScale);
+    } else if (note === 37) {
+      // 2. 邊音 (Side Stick / Rimshot) - 實心木質敲擊感
+      const osc = this.createOscillator();
+      const env = this.ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(880, start);
+      osc.frequency.exponentialRampToValueAtTime(440, start + 0.025);
+
+      env.gain.setValueAtTime(0.9 * velScale, start);
+      env.gain.exponentialRampToValueAtTime(0.001, start + 0.04);
+      osc.connect(env);
+      env.connect(target);
+      osc.start(start);
+      osc.stop(start + 0.05);
+
+      this.playNoise(start, 0.025, 3500, target, 0.7 * velScale);
     } else if (note === 38 || note === 40) {
-      // 小鼓 (Snare)
+      // 3. 小鼓 (Snare / Electric Snare) - 鼓腔共鳴 + 響弦金屬白噪音
       const osc = this.createOscillator();
       const oscEnv = this.ctx.createGain();
       osc.type = 'triangle';
-      osc.frequency.setValueAtTime(180, start);
-      osc.frequency.exponentialRampToValueAtTime(80, start + 0.08);
-      oscEnv.gain.setValueAtTime(0.8, start);
-      oscEnv.gain.exponentialRampToValueAtTime(0.001, start + 0.12);
+      osc.frequency.setValueAtTime(240, start);
+      osc.frequency.exponentialRampToValueAtTime(120, start + 0.06);
+
+      oscEnv.gain.setValueAtTime(0.9 * velScale, start);
+      oscEnv.gain.exponentialRampToValueAtTime(0.001, start + 0.14);
       osc.connect(oscEnv);
       oscEnv.connect(target);
       osc.start(start);
-      osc.stop(start + 0.15);
+      osc.stop(start + 0.16);
 
-      // 響弦白噪音
-      this.playNoise(start, 0.16, 1200, target);
-    } else if (note === 42 || note === 44 || note === 46) {
-      // Hi-Hat (閉/開)
-      const dur = note === 46 ? 0.28 : 0.05;
-      this.playNoise(start, dur, 7000, target);
-    } else {
-      // 通鼓或其它金屬樂器
+      // 響弦噪音 (Snare Wires)
+      this.playNoise(start, 0.18, 1500, target, 0.95 * velScale);
+    } else if (note === 39) {
+      // 4. 拍手聲 (Hand Clap)
+      this.playNoise(start, 0.02, 1200, target, 0.7 * velScale);
+      this.playNoise(start + 0.012, 0.02, 1200, target, 0.7 * velScale);
+      this.playNoise(start + 0.024, 0.12, 1000, target, 0.85 * velScale);
+    } else if (note === 42 || note === 44) {
+      // 5. 閉合 / 踩鈸 Hi-Hat (Closed / Pedal)
+      this.playNoise(start, 0.045, 7500, target, 0.75 * velScale);
+    } else if (note === 46) {
+      // 6. 開鈸 Hi-Hat (Open) - 泛音金屬細碎殘響
+      this.playNoise(start, 0.32, 6500, target, 0.85 * velScale);
+    } else if (note === 49 || note === 57) {
+      // 7. 碎音銅鈸 (Crash Cymbal 1 & 2) - 爆發力金屬噪音噴濺
+      this.playNoise(start, 0.9, 4500, target, 0.9 * velScale);
+    } else if (note === 51 || note === 59) {
+      // 8. 疊音鈸 (Ride Cymbal 1 & 2) - 金屬清脆叮聲與長泛音
       const osc = this.createOscillator();
       const env = this.ctx.createGain();
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(midiToFreq(note), start);
-      osc.frequency.exponentialRampToValueAtTime(midiToFreq(note) * 0.7, start + 0.15);
-      env.gain.setValueAtTime(0.8, start);
+      osc.frequency.setValueAtTime(580, start);
+      env.gain.setValueAtTime(0.4 * velScale, start);
+      env.gain.exponentialRampToValueAtTime(0.001, start + 0.3);
+      osc.connect(env);
+      env.connect(target);
+      osc.start(start);
+      osc.stop(start + 0.35);
+
+      this.playNoise(start, 0.65, 5500, target, 0.65 * velScale);
+    } else if (note === 52 || note === 55) {
+      // 9. 中國鈸 (China) 或 潑音鈸 (Splash)
+      const dur = note === 55 ? 0.35 : 0.6;
+      this.playNoise(start, dur, 4000, target, 0.85 * velScale);
+    } else if (note === 53) {
+      // 10. 疊音鈸鐘 (Ride Bell)
+      const osc = this.createOscillator();
+      const env = this.ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(820, start);
+      env.gain.setValueAtTime(0.7 * velScale, start);
+      env.gain.exponentialRampToValueAtTime(0.001, start + 0.4);
+      osc.connect(env);
+      env.connect(target);
+      osc.start(start);
+      osc.stop(start + 0.45);
+    } else if (note === 54 || note === 69 || note === 70) {
+      // 11. 鈴鼓 (Tambourine) / 沙錘 (Shaker / Cabasa)
+      this.playNoise(start, 0.06, 6800, target, 0.8 * velScale);
+    } else if (note === 56) {
+      // 12. 牛鈴 (Cowbell) - 雙諧波方波/三角波經典打擊聲
+      const osc1 = this.createOscillator();
+      const osc2 = this.createOscillator();
+      const env = this.ctx.createGain();
+      osc1.type = 'square';
+      osc2.type = 'triangle';
+      osc1.frequency.setValueAtTime(587, start);
+      osc2.frequency.setValueAtTime(845, start);
+
+      env.gain.setValueAtTime(0.6 * velScale, start);
+      env.gain.exponentialRampToValueAtTime(0.001, start + 0.22);
+      osc1.connect(env);
+      osc2.connect(env);
+      env.connect(target);
+      osc1.start(start);
+      osc2.start(start);
+      osc1.stop(start + 0.25);
+      osc2.stop(start + 0.25);
+    } else if (note >= 41 && note <= 50) {
+      // 13. 通鼓群 (Low / Mid / High Toms: 41, 43, 45, 47, 48, 50)
+      const tomFreqMap: Record<number, number> = {
+        41: 130, // Low Floor Tom
+        43: 145, // High Floor Tom
+        45: 165, // Low Tom
+        47: 190, // Low-Mid Tom
+        48: 220, // Hi-Mid Tom
+        50: 250, // High Tom
+      };
+      const baseFreq = tomFreqMap[note] || 170;
+      const osc = this.createOscillator();
+      const env = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(baseFreq, start);
+      osc.frequency.exponentialRampToValueAtTime(baseFreq * 0.55, start + 0.16);
+
+      env.gain.setValueAtTime(1.0 * velScale, start);
+      env.gain.exponentialRampToValueAtTime(0.001, start + 0.24);
+      osc.connect(env);
+      env.connect(target);
+      osc.start(start);
+      osc.stop(start + 0.26);
+
+      // 鼓棒擊皮瞬態
+      this.playNoise(start, 0.015, 2000, target, 0.4 * velScale);
+    } else {
+      // 14. 其它打擊樂 (拉丁 Conga, Bongo 等通用備援)
+      const osc = this.createOscillator();
+      const env = this.ctx.createGain();
+      const f = Math.max(90, Math.min(600, midiToFreq(note)));
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(f, start);
+      osc.frequency.exponentialRampToValueAtTime(f * 0.65, start + 0.12);
+
+      env.gain.setValueAtTime(0.85 * velScale, start);
       env.gain.exponentialRampToValueAtTime(0.001, start + 0.2);
       osc.connect(env);
       env.connect(target);
@@ -1131,8 +1245,14 @@ export class AudioEngine {
     }
   }
 
-  /** 白噪音發生器 (用於 Hi-hat, Snare 響弦) */
-  private playNoise(start: number, dur: number, highpassFreq: number, target: AudioNode) {
+  /** 白噪音發生器 (用於 Hi-hat, Snare 響弦, 銅鈸) */
+  private playNoise(
+    start: number,
+    dur: number,
+    highpassFreq: number,
+    target: AudioNode,
+    gainLevel: number = 0.7
+  ) {
     if (!this.ctx) return;
     const bufferSize = Math.floor(this.ctx.sampleRate * dur);
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
@@ -1149,7 +1269,7 @@ export class AudioEngine {
     filter.frequency.setValueAtTime(highpassFreq, start);
 
     const env = this.ctx.createGain();
-    env.gain.setValueAtTime(0.7, start);
+    env.gain.setValueAtTime(gainLevel, start);
     env.gain.exponentialRampToValueAtTime(0.001, start + dur);
 
     noise.connect(filter);
