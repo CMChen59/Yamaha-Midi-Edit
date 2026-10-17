@@ -16,6 +16,16 @@
         <h1>STY & PAD 透視編輯工具 <small>v0.1 Preview</small></h1>
       </div>
       <div class="header-actions">
+        <!-- 全域發聲路由選擇器 -->
+        <div id="header-audio-routing-pill" style="display: inline-flex; align-items: center; gap: 6px; background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(71, 85, 105, 0.4); border-radius: 20px; padding: 3px 10px; font-size: 0.74rem;">
+          <span style="color: #cbd5e1; font-weight: 600;">🔊 輸出:</span>
+          <select id="header-select-audio-routing" style="background: #1e293b; color: #38bdf8; border: 1px solid #475569; border-radius: 12px; font-size: 0.74rem; font-weight: 600; padding: 2px 6px;">
+            <option value="both" selected>🔊+🎹 雙出 (電腦+實體琴)</option>
+            <option value="midi">🎹 僅實體琴 (PSR-SX920)</option>
+            <option value="audio">🔊 僅電腦喇叭</option>
+          </select>
+        </div>
+
         <!-- 實體琴 Web MIDI 連線狀態膠囊 -->
         <div id="midi-connection-pill" style="display: inline-flex; align-items: center; gap: 8px; background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(71, 85, 105, 0.4); border-radius: 20px; padding: 4px 12px; font-size: 0.76rem; color: #cbd5e1; white-space: nowrap; flex-shrink: 0;">
           <span id="midi-status-led" style="width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; display: inline-block; transition: all 0.3s ease; flex-shrink: 0;"></span>
@@ -101,6 +111,41 @@
             <button type="button" id="btn-open-style-remixer" class="btn btn-primary" style="background: linear-gradient(135deg, #ec4899, #be185d); border: none; font-size: 0.76rem; padding: 4px 12px; font-weight: 600; display: none;" title="開啟跨 STY 伴奏風格混搭重組精靈">🎛️ 跨 STY 混搭精靈</button>
           </div>
         </div>
+
+        <!-- 伴奏試聽發聲來源與控制列 (Audition Transport & Sound Output Bar) -->
+        <div id="sty-audition-bar" class="sty-audition-control-bar" style="margin: 12px 0 16px 0; background: rgba(21, 24, 35, 0.95); border: 1px solid #2d3345; border-radius: 8px; padding: 10px 16px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+          <!-- 左側：發聲來源與實體琴連線 -->
+          <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="color: #cbd5e1; font-size: 0.82rem; font-weight: 600;">🔊 聲音輸出來源：</span>
+              <select id="sty-main-audio-routing" style="background: #14161f; color: #38bdf8; border: 1px solid #3b4256; border-radius: 5px; font-size: 0.8rem; padding: 4px 10px; font-weight: 600;">
+                <option value="both" selected>🔊+🎹 雙出 (電腦喇叭 + PSR-SX920 琴端同時發聲)</option>
+                <option value="midi">🎹 僅實體琴 (PSR-SX920 原廠高品質音源)</option>
+                <option value="audio">🔊 僅電腦喇叭 (Web Audio 物理合成)</option>
+              </select>
+            </div>
+            <div id="sty-main-midi-device-wrapper" style="display: inline-flex; align-items: center; gap: 6px;">
+              <span id="sty-main-midi-led" style="width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; display: inline-block;"></span>
+              <span id="sty-main-midi-text" style="color: #94a3b8; font-size: 0.78rem;">實體琴: 未連線</span>
+              <select id="sty-main-select-midi-out" style="background: #14161f; color: #38bdf8; border: 1px solid #3b4256; border-radius: 4px; font-size: 0.76rem; padding: 3px 6px; display: none;">
+                <option value="">未連接實體琴</option>
+              </select>
+              <button type="button" id="btn-sty-main-connect-midi" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem; border-radius: 12px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); cursor: pointer;" title="連接或重新整理設備">連接實體琴</button>
+              <button type="button" id="btn-sty-main-test-chime" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem; border-radius: 12px; background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); font-weight: 600; cursor: pointer; display: none;" title="向 PSR-SX920 彈奏測試確認連線">🔔 測試琴聲</button>
+            </div>
+          </div>
+
+          <!-- 右側：試聽速度與全域停止 -->
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="display: flex; align-items: center; gap: 6px; font-size: 0.78rem;">
+              <span style="color: #94a3b8;">試聽速度:</span>
+              <input type="number" id="sty-playback-bpm" min="30" max="300" value="120" style="width: 56px; background: #14161f; border: 1px solid #333846; border-radius: 4px; color: #fff; text-align: center; font-size: 0.78rem; padding: 2px 4px;" title="試聽播放 BPM 速度" />
+              <span style="color: #64748b;">BPM</span>
+            </div>
+            <button type="button" id="btn-sty-stop-all" class="toggle-btn" style="padding: 4px 12px; font-size: 0.78rem; background: rgba(239, 68, 68, 0.15); color: #f87171; border-color: rgba(239, 68, 68, 0.3); font-weight: 600;" title="停止目前正在試聽的段落">⏹ 停止試聽</button>
+          </div>
+        </div>
+
         <div class="section-grid" id="sections-list">
           <!-- 動態產生段落卡片 -->
         </div>

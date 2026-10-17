@@ -4944,6 +4944,9 @@ function initEvents() {
  * Phase 2.2-F & 3.2: 初始化 Web MIDI 實體琴直連控制與狀態燈號 (支援多處視窗聯動同步)
  */
 function setupWebMidiControls() {
+  // 0. 全域頂部導航列發聲路由
+  const headerSelectRouting = document.getElementById('header-select-audio-routing') as HTMLSelectElement | null;
+
   // 1. 頂部導航列控制項
   const headerStatusLed = document.getElementById('midi-status-led');
   const headerStatusText = document.getElementById('midi-status-text');
@@ -4951,7 +4954,17 @@ function setupWebMidiControls() {
   const headerBtnConnect = document.getElementById('btn-midi-connect');
   const headerBtnTestChime = document.getElementById('btn-header-test-chime');
 
-  // 2. 主走帶列路由控制項
+  // 1.5 STY 主編輯畫面伴奏發聲與走帶控制項
+  const styMainAudioRouting = document.getElementById('sty-main-audio-routing') as HTMLSelectElement | null;
+  const styMainMidiLed = document.getElementById('sty-main-midi-led');
+  const styMainMidiText = document.getElementById('sty-main-midi-text');
+  const styMainSelectOutput = document.getElementById('sty-main-select-midi-out') as HTMLSelectElement | null;
+  const styMainBtnConnect = document.getElementById('btn-sty-main-connect-midi');
+  const styMainBtnTestChime = document.getElementById('btn-sty-main-test-chime');
+  const styPlaybackBpm = document.getElementById('sty-playback-bpm') as HTMLInputElement | null;
+  const btnStyStopAll = document.getElementById('btn-sty-stop-all');
+
+  // 2. 主走帶列路由控制項 (Pad 模式)
   const mainSelectRouting = document.getElementById('select-audio-routing') as HTMLSelectElement | null;
   const mainBtnTestChime = document.getElementById('btn-midi-test-chime');
 
@@ -4974,12 +4987,12 @@ function setupWebMidiControls() {
   // 5. 跨 STY 混搭精靈發聲路由 (Phase 3.3)
   const remixerSelectRouting = document.getElementById('remixer-audio-routing') as HTMLSelectElement | null;
 
-  const statusLeds = [headerStatusLed, styleStatusLed, midiModalStatusLed].filter(Boolean) as HTMLElement[];
-  const statusTexts = [headerStatusText, styleStatusText, midiModalStatusText].filter(Boolean) as HTMLElement[];
-  const outputSelects = [headerSelectOutput, styleSelectOutput, midiModalSelectOutput].filter(Boolean) as HTMLSelectElement[];
-  const connectBtns = [headerBtnConnect, styleBtnConnect, midiModalBtnConnect].filter(Boolean) as HTMLElement[];
-  const testChimeBtns = [headerBtnTestChime, mainBtnTestChime, styleBtnTestChime, midiModalBtnTestChime].filter(Boolean) as HTMLElement[];
-  const routingSelects = [mainSelectRouting, styleSelectRouting, midiModalSelectRouting, remixerSelectRouting].filter(Boolean) as HTMLSelectElement[];
+  const statusLeds = [headerStatusLed, styMainMidiLed, styleStatusLed, midiModalStatusLed].filter(Boolean) as HTMLElement[];
+  const statusTexts = [headerStatusText, styMainMidiText, styleStatusText, midiModalStatusText].filter(Boolean) as HTMLElement[];
+  const outputSelects = [headerSelectOutput, styMainSelectOutput, styleSelectOutput, midiModalSelectOutput].filter(Boolean) as HTMLSelectElement[];
+  const connectBtns = [headerBtnConnect, styMainBtnConnect, styleBtnConnect, midiModalBtnConnect].filter(Boolean) as HTMLElement[];
+  const testChimeBtns = [headerBtnTestChime, styMainBtnTestChime, mainBtnTestChime, styleBtnTestChime, midiModalBtnTestChime].filter(Boolean) as HTMLElement[];
+  const routingSelects = [headerSelectRouting, styMainAudioRouting, mainSelectRouting, styleSelectRouting, midiModalSelectRouting, remixerSelectRouting].filter(Boolean) as HTMLSelectElement[];
 
   const updateMidiUI = (devices: MidiDeviceInfo[]) => {
     const selected = midiManager.getSelectedOutput();
@@ -5006,6 +5019,7 @@ function setupWebMidiControls() {
         btn.textContent = '連接實體琴';
       }
       if (headerBtnTestChime) headerBtnTestChime.style.display = 'none';
+      if (styMainBtnTestChime) styMainBtnTestChime.style.display = 'none';
       if (styleBtnTestChime) styleBtnTestChime.style.display = 'none';
       if (midiModalBtnTestChime) midiModalBtnTestChime.style.display = 'none';
     } else {
@@ -5031,6 +5045,7 @@ function setupWebMidiControls() {
         btn.textContent = '🔄 重新整理';
       }
       if (headerBtnTestChime) headerBtnTestChime.style.display = 'inline-block';
+      if (styMainBtnTestChime) styMainBtnTestChime.style.display = 'inline-block';
       if (styleBtnTestChime) styleBtnTestChime.style.display = 'inline-block';
       if (midiModalBtnTestChime) midiModalBtnTestChime.style.display = 'inline-block';
     }
@@ -5118,6 +5133,26 @@ function setupWebMidiControls() {
 
   for (const btn of testChimeBtns) {
     btn.addEventListener('click', triggerTestChime);
+  }
+
+  if (btnStyStopAll) {
+    btnStyStopAll.addEventListener('click', () => {
+      audioEngine.stopBackingTrack();
+      audioEngine.stop();
+      currentAuditionStySection = null;
+      updateStySectionAuditionButtons();
+      showStatus('已停止所有伴奏段落試聽');
+    });
+  }
+
+  if (styPlaybackBpm) {
+    styPlaybackBpm.addEventListener('change', () => {
+      const inputPlaybackBpm = document.getElementById('input-playback-bpm') as HTMLInputElement | null;
+      if (inputPlaybackBpm) {
+        inputPlaybackBpm.value = styPlaybackBpm.value;
+      }
+      restartCurrentStySectionAudition();
+    });
   }
 
   // 監聽設備插拔熱插拔事件
@@ -5228,8 +5263,12 @@ function renderParsed(bytes: Uint8Array, filename: string, format: 'STY' | 'PAD'
     stylePartMuteState = {};
     stylePartSoloChannel = null;
     const bpmInput = document.getElementById('input-playback-bpm') as HTMLInputElement | null;
+    const styBpmInput = document.getElementById('sty-playback-bpm') as HTMLInputElement | null;
     if (bpmInput && currentParsed.bpm) {
       bpmInput.value = `${currentParsed.bpm}`;
+    }
+    if (styBpmInput && currentParsed.bpm) {
+      styBpmInput.value = `${currentParsed.bpm}`;
     }
 
     renderSections(currentParsed);
@@ -5668,8 +5707,9 @@ function toggleStySectionAudition(sectionName: string) {
   currentAuditionStySection = sectionName;
   updateStySectionAuditionButtons();
 
+  const styBpmInput = document.getElementById('sty-playback-bpm') as HTMLInputElement | null;
   const bpmInput = document.getElementById('input-playback-bpm') as HTMLInputElement | null;
-  const bpm = bpmInput ? (parseInt(bpmInput.value, 10) || currentParsed.bpm || 120) : (currentParsed.bpm || 120);
+  const bpm = styBpmInput ? (parseInt(styBpmInput.value, 10) || currentParsed.bpm || 120) : (bpmInput ? (parseInt(bpmInput.value, 10) || currentParsed.bpm || 120) : (currentParsed.bpm || 120));
 
   audioEngine.startBackingTrack(backingItems, {
     bpm,
@@ -5713,6 +5753,11 @@ function renderSections(parsed: YamahaFileParsed) {
   const panelTitle = document.getElementById('panel-sections-title');
   if (panelTitle) {
     panelTitle.textContent = isPad ? '🥁 Multi Pad 打擊墊 (Pad 1 ~ 4)' : '🎼 伴奏段落結構 (Sections)';
+  }
+
+  const styAuditionBar = document.getElementById('sty-audition-bar');
+  if (styAuditionBar) {
+    styAuditionBar.style.display = isPad ? 'none' : 'flex';
   }
 
   const btnOpenRemixer = document.getElementById('btn-open-style-remixer');
