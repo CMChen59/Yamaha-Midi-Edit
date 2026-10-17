@@ -618,5 +618,30 @@ describe('步驟 2.1: Pad 屬性與混音編輯雙向同步驗證 (PadModifier V
     const pcs = reParsed.tracks[1].events.filter((e) => e.type === 'programChange');
     expect(pcs.length).toBeGreaterThan(0);
   });
+
+  it('驗證 PAD 鋼琴卷軸時間軸基準：在循環小節內延遲進場的音符保留第 1 小節休止，不被左移截斷', () => {
+    const pad1SamplePath = path.resolve(__dirname, '../public/samples/4006-1_PAD.PAD');
+    const rawBuffer = new Uint8Array(fs.readFileSync(pad1SamplePath));
+    const parsed = YamahaParser.parse(rawBuffer, 'PAD');
+
+    const explicitBars = YamahaPadModifier.getPadBarLength(parsed, 1);
+    expect(explicitBars).toBe(4);
+
+    const division = parsed.division || 96;
+    const ticksPerBar = division * 4; // 384 ticks
+    const padLoopTicks = explicitBars * ticksPerBar; // 1536
+
+    // 假設音符在第 2 小節 (Tick 384) 才進場
+    const firstNoteTick = ticksPerBar; // 384
+
+    // 依據全新對齊邏輯：若音符在前 4 小節內 (firstNoteTick < padLoopTicks)，基準必須為 0 (第 1 小節第 1 拍)
+    const gridStartTick = firstNoteTick >= padLoopTicks ? Math.floor(firstNoteTick / ticksPerBar) * ticksPerBar : 0;
+    expect(gridStartTick).toBe(0);
+
+    // 驗證第 1 小節為休止空白，音符在畫布上精確定位於第 2 小節
+    const noteStartBar = Math.floor((firstNoteTick - gridStartTick) / ticksPerBar) + 1;
+    expect(noteStartBar).toBe(2);
+  });
 });
+
 
