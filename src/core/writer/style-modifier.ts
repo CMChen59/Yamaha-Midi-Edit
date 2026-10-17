@@ -5,10 +5,12 @@
  */
 
 import { YamahaPadModifier } from './pad-modifier';
+import { StyleRemixer } from './style-remixer';
 import { DEFAULT_STYLE_PARTS } from '../models/style-types';
 import type {
   YamahaFileParsed,
   MidiTrack,
+  MidiEvent,
 } from '../models/types';
 
 export interface StylePartMixingParams {
@@ -175,5 +177,141 @@ export class YamahaStyleModifier {
         program,
       });
     }
+  }
+
+  /**
+   * 步驟 2.3: 動態裁切或延伸指定伴奏段落的小節長度 (Measure Cut & Extend)
+   * 自動計算並重構 SMF 時序、平移所有後續段落的 Tick 與 Marker，確保 CASM 與伴奏結構完全對齊相容。
+   *
+   * @param parsed STY 解析物件
+   * @param sectionName 目標段落名稱 (例如 'Intro A', 'Main A', 'Fill In BB')
+   * @param targetMeasures 目標小節數 (1 ~ 64)
+   * @returns boolean 是否調整成功
+   */
+  public static resizeSectionMeasures(
+    parsed: YamahaFileParsed,
+    sectionName: string,
+    targetMeasures: number
+  ): boolean {
+    if (!parsed || !parsed.tracks || parsed.tracks.length === 0) return false;
+
+    const targetBars = Math.max(1, Math.min(64, Math.round(targetMeasures)));
+    const division = parsed.division || 480;
+    const timeSig = parsed.timeSignature || { numerator: 4, denominator: 4 };
+    const ticksPerMeasure = Math.round(division * timeSig.numerator * (4 / timeSig.denominator));
+
+    // 1. 取得當前段落資訊
+    const range = StyleRemixer.getSectionTickRange(parsed, sectionName);
+    if (!range) return false;
+
+    const startTick = range.startTick;
+    const oldEndTick = range.endTick;
+    const oldMeasures = range.measureCount;
+    if (oldMeasures === targetBars) return true; // 無需變更
+
+    const newDuration = targetBars * ticksPerMeasure;
+    const oldDuration = oldEndTick - startTick;
+    const diffTicks = newDuration - oldDuration;
+    const cutTick = startTick + newDuration;
+
+    // 2. 針對所有軌道 (Format 0 主要是 Track 0) 同步重算時序
+    for (const track of parsed.tracks) {
+      if (!track || !track.events) continue;
+
+      let curTick = 0;
+      const annotated = track.events.map((ev) => {
+        curTick += ev.delta;
+        return { ev: { ...ev }, absTick: curTick };
+      });
+
+      const beforeEvents = annotated.filter((e) => e.absTick < startTick);
+      const inSectionEvents = annotated.filter((e) => e.absTick >= startTick && e.absTick < oldEndTick);
+      const afterEvents = annotated.filter((e) => e.absTick >= oldEndTick);
+
+      const newAnnotated: Array<{ ev: MidiEvent; absTick: number }> = [...beforeEvents];
+
+      if (targetBars < oldMeasures) {
+        // 裁切縮短 (Truncate / Cut)
+        for (const item of inSectionEvents) {
+          if (item.absTick < cutTick) {
+            newAnnotated.push(item);
+          }
+        }
+      } else {
+        // 延伸拉長 (Extend / Loop Pattern)
+        // 1. 保留原本段落內的所有事件
+        newAnnotated.push(...inSectionEvents);
+
+        // 2. 循環填充新增的小節區間 [oldEndTick, cutTick)
+        const repeatLength = oldDuration > 0 ? oldDuration : ticksPerMeasure;
+        let offset = repeatLength;
+        while (startTick + offset < cutTick) {
+          for (const item of inSectionEvents) {
+            // 不重複複製段落 Marker，避免出現混亂的重複段落標記
+            const isMarker = item.ev.type === 'meta' && (item.ev.metaType === 0x06 || item.ev.metaType === 0x07);
+            if (isMarker) continue;
+
+            const repeatedTick = item.absTick + offset;
+            if (repeatedTick < cutTick) {
+              newAnnotated.push({
+                ev: { ...item.ev },
+                absTick: repeatedTick,
+              });
+            }
+          }
+          offset += repeatLength;
+        }
+      }
+
+      // 3. 後續段落事件平移 diffTicks
+      for (const item of afterEvents) {
+        newAnnotated.push({
+          ev: { ...item.ev },
+          absTick: item.absTick + diffTicks,
+        });
+      }
+
+      // 4. 重新依絕對時序排序
+      newAnnotated.sort((a, b) => {
+        if (a.absTick !== b.absTick) return a.absTick - b.absTick;
+        const aIsMeta = a.ev.type === 'meta';
+        const bIsMeta = b.ev.type === 'meta';
+        if (aIsMeta && !bIsMeta) return -1;
+        if (!aIsMeta && bIsMeta) return 1;
+        const aIsOff = a.ev.type === 'noteOff' || (a.ev.type === 'noteOn' && (a.ev.velocity ?? 0) === 0);
+        const bIsOff = b.ev.type === 'noteOff' || (b.ev.type === 'noteOn' && (b.ev.velocity ?? 0) === 0);
+        if (aIsOff && !bIsOff) return -1;
+        if (!aIsOff && bIsOff) return 1;
+        return 0;
+      });
+
+      // 5. 重新計算 delta-time
+      let prevTick = 0;
+      track.events = newAnnotated.map((item) => {
+        const delta = Math.max(0, item.absTick - prevTick);
+        prevTick = item.absTick;
+        item.ev.delta = delta;
+        return item.ev;
+      });
+
+      // 清理並重新編碼 rawChunk
+      YamahaPadModifier.sanitizeTrackDuplicateNotes(track);
+      YamahaPadModifier.rebuildTrackRawChunk(track);
+    }
+
+    // 6. 更新 parsed.sections 結構
+    for (const s of parsed.sections) {
+      if (s.name.trim().toLowerCase() === sectionName.trim().toLowerCase()) {
+        s.measureCount = targetBars;
+        s.endTick = startTick + newDuration;
+      } else if (s.startTick >= oldEndTick) {
+        s.startTick += diffTicks;
+        if (s.endTick !== undefined) {
+          s.endTick += diffTicks;
+        }
+      }
+    }
+
+    return true;
   }
 }

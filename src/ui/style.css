@@ -2388,3 +2388,76 @@ body {
   align-items: center;
 }
 
+/* ========================================================
+   Step 2.3: Section Measure Cut & Extend Editor UI
+   ======================================================== */
+.sec-measure-editor {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid #334155;
+  padding: 2px 8px;
+  border-radius: 6px;
+  user-select: none;
+}
+
+.btn-sec-bars-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  font-size: 0.72rem;
+  background: #1e293b;
+  border: 1px solid #475569;
+  color: #cbd5e1;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  padding: 0;
+}
+
+.btn-sec-bars-step:hover {
+  background: #334155;
+  border-color: #94a3b8;
+  color: #ffffff;
+}
+
+.input-sec-bars {
+  width: 36px;
+  text-align: center;
+  background: #0f172a;
+  border: 1px solid #475569;
+  color: #38bdf8;
+  font-weight: 700;
+  border-radius: 4px;
+  font-size: 0.82rem;
+  padding: 1px 0;
+  outline: none;
+}
+
+.input-sec-bars:focus {
+  border-color: #38bdf8;
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.4);
+}
+
+.btn-apply-sec-bars {
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: #0284c7;
+  border: 1px solid #38bdf8;
+  color: #ffffff;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-apply-sec-bars:hover {
+  background: #0369a1;
+  border-color: #7dd3fc;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.4);
+}
+

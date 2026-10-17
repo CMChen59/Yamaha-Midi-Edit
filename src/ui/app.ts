@@ -10013,17 +10013,72 @@ function updateStyPartsSectionLinkage(parsed: YamahaFileParsed, sectionName: str
          </span>`;
 
     focusBanner.innerHTML = `
-      <div style="display: flex; align-items: center; gap: 8px;">
+      <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
         <span style="font-size: 1.1rem;">🎯</span>
         <div>
           <span>當前聚焦伴奏段落: <strong style="color: #38bdf8; font-size: 0.95rem;">${escapeHtml(sectionName)}</strong></span>
-          <span style="color: #94a3b8; margin-left: 8px; font-size: 0.76rem;">(長度: ${range.measureCount} 小節 | Tick: ${range.startTick} ~ ${range.endTick})</span>
+          <span style="color: #94a3b8; margin-left: 6px; font-size: 0.76rem;">(Tick: ${range.startTick} ~ ${range.endTick})</span>
+        </div>
+        <div class="sec-measure-editor">
+          <span style="font-size: 0.72rem; color: #cbd5e1; font-weight: 600;">📐 長度:</span>
+          <button type="button" class="btn-sec-bars-step" data-action="dec" title="減少 1 小節 (裁切縮短)">➖</button>
+          <input type="number" min="1" max="64" class="input-sec-bars" value="${range.measureCount}" title="輸入目標小節數 (1~64)" />
+          <span style="font-size: 0.72rem; color: #94a3b8;">小節</span>
+          <button type="button" class="btn-sec-bars-step" data-action="inc" title="增加 1 小節 (延伸循環)">➕</button>
+          <button type="button" class="btn-apply-sec-bars" title="儲存並更新此段落小節長度">套用</button>
         </div>
       </div>
       <div style="display: flex; align-items: center; gap: 8px;">
         ${muteInfoHtml}
       </div>
     `;
+
+    const inputBars = focusBanner.querySelector('.input-sec-bars') as HTMLInputElement | null;
+    const btnDec = focusBanner.querySelector('.btn-sec-bars-step[data-action="dec"]') as HTMLButtonElement | null;
+    const btnInc = focusBanner.querySelector('.btn-sec-bars-step[data-action="inc"]') as HTMLButtonElement | null;
+    const btnApply = focusBanner.querySelector('.btn-apply-sec-bars') as HTMLButtonElement | null;
+
+    btnDec?.addEventListener('click', () => {
+      if (!inputBars) return;
+      const current = parseInt(inputBars.value, 10) || range.measureCount;
+      if (current > 1) {
+        inputBars.value = `${current - 1}`;
+      }
+    });
+
+    btnInc?.addEventListener('click', () => {
+      if (!inputBars) return;
+      const current = parseInt(inputBars.value, 10) || range.measureCount;
+      if (current < 64) {
+        inputBars.value = `${current + 1}`;
+      }
+    });
+
+    const handleApplyBars = () => {
+      if (!inputBars || !sectionName) return;
+      const targetBars = Math.max(1, Math.min(64, parseInt(inputBars.value, 10) || range.measureCount));
+      if (targetBars === range.measureCount) {
+        showStatus(`段落 [${sectionName}] 長度已為 ${targetBars} 小節，無須變更`);
+        return;
+      }
+      const success = YamahaStyleModifier.resizeSectionMeasures(parsed, sectionName, targetBars);
+      if (success) {
+        markModified(`段落 [${sectionName}] 小節長度調整為: ${targetBars} 小節`);
+        restartCurrentStySectionAudition();
+        renderSections(parsed);
+        selectStySection(sectionName);
+        showStatus(`⚡ 伴奏段落 [${sectionName}] 長度已成功由 ${range.measureCount} 小節調整為 ${targetBars} 小節！後續段落時序與 Marker 已自動重新對齊。`);
+      } else {
+        showStatus(`調整段落 [${sectionName}] 小節長度失敗`, true);
+      }
+    };
+
+    btnApply?.addEventListener('click', handleApplyBars);
+    inputBars?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        handleApplyBars();
+      }
+    });
 
     const btnClearMutes = focusBanner.querySelector('.btn-clear-sec-mutes') as HTMLButtonElement | null;
     if (btnClearMutes) {
