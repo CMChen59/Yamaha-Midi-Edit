@@ -63,6 +63,36 @@ export class YamahaPadModifier {
   }
 
   /**
+   * 提取音軌內的所有 Note-On/Note-Off 演奏音符清單
+   */
+  public static extractTrackNotes(track: MidiTrack | undefined): Array<{ note: number; startTick: number; durationTick: number; velocity: number }> {
+    const notes: Array<{ note: number; startTick: number; durationTick: number; velocity: number }> = [];
+    if (!track || !track.events) return notes;
+    let curTick = 0;
+    const activeNotes = new Map<number, { tick: number; velocity: number }>();
+
+    for (const ev of track.events) {
+      curTick += ev.delta;
+
+      if (ev.type === 'noteOn' && ev.noteNumber !== undefined && (ev.velocity ?? 0) > 0) {
+        activeNotes.set(ev.noteNumber, { tick: curTick, velocity: ev.velocity! });
+      } else if ((ev.type === 'noteOff' || (ev.type === 'noteOn' && ev.velocity === 0)) && ev.noteNumber !== undefined) {
+        const start = activeNotes.get(ev.noteNumber);
+        if (start) {
+          notes.push({
+            note: ev.noteNumber,
+            startTick: start.tick,
+            durationTick: Math.max(1, curTick - start.tick),
+            velocity: start.velocity,
+          });
+          activeNotes.delete(ev.noteNumber);
+        }
+      }
+    }
+    return notes;
+  }
+
+  /**
    * 更新指定 Pad 的混音參數 (音量、左右平衡、混響、音色)
    */
   public static setPadMixing(

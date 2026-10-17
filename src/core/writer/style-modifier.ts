@@ -1160,6 +1160,50 @@ export class YamahaStyleModifier {
 
     return { success: true, deletedCount, newTotalBars };
   }
+
+  /**
+   * 清空指定段落指定聲部（或全體聲部 channel = -1）的所有演奏音符
+   */
+  public static clearSectionNotes(parsed: YamahaFileParsed, sectionName: string, channel: number = -1): number {
+    const range = StyleRemixer.getSectionTickRange(parsed, sectionName);
+    if (!range) return 0;
+    const track0 = parsed.tracks[0];
+    if (!track0 || !track0.events) return 0;
+
+    let curTick = 0;
+    let deletedCount = 0;
+    const filteredEvents: MidiEvent[] = [];
+    const targetChannels = channel >= 0 ? [channel] : [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+
+    for (const ev of track0.events) {
+      curTick += ev.delta;
+      const isNote = (ev.type === 'noteOn' || ev.type === 'noteOff') && ev.channel !== undefined && targetChannels.includes(ev.channel);
+      const inRange = curTick >= range.startTick && curTick < range.endTick;
+
+      if (isNote && inRange) {
+        if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
+          deletedCount++;
+        }
+        continue;
+      }
+      filteredEvents.push(ev);
+    }
+
+    // 重算 Delta-times
+    let prevTick = 0;
+    let runningTick = 0;
+    for (const ev of track0.events) {
+      runningTick += ev.delta;
+      if (filteredEvents.includes(ev)) {
+        ev.delta = runningTick - prevTick;
+        prevTick = runningTick;
+      }
+    }
+
+    track0.events = filteredEvents;
+    YamahaPadModifier.rebuildTrackRawChunk(track0);
+    return deletedCount;
+  }
 }
 
 

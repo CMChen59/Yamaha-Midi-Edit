@@ -4675,6 +4675,177 @@ function formatPan(pan: number): string {
   return `R${pan - 64}`;
 }
 
+let isExportModalEventsBound = false;
+
+function openExportModal() {
+  if (!currentParsed) {
+    showStatus('目前尚未載入任何 STY 或 PAD 檔案', true);
+    return;
+  }
+
+  const modal = document.getElementById('modal-export');
+  if (!modal) return;
+
+  const inspection = YamahaWriter.inspectPreExport(currentParsed);
+
+  // 1. 預設匯出檔名
+  const inputFilename = document.getElementById('export-filename-input') as HTMLInputElement | null;
+  if (inputFilename) {
+    let baseName = currentFileName || (currentParsed.format === 'STY' ? 'MyStyle.sty' : 'MyPad.PAD');
+    if (isModified && !baseName.startsWith('edited_')) {
+      baseName = `edited_${baseName}`;
+    }
+    inputFilename.value = baseName;
+  }
+
+  // 2. 填充檔案格式與結構報告
+  const statFormat = document.getElementById('export-stat-format');
+  const statTracks = document.getElementById('export-stat-tracks');
+  const statSections = document.getElementById('export-stat-sections');
+  const statNotes = document.getElementById('export-stat-notes');
+  const statCasm = document.getElementById('export-stat-casm');
+  const statCustom = document.getElementById('export-stat-custom');
+
+  if (statFormat) {
+    statFormat.textContent = currentParsed.format === 'STY'
+      ? 'STY (Yamaha SFF2 Style / SMF Format 0)'
+      : 'PAD (Yamaha Multi Pad / SMF Format 1)';
+  }
+
+  if (statTracks) {
+    statTracks.textContent = `${currentParsed.tracks.length} Tracks (Format ${currentParsed.midiFormat})`;
+  }
+
+  if (statSections) {
+    statSections.textContent = currentParsed.format === 'STY'
+      ? `${inspection.sectionCount} 個伴奏段落`
+      : '4 組 Multi Pad 打擊墊';
+  }
+
+  if (statNotes) {
+    statNotes.textContent = `${inspection.totalNotes.toLocaleString()} 顆音符`;
+  }
+
+  if (statCasm) {
+    if (inspection.hasCasm && inspection.casmSize) {
+      statCasm.textContent = `✓ ${inspection.casmSize.toLocaleString()} Bytes 完整保留`;
+      statCasm.style.background = 'rgba(16, 185, 129, 0.2)';
+      statCasm.style.color = '#34d399';
+      statCasm.style.border = '1px solid #10b981';
+    } else {
+      statCasm.textContent = '無 CASM 區塊';
+      statCasm.style.background = 'rgba(148, 163, 184, 0.15)';
+      statCasm.style.color = '#94a3b8';
+      statCasm.style.border = '1px solid #475569';
+    }
+  }
+
+  if (statCustom) {
+    const nonCasmChunks = inspection.customChunks.filter(c => c.id !== 'CASM');
+    if (nonCasmChunks.length > 0) {
+      statCustom.textContent = nonCasmChunks.map(c => `${c.id} (${c.size}B)`).join(', ');
+    } else {
+      statCustom.textContent = '無其他自訂區塊';
+    }
+  }
+
+  // 3. 填充警示或通過徽章
+  const alertsContainer = document.getElementById('export-alerts-container');
+  if (alertsContainer) {
+    alertsContainer.innerHTML = '';
+
+    if (inspection.warnings.length > 0) {
+      for (const w of inspection.warnings) {
+        const warnDiv = document.createElement('div');
+        warnDiv.style.cssText = 'background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.35); padding: 8px 12px; border-radius: 6px; font-size: 0.78rem; color: #fbbf24; display: flex; align-items: flex-start; gap: 6px;';
+        warnDiv.innerHTML = `<span>⚠️</span><span>${w}</span>`;
+        alertsContainer.appendChild(warnDiv);
+      }
+    }
+
+    const okDiv = document.createElement('div');
+    okDiv.style.cssText = 'background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); padding: 8px 12px; border-radius: 6px; font-size: 0.78rem; color: #34d399; display: flex; align-items: center; gap: 6px;';
+    okDiv.innerHTML = `<span>🛡️</span><span><strong>二進位防呆驗證預備完成</strong>：所有 MTrk 音軌與 Yamaha 自訂區塊將執行 Round-trip 雙重驗證，保證 100% 可於 PSR-SX920 琴端無死機載入。</span>`;
+    alertsContainer.appendChild(okDiv);
+  }
+
+  modal.style.display = 'flex';
+  initExportModal();
+}
+
+function closeExportModal() {
+  const modal = document.getElementById('modal-export');
+  if (modal) modal.style.display = 'none';
+}
+
+function initExportModal() {
+  if (isExportModalEventsBound) return;
+  isExportModalEventsBound = true;
+
+  const modal = document.getElementById('modal-export');
+  const btnClose = document.getElementById('btn-export-modal-close');
+  const btnCancel = document.getElementById('btn-export-modal-cancel');
+  const btnConfirm = document.getElementById('btn-export-modal-confirm') as HTMLButtonElement | null;
+
+  if (btnClose) btnClose.addEventListener('click', closeExportModal);
+  if (btnCancel) btnCancel.addEventListener('click', closeExportModal);
+
+  if (modal) {
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) closeExportModal();
+    });
+  }
+
+  if (btnConfirm) {
+    btnConfirm.addEventListener('click', () => {
+      if (!currentParsed) return;
+
+      const inputFilename = document.getElementById('export-filename-input') as HTMLInputElement | null;
+      let targetName = (inputFilename?.value || '').trim();
+      if (!targetName) {
+        targetName = currentParsed.format === 'STY' ? 'MyStyle.sty' : 'MyPad.PAD';
+      }
+
+      // 保證副檔名正確
+      const expectedExt = currentParsed.format === 'STY' ? '.sty' : '.pad';
+      if (!targetName.toLowerCase().endsWith('.sty') && !targetName.toLowerCase().endsWith('.pad') && !targetName.toLowerCase().endsWith('.prs') && !targetName.toLowerCase().endsWith('.bgt')) {
+        targetName += expectedExt;
+      }
+
+      try {
+        btnConfirm.disabled = true;
+        btnConfirm.textContent = '⏳ 正在執行二進位校驗...';
+
+        const exportResult = YamahaWriter.validateAndWrite(currentParsed);
+
+        const blob = new Blob([exportResult.bytes as unknown as BlobPart], { type: 'application/octet-stream' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = targetName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        isModified = false;
+        if (btnExport) btnExport.textContent = '無損重新導出';
+
+        closeExportModal();
+        const sizeKb = (exportResult.fileSize / 1024).toFixed(1);
+        const casmInfo = exportResult.hasCasm ? `，CASM (${exportResult.casmSize}B) 完整保留` : '';
+        showStatus(`✓ 已通過 Yamaha 二進位完整性校驗並成功匯出: [${targetName}] (${sizeKb} KB，共 ${exportResult.trackCount} 軌${casmInfo})！`);
+      } catch (err: any) {
+        alert(`❌ 匯出校驗失敗: ${err.message}`);
+        showStatus(`匯出失敗: ${err.message}`, true);
+      } finally {
+        btnConfirm.disabled = false;
+        btnConfirm.textContent = '🚀 確認無損匯出';
+      }
+    });
+  }
+}
+
 // 初始化事件監聽
 function initEvents() {
   if (btnSelectFile && fileInput) {
@@ -4912,28 +5083,10 @@ function initEvents() {
     });
   }
 
-  // 導出檔案按鈕
+  // 步驟 3.5: 導出檔案按鈕與完整性校驗彈窗
   if (btnExport) {
     btnExport.addEventListener('click', () => {
-      if (!currentParsed) return;
-      try {
-        const bytes = YamahaWriter.write(currentParsed);
-        const blob = new Blob([bytes as unknown as BlobPart], { type: 'application/octet-stream' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        const prefix = isModified ? 'edited_' : 'reconstructed_';
-        a.download = `${prefix}${currentFileName}`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        isModified = false;
-        btnExport.textContent = '無損重新導出';
-        showStatus(`✓ 已成功導出最新檔案: ${prefix}${currentFileName}`);
-      } catch (err: any) {
-        alert(`導出失敗: ${err.message}`);
-      }
+      openExportModal();
     });
   }
 
@@ -10082,6 +10235,13 @@ function initNoteInspectorEvents() {
         selectMultipleNotes(lastRenderedNoteBoxes);
         return;
       }
+    }
+
+    // 支援 Ctrl+S / Cmd+S 快速喚出二進位安全匯出視窗
+    if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+      e.preventDefault();
+      openExportModal();
+      return;
     }
 
     // 支援 Ctrl+C / Ctrl+V / Ctrl+D 小節與音符操作

@@ -1383,6 +1383,89 @@
     </div>
   </div>
 
+  <!-- 步驟 3.5: STY / PAD 匯出二進位完整性與防呆彈窗 (Export & Integrity Modal) -->
+  <div id="modal-export" class="modal-overlay" style="display: none; z-index: 1050;">
+    <div class="modal-dialog" style="max-width: 580px;">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">
+            <span>💾 匯出 Yamaha 檔案 (Export & Integrity Guard)</span>
+          </div>
+          <div class="modal-subtitle">
+            符合 Yamaha SFF2 / SMF 原廠規範，二進位無損重構與防呆校驗
+          </div>
+        </div>
+        <button type="button" id="btn-export-modal-close" class="modal-close-btn" title="關閉">&times;</button>
+      </div>
+
+      <div class="modal-body" style="padding: 16px 20px; display: flex; flex-direction: column; gap: 14px;">
+        <!-- 檔案名稱輸入 -->
+        <div>
+          <label style="display: block; font-size: 0.8rem; font-weight: 600; color: #94a3b8; margin-bottom: 6px;">
+            📝 匯出檔案名稱 (Target Filename)：
+          </label>
+          <div style="display: flex; gap: 6px; align-items: center;">
+            <input type="text" id="export-filename-input" class="form-control" style="flex: 1; padding: 7px 12px; font-size: 0.88rem; background: #12141a; border: 1px solid #333846; border-radius: 6px; color: #fff;" placeholder="請輸入儲存檔名" />
+          </div>
+        </div>
+
+        <!-- 檔案結構規格清單 -->
+        <div style="background: #12141c; border: 1px solid #282c39; border-radius: 8px; padding: 12px 14px;">
+          <div style="font-size: 0.8rem; font-weight: 700; color: #38bdf8; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+            <span>📊 檔案結構與二進位檢測報告</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.78rem;">
+            <div style="background: rgba(255,255,255,0.03); padding: 6px 10px; border-radius: 5px;">
+              <span style="color: #64748b;">檔案格式：</span>
+              <strong id="export-stat-format" style="color: #38bdf8;">STY (SFF2 / Format 0)</strong>
+            </div>
+            <div style="background: rgba(255,255,255,0.03); padding: 6px 10px; border-radius: 5px;">
+              <span style="color: #64748b;">音軌數量：</span>
+              <strong id="export-stat-tracks" style="color: #e2e8f0;">1 Tracks (SMF 0)</strong>
+            </div>
+            <div style="background: rgba(255,255,255,0.03); padding: 6px 10px; border-radius: 5px;">
+              <span style="color: #64748b;">段落 / Pad 數：</span>
+              <strong id="export-stat-sections" style="color: #e2e8f0;">14 個段落</strong>
+            </div>
+            <div style="background: rgba(255,255,255,0.03); padding: 6px 10px; border-radius: 5px;">
+              <span style="color: #64748b;">總演奏音符數：</span>
+              <strong id="export-stat-notes" style="color: #f59e0b;">2,458 顆音符</strong>
+            </div>
+          </div>
+
+          <!-- 自訂區塊 (CASM / OTS) 狀態 -->
+          <div style="margin-top: 10px; padding-top: 8px; border-top: 1px dashed #242835; font-size: 0.76rem; display: flex; flex-direction: column; gap: 4px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="color: #94a3b8;">Yamaha CASM 轉調控制區塊：</span>
+              <span id="export-stat-casm" class="badge" style="background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid #10b981;">✓ 4,025 Bytes 完整保留</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="color: #94a3b8;">其他專屬區塊 (OTS / MH 等)：</span>
+              <span id="export-stat-custom" style="color: #cbd5e1;">無損原樣封裝</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 防呆檢核警示與確認區 -->
+        <div id="export-alerts-container" style="display: flex; flex-direction: column; gap: 6px;">
+          <!-- 動態注入警告或綠色通過徽章 -->
+        </div>
+      </div>
+
+      <div class="modal-footer" style="padding: 12px 20px; display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-size: 0.75rem; color: #64748b;">💡 匯出檔案可直接存放於隨身碟供 PSR-SX920 讀取演奏</span>
+        <div style="display: flex; gap: 10px;">
+          <button type="button" id="btn-export-modal-cancel" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">
+            取消
+          </button>
+          <button type="button" id="btn-export-modal-confirm" class="btn btn-success" style="padding: 6px 18px; font-weight: 700; font-size: 0.84rem; background: linear-gradient(135deg, #10b981, #059669); border: none; box-shadow: 0 2px 8px rgba(16, 185, 129, 0.35);">
+            🚀 確認無損匯出
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script type="module" src="./src/ui/app.ts"></script>
 </body>
 </html>
