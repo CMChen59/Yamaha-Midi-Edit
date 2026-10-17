@@ -14,6 +14,7 @@ import {
 } from '../core/writer/style-importer';
 import { YamahaStyleSynthesizer } from '../core/writer/style-synthesizer';
 import {
+  DEFAULT_STYLE_PARTS,
   type StylePartId,
   type StyleSectionType,
 } from '../core/models/style-types';
@@ -1791,6 +1792,7 @@ function applyRecordedNotes() {
 // ========================================================
 // Phase 2.3: 外部標準 MIDI 匯入與切片分配精靈 (MIDI Import Wizard)
 // ========================================================
+let refreshMidiControlsUI: (devices?: MidiDeviceInfo[]) => void = () => {};
 let currentMidiAnalysis: MidiSourceAnalysis | null = null;
 let currentAuditioningTrackIndex: number | null = null;
 
@@ -1832,7 +1834,10 @@ function openMidiImportModal(bytes: Uint8Array, fileName: string) {
   // 4. 渲染右側 Pad 1~4 切片分配卡片 (預設智慧分配)
   renderPadAssignmentsGrid();
 
-  // 5. 顯示彈窗
+  // 5. 同步發聲路由與實體琴連線控制項
+  refreshMidiControlsUI();
+
+  // 6. 顯示彈窗
   modal.style.display = 'flex';
 }
 
@@ -2325,7 +2330,10 @@ function openStyleImportModal(bytes: Uint8Array, fileName: string) {
   renderStyleSourceTracksList();
   renderStylePartMappingsGrid();
 
-  // 5. 顯示彈窗
+  // 5. 同步發聲路由與實體琴連線控制項
+  refreshMidiControlsUI();
+
+  // 6. 顯示彈窗
   modal.style.display = 'flex';
 }
 
@@ -2503,6 +2511,8 @@ function toggleStyleTrackAudition(trackIndex: number) {
   else if (cat === 'brass') instrumentId = 'brass';
   else if (cat === 'reed') instrumentId = 'flute';
 
+  const midiChannel = isDrum ? 9 : (track.channel !== undefined && track.channel !== 9 ? track.channel : 0);
+
   audioEngine.playSequence(track.trackIndex + 1, relNotes, {
     bpm: currentStyleAnalysis.bpm,
     division: currentStyleAnalysis.division,
@@ -2510,10 +2520,10 @@ function toggleStyleTrackAudition(trackIndex: number) {
     gridStartTick: 0,
     totalTicks: Math.max(playTotalTicks, 1),
     channelParams: {
-      msb: track.bankMsb ?? 0,
-      lsb: track.bankLsb ?? 112,
+      msb: track.bankMsb ?? (isDrum ? 127 : 0),
+      lsb: track.bankLsb ?? (isDrum ? 0 : 112),
       pc: track.programChange ?? 0,
-      channel: track.channel,
+      channel: midiChannel,
       isDrum,
       instrumentId,
     },
@@ -2587,15 +2597,18 @@ function toggleStyleEnsembleAudition() {
     else if (cat === 'brass') instrumentId = 'brass';
     else if (cat === 'reed') instrumentId = 'flute';
 
+    const partConfig = DEFAULT_STYLE_PARTS[mapping.partId];
+    const targetChannel = partConfig ? partConfig.channel : (8 + i);
+
     backingTracks.push({
       padNum: i + 1,
       notes: relNotes,
       totalTicks: sliceTotalTicks,
       channelParams: {
-        msb: track.bankMsb ?? 0,
-        lsb: track.bankLsb ?? 112,
+        msb: track.bankMsb ?? (isDrum ? 127 : 0),
+        lsb: track.bankLsb ?? (isDrum ? 0 : 112),
         pc: track.programChange ?? 0,
-        channel: track.channel,
+        channel: targetChannel,
         isDrum,
         instrumentId,
       },
@@ -3290,117 +3303,180 @@ function initEvents() {
 }
 
 /**
- * Phase 2.2-F: 初始化 Web MIDI 實體琴直連控制與狀態燈號
+ * Phase 2.2-F & 3.2: 初始化 Web MIDI 實體琴直連控制與狀態燈號 (支援多處視窗聯動同步)
  */
 function setupWebMidiControls() {
-  const statusLed = document.getElementById('midi-status-led');
-  const statusText = document.getElementById('midi-status-text');
-  const selectOutput = document.getElementById('select-midi-output') as HTMLSelectElement | null;
-  const btnConnect = document.getElementById('btn-midi-connect');
-  const btnHeaderTestChime = document.getElementById('btn-header-test-chime');
-  const selectRouting = document.getElementById('select-audio-routing') as HTMLSelectElement | null;
-  const btnTestChime = document.getElementById('btn-midi-test-chime');
+  // 1. 頂部導航列控制項
+  const headerStatusLed = document.getElementById('midi-status-led');
+  const headerStatusText = document.getElementById('midi-status-text');
+  const headerSelectOutput = document.getElementById('select-midi-output') as HTMLSelectElement | null;
+  const headerBtnConnect = document.getElementById('btn-midi-connect');
+  const headerBtnTestChime = document.getElementById('btn-header-test-chime');
+
+  // 2. 主走帶列路由控制項
+  const mainSelectRouting = document.getElementById('select-audio-routing') as HTMLSelectElement | null;
+  const mainBtnTestChime = document.getElementById('btn-midi-test-chime');
+
+  // 3. Style 伴奏匯入彈窗控制項 (Phase 3.2)
+  const styleSelectRouting = document.getElementById('style-import-audio-routing') as HTMLSelectElement | null;
+  const styleStatusLed = document.getElementById('style-import-midi-led');
+  const styleStatusText = document.getElementById('style-import-midi-text');
+  const styleSelectOutput = document.getElementById('style-import-select-midi-out') as HTMLSelectElement | null;
+  const styleBtnConnect = document.getElementById('btn-style-import-connect-midi');
+  const styleBtnTestChime = document.getElementById('btn-style-import-test-chime');
+
+  // 4. MIDI 切片匯入彈窗控制項 (Phase 2.3)
+  const midiModalSelectRouting = document.getElementById('midi-import-audio-routing') as HTMLSelectElement | null;
+  const midiModalStatusLed = document.getElementById('midi-import-midi-led');
+  const midiModalStatusText = document.getElementById('midi-import-midi-text');
+  const midiModalSelectOutput = document.getElementById('midi-import-select-midi-out') as HTMLSelectElement | null;
+  const midiModalBtnConnect = document.getElementById('btn-midi-import-connect-midi');
+  const midiModalBtnTestChime = document.getElementById('btn-midi-import-test-chime');
+
+  const statusLeds = [headerStatusLed, styleStatusLed, midiModalStatusLed].filter(Boolean) as HTMLElement[];
+  const statusTexts = [headerStatusText, styleStatusText, midiModalStatusText].filter(Boolean) as HTMLElement[];
+  const outputSelects = [headerSelectOutput, styleSelectOutput, midiModalSelectOutput].filter(Boolean) as HTMLSelectElement[];
+  const connectBtns = [headerBtnConnect, styleBtnConnect, midiModalBtnConnect].filter(Boolean) as HTMLElement[];
+  const testChimeBtns = [headerBtnTestChime, mainBtnTestChime, styleBtnTestChime, midiModalBtnTestChime].filter(Boolean) as HTMLElement[];
+  const routingSelects = [mainSelectRouting, styleSelectRouting, midiModalSelectRouting].filter(Boolean) as HTMLSelectElement[];
 
   const updateMidiUI = (devices: MidiDeviceInfo[]) => {
     const selected = midiManager.getSelectedOutput();
-    if (!statusLed || !statusText || !selectOutput || !btnConnect) return;
+    const currentMode = midiManager.getRoutingMode();
+
+    // 同步所有發聲路由下拉選單
+    for (const sel of routingSelects) {
+      sel.value = currentMode;
+    }
 
     if (devices.length === 0 || !selected) {
-      statusLed.style.background = '#94a3b8';
-      statusLed.style.boxShadow = 'none';
-      statusText.textContent = '實體琴: 未連線';
-      selectOutput.style.display = 'none';
-      btnConnect.style.display = 'inline-block';
-      btnConnect.textContent = '連接實體琴';
-      if (btnHeaderTestChime) btnHeaderTestChime.style.display = 'none';
-    } else {
-      statusLed.style.background = '#22c55e';
-      statusLed.style.boxShadow = '0 0 8px #22c55e';
-      statusText.textContent = '實體琴:';
-      selectOutput.style.display = 'inline-block';
-      btnConnect.textContent = '🔄 重新整理';
-      if (btnHeaderTestChime) btnHeaderTestChime.style.display = 'inline-block';
-
-      // 填充下拉清單
-      selectOutput.innerHTML = '';
-      for (const d of devices) {
-        const opt = document.createElement('option');
-        opt.value = d.id;
-        opt.textContent = `${d.isRecommended ? '🎹 ' : ''}${d.name}`;
-        if (d.id === selected.id) opt.selected = true;
-        selectOutput.appendChild(opt);
+      for (const led of statusLeds) {
+        led.style.background = '#94a3b8';
+        led.style.boxShadow = 'none';
       }
+      for (const txt of statusTexts) {
+        txt.textContent = '實體琴: 未連線';
+      }
+      for (const sel of outputSelects) {
+        sel.style.display = 'none';
+      }
+      for (const btn of connectBtns) {
+        btn.style.display = 'inline-block';
+        btn.textContent = '連接實體琴';
+      }
+      if (headerBtnTestChime) headerBtnTestChime.style.display = 'none';
+      if (styleBtnTestChime) styleBtnTestChime.style.display = 'none';
+      if (midiModalBtnTestChime) midiModalBtnTestChime.style.display = 'none';
+    } else {
+      for (const led of statusLeds) {
+        led.style.background = '#22c55e';
+        led.style.boxShadow = '0 0 8px #22c55e';
+      }
+      for (const txt of statusTexts) {
+        txt.textContent = '實體琴:';
+      }
+      for (const sel of outputSelects) {
+        sel.style.display = 'inline-block';
+        sel.innerHTML = '';
+        for (const d of devices) {
+          const opt = document.createElement('option');
+          opt.value = d.id;
+          opt.textContent = `${d.isRecommended ? '🎹 ' : ''}${d.name}`;
+          if (d.id === selected.id) opt.selected = true;
+          sel.appendChild(opt);
+        }
+      }
+      for (const btn of connectBtns) {
+        btn.textContent = '🔄 重新整理';
+      }
+      if (headerBtnTestChime) headerBtnTestChime.style.display = 'inline-block';
+      if (styleBtnTestChime) styleBtnTestChime.style.display = 'inline-block';
+      if (midiModalBtnTestChime) midiModalBtnTestChime.style.display = 'inline-block';
     }
   };
 
-  if (btnConnect) {
-    btnConnect.addEventListener('click', async () => {
+  refreshMidiControlsUI = (devices?: MidiDeviceInfo[]) => {
+    updateMidiUI(devices || midiManager.getAvailableOutputs());
+  };
+
+  const handleConnect = async () => {
+    const res = await midiManager.requestAccess();
+    if (res.success) {
+      updateMidiUI(res.devices);
+      const sel = midiManager.getSelectedOutput();
+      if (sel) {
+        showStatus(`🎹 已成功連線至 Yamaha PSR-SX920: ${sel.name}！已自動啟用琴端發聲。`, false);
+        midiManager.playTestChime();
+      } else {
+        showStatus('已開啟 MIDI 權限，但未偵測到 MIDI 輸出設備。請確認 USB 線已連接電腦與 PSR-SX920。', true);
+      }
+    } else {
+      for (const led of statusLeds) {
+        led.style.background = '#ef4444';
+        led.style.boxShadow = '0 0 6px #ef4444';
+      }
+      showStatus(`⚠️ MIDI 連線失敗: ${res.error}`, true);
+    }
+  };
+
+  for (const btn of connectBtns) {
+    btn.addEventListener('click', handleConnect);
+  }
+
+  const handleOutputSelect = (id: string) => {
+    midiManager.selectOutput(id);
+    for (const sel of outputSelects) {
+      sel.value = id;
+    }
+    const sel = midiManager.getSelectedOutput();
+    if (sel) {
+      showStatus(`🎹 已切換 MIDI 輸出埠: ${sel.name}`, false);
+      midiManager.playTestChime();
+    }
+  };
+
+  for (const sel of outputSelects) {
+    sel.addEventListener('change', () => handleOutputSelect(sel.value));
+  }
+
+  const handleRoutingChange = async (mode: 'audio' | 'midi' | 'both') => {
+    midiManager.setRoutingMode(mode);
+    for (const sel of routingSelects) {
+      sel.value = mode;
+    }
+
+    // 若使用者主動切換至實體琴或雙出，且尚未取得 MIDI 權限，主動請求存取
+    if ((mode === 'midi' || mode === 'both') && !midiManager.getSelectedOutput()) {
       const res = await midiManager.requestAccess();
       if (res.success) {
         updateMidiUI(res.devices);
-        const sel = midiManager.getSelectedOutput();
-        if (sel) {
-          showStatus(`🎹 已成功連線至 Yamaha PSR-SX920: ${sel.name}！已自動啟用琴端發聲。`, false);
-          midiManager.playTestChime();
-        } else {
-          showStatus('已開啟 MIDI 權限，但未偵測到 MIDI 輸出設備。請確認 USB 線已連接電腦與 PSR-SX920。', true);
-        }
-      } else {
-        if (statusLed) statusLed.style.background = '#ef4444';
-        showStatus(`⚠️ MIDI 連線失敗: ${res.error}`, true);
       }
-    });
-  }
+    }
 
-  if (selectOutput) {
-    selectOutput.addEventListener('change', () => {
-      midiManager.selectOutput(selectOutput.value);
-      const sel = midiManager.getSelectedOutput();
-      if (sel) {
-        showStatus(`🎹 已切換 MIDI 輸出埠: ${sel.name}`, false);
-        midiManager.playTestChime();
-      }
-    });
-  }
+    const modeNames = {
+      audio: '🔊 僅電腦喇叭',
+      both: '🔊+🎹 雙出 (電腦+實體琴)',
+      midi: '🎹 僅實體琴 (原廠音源)',
+    };
+    showStatus(`已切換發聲路由為: ${modeNames[mode]}`, false);
+  };
 
-  if (selectRouting) {
-    selectRouting.addEventListener('change', async () => {
-      const mode = selectRouting.value as 'audio' | 'midi' | 'both';
-      midiManager.setRoutingMode(mode);
-
-      // 若使用者主動切換至實體琴或雙出，且尚未取得 MIDI 權限，主動請求存取
-      if ((mode === 'midi' || mode === 'both') && !midiManager.getSelectedOutput()) {
-        const res = await midiManager.requestAccess();
-        if (res.success) {
-          updateMidiUI(res.devices);
-        }
-      }
-
-      const modeNames = {
-        audio: '🔊 僅電腦喇叭',
-        both: '🔊+🎹 雙出 (電腦+實體琴)',
-        midi: '🎹 僅實體琴 (原廠音源)',
-      };
-      showStatus(`已切換發聲路由為: ${modeNames[mode]}`, false);
-    });
+  for (const sel of routingSelects) {
+    sel.addEventListener('change', () => handleRoutingChange(sel.value as 'audio' | 'midi' | 'both'));
   }
 
   const triggerTestChime = () => {
     if (!midiManager.getSelectedOutput()) {
       showStatus('請先點選上方 [連接實體琴] 建立 USB 連線', true);
-      if (btnConnect) btnConnect.click();
+      handleConnect();
       return;
     }
     midiManager.playTestChime();
     showStatus('🔔 正在向 PSR-SX920 傳送測試音階 (C4-E4-G4-C5)...', false);
   };
 
-  if (btnHeaderTestChime) {
-    btnHeaderTestChime.addEventListener('click', triggerTestChime);
-  }
-
-  if (btnTestChime) {
-    btnTestChime.addEventListener('click', triggerTestChime);
+  for (const btn of testChimeBtns) {
+    btn.addEventListener('click', triggerTestChime);
   }
 
   // 監聽設備插拔熱插拔事件

@@ -225,7 +225,9 @@ flowchart TD
   4. **標準 Style 伴奏合成與即時載入工作區 (`executeStyleImport`)**：
      - 依據選定小節切片（如 1~4 小節或 1~8 小節）與聲部映射，呼叫 `StyleImporter.synthesizeStyleFromImport`。
      - 精確生成符合 Yamaha SFF2 CASM 規範之 SMF 0 單軌 Style 檔案，並直接無縫載入主畫面（支援 CASM 檢視、段落標記、走帶與聲部混音）。
-  5. **試聽切片對齊、零乾等即時發聲與 8 聲部合奏試聽 (`toggleStyleTrackAudition` & `toggleStyleEnsembleAudition`)**：
+  5. **試聽切片對齊、零乾等即時發聲、發聲路由與 8 聲部合奏試聽 (`toggleStyleTrackAudition` & `toggleStyleEnsembleAudition`)**：
+     - **彈窗內建發聲來源與實體琴連線控制條**：彈窗直接整合發聲路由下拉選單（`💻+🎹 雙出`、`🎹 僅實體琴 PSR-SX920`、`💻 僅電腦喇叭`）、Web MIDI 設備切換選單、連線按鈕與 `[🔔 測試連線]`，所有狀態與主畫面頂部連線膠囊無縫即時雙向連動同步。
+     - **Yamaha 原廠伴奏專屬通道 (Ch 9~16) 與真實鼓組音色對齊**：合奏試聽自動指派 8 大聲部至原生 Yamaha 伴奏通道（Ch 8~15，即樂器面板 Ch 9~16），鼓組音軌自動載入 Yamaha Drum Kit Bank（MSB 127, LSB 0），徹底杜絕不同聲部在同一通道互相踩音與鼓組變鋼琴聲問題。
      - **切片對齊試聽**：試聽按鈕自動對齊使用者所設定的切片小節（例如第 1~8 小節），若該軌在選定小節尚未進場，自動平移至該軌第一顆音符所在的真正開口小節，徹底消除數十秒的無聲乾等。
      - **真實合成音色匹配**：鼓組 (Ch 10) 嚴格以鼓組音色發聲，貝斯、鋼琴、吉他、弦樂均自動對應正確的合成音色。
      - **`[🎧 試聽所選小節合奏]` 一鍵多軌伴奏試聽**：整合 `AudioEngine.startBackingTrack`，在建立 Style 之前即可一鍵同時聆聽 8 個聲部在選定小節一起演奏的整體編曲融合度。
