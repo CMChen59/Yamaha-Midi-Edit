@@ -31,7 +31,10 @@ export class YamahaStyleModifier {
   public static setPartMixing(
     parsed: YamahaFileParsed,
     channel: number,
-    params: StylePartMixingParams
+    params: StylePartMixingParams,
+    options?: {
+      targetSection?: string;
+    }
   ): boolean {
     if (!parsed || !parsed.tracks || parsed.tracks.length === 0) return false;
     const track0 = parsed.tracks[0];
@@ -83,32 +86,137 @@ export class YamahaStyleModifier {
       part.programChange = Math.max(0, Math.min(127, Math.round(params.programChange)));
     }
 
-    // 2. 同步更新 Track 0 開頭事件中的初始化 CC 與 PC
-    if (params.bankMsb !== undefined && part.bankMsb !== undefined) {
-      this.updateOrInsertCC(track0, channel, 0, part.bankMsb);
-    }
-    if (params.bankLsb !== undefined && part.bankLsb !== undefined) {
-      this.updateOrInsertCC(track0, channel, 32, part.bankLsb);
-    }
-    if (params.programChange !== undefined && part.programChange !== undefined) {
-      this.updateOrInsertPC(track0, channel, part.programChange);
-    }
-    if (params.volume !== undefined && part.volume !== undefined) {
-      this.updateOrInsertCC(track0, channel, 7, part.volume);
-    }
-    if (params.pan !== undefined && part.pan !== undefined) {
-      this.updateOrInsertCC(track0, channel, 10, part.pan);
-    }
-    if (params.reverb !== undefined && part.reverb !== undefined) {
-      this.updateOrInsertCC(track0, channel, 91, part.reverb);
-    }
-    if (params.chorus !== undefined && part.chorus !== undefined) {
-      this.updateOrInsertCC(track0, channel, 93, part.chorus);
+    // 2. 若指定了 targetSection，則只更新 (或插入) 該段落範圍內的專屬事件
+    if (options?.targetSection) {
+      this.updateSectionEvents(parsed, track0, channel, options.targetSection, params, part);
+    } else {
+      // 3. 預設全域聲部換音色/混音 (Global Revoicing)
+      // 3a. 同步更新 Track 0 開頭事件中的初始化 CC 與 PC (第一個 NoteOn 之前)
+      if (params.bankMsb !== undefined && part.bankMsb !== undefined) {
+        this.updateOrInsertCC(track0, channel, 0, part.bankMsb);
+      }
+      if (params.bankLsb !== undefined && part.bankLsb !== undefined) {
+        this.updateOrInsertCC(track0, channel, 32, part.bankLsb);
+      }
+      if (params.programChange !== undefined && part.programChange !== undefined) {
+        this.updateOrInsertPC(track0, channel, part.programChange);
+      }
+      if (params.volume !== undefined && part.volume !== undefined) {
+        this.updateOrInsertCC(track0, channel, 7, part.volume);
+      }
+      if (params.pan !== undefined && part.pan !== undefined) {
+        this.updateOrInsertCC(track0, channel, 10, part.pan);
+      }
+      if (params.reverb !== undefined && part.reverb !== undefined) {
+        this.updateOrInsertCC(track0, channel, 91, part.reverb);
+      }
+      if (params.chorus !== undefined && part.chorus !== undefined) {
+        this.updateOrInsertCC(track0, channel, 93, part.chorus);
+      }
+
+      // 3b. 同步更新全曲所有後續段落中的同通道事件 (杜絕 Intro/Main/Ending 內部內嵌舊 PC/CC 覆蓋)
+      for (const ev of track0.events) {
+        if (ev.channel === channel) {
+          if (ev.type === 'programChange' && params.programChange !== undefined && part.programChange !== undefined) {
+            ev.program = part.programChange;
+          }
+          if (ev.type === 'controlChange') {
+            if (ev.controller === 0 && params.bankMsb !== undefined && part.bankMsb !== undefined) ev.value = part.bankMsb;
+            if (ev.controller === 32 && params.bankLsb !== undefined && part.bankLsb !== undefined) ev.value = part.bankLsb;
+            if (ev.controller === 7 && params.volume !== undefined && part.volume !== undefined) ev.value = part.volume;
+            if (ev.controller === 10 && params.pan !== undefined && part.pan !== undefined) ev.value = part.pan;
+            if (ev.controller === 91 && params.reverb !== undefined && part.reverb !== undefined) ev.value = part.reverb;
+            if (ev.controller === 93 && params.chorus !== undefined && part.chorus !== undefined) ev.value = part.chorus;
+          }
+        }
+      }
     }
 
-    // 3. 重新編碼 Track 0 二進位 Chunk
+    // 4. 重新編碼 Track 0 二進位 Chunk
     YamahaPadModifier.rebuildTrackRawChunk(track0);
     return true;
+  }
+
+  /**
+   * 更新或插入特定伴奏段落 (Section) 內部的通道專屬 CC / PC 設定
+   */
+  private static updateSectionEvents(
+    parsed: YamahaFileParsed,
+    track: MidiTrack,
+    channel: number,
+    sectionName: string,
+    params: StylePartMixingParams,
+    part: { bankMsb?: number; bankLsb?: number; programChange?: number; volume?: number; pan?: number }
+  ): void {
+    const range = StyleRemixer.getSectionTickRange(parsed, sectionName);
+    if (!range) return;
+
+    let curTick = 0;
+    let foundPc = false;
+    let foundMsb = false;
+    let foundLsb = false;
+
+    for (const ev of track.events) {
+      curTick += ev.delta;
+      if (curTick >= range.startTick && curTick < range.endTick && ev.channel === channel) {
+        if (ev.type === 'programChange' && params.programChange !== undefined) {
+          ev.program = params.programChange;
+          foundPc = true;
+        }
+        if (ev.type === 'controlChange') {
+          if (ev.controller === 0 && params.bankMsb !== undefined) {
+            ev.value = part.bankMsb ?? params.bankMsb;
+            foundMsb = true;
+          }
+          if (ev.controller === 32 && params.bankLsb !== undefined) {
+            ev.value = params.bankLsb;
+            foundLsb = true;
+          }
+          if (ev.controller === 7 && params.volume !== undefined) ev.value = params.volume;
+          if (ev.controller === 10 && params.pan !== undefined) ev.value = params.pan;
+          if (ev.controller === 91 && params.reverb !== undefined) ev.value = params.reverb;
+          if (ev.controller === 93 && params.chorus !== undefined) ev.value = params.chorus;
+        }
+      }
+    }
+
+    // 若該段落內部尚未有專屬 PC 事件，且指定了 programChange，在段落起始點 (startTick) 插入專屬事件
+    if (!foundPc && params.programChange !== undefined) {
+      let t = 0;
+      let insertIdx = track.events.length;
+      for (let i = 0; i < track.events.length; i++) {
+        t += track.events[i].delta;
+        if (t >= range.startTick) {
+          insertIdx = i;
+          break;
+        }
+      }
+
+      if (part.bankMsb !== undefined && !foundMsb) {
+        track.events.splice(insertIdx++, 0, {
+          delta: 0,
+          type: 'controlChange',
+          channel,
+          controller: 0,
+          value: part.bankMsb,
+        });
+      }
+      if (part.bankLsb !== undefined && !foundLsb) {
+        track.events.splice(insertIdx++, 0, {
+          delta: 0,
+          type: 'controlChange',
+          channel,
+          controller: 32,
+          value: part.bankLsb ?? 0,
+        });
+      }
+      track.events.splice(insertIdx, 0, {
+        delta: 0,
+        type: 'programChange',
+        channel,
+        program: params.programChange,
+      });
+    }
   }
 
   /**

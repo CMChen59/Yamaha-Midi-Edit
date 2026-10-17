@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { YamahaStyleSynthesizer } from '../src/core/writer/style-synthesizer';
 import { YamahaStyleModifier } from '../src/core/writer/style-modifier';
+import { StyleRemixer } from '../src/core/writer/style-remixer';
 import { YamahaParser } from '../src/core/parser/yamaha-parser';
 
 describe('Phase 4.1: YamahaStyleModifier 伴奏風格 8 聲部混音與音色修改引擎', () => {
@@ -81,4 +82,91 @@ describe('Phase 4.1: YamahaStyleModifier 伴奏風格 8 聲部混音與音色修
     expect(drumPc?.program).toBe(8);
     expect(drumMsb?.value).toBe(127);
   });
+
+  it('能正確更新真實 STY 伴奏中的音色 (包含各段落內部的 Program Change 與 Bank 事件)', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const sampleStyPath = path.resolve(__dirname, '../public/samples/4006_SX900.T547.sty');
+    const sampleStyBuffer = fs.readFileSync(sampleStyPath);
+    const realSty = YamahaParser.parse(new Uint8Array(sampleStyBuffer), 'STY');
+
+    // Intro A 的範圍是 276480 ~ 353280
+    const introRange = StyleRemixer.getSectionTickRange(realSty, 'Intro A');
+    expect(introRange).not.toBeNull();
+
+    // 檢查更換前的 Pad (Channel 4, 即 Ch 5)：原始 PC 為 49 (Live! Strings)
+    const beforeOverride = StyleRemixer.getSectionChannelOverride(realSty, introRange!.startTick, introRange!.endTick, 4);
+    expect(beforeOverride.pc).toBe(49);
+
+    // 更換 Channel 4 音色為 Flute (Bank 0-112, PC 73)
+    const ok = YamahaStyleModifier.setPartMixing(realSty, 4, {
+      bankMsb: 0,
+      bankLsb: 112,
+      programChange: 73,
+    });
+    expect(ok).toBe(true);
+
+    // 驗證 parsed.parts 已更新
+    const padPart = realSty.parts.find((p) => p.channel === 4);
+    expect(padPart?.programChange).toBe(73);
+    expect(padPart?.bankMsb).toBe(0);
+    expect(padPart?.bankLsb).toBe(112);
+
+    // 驗證 Intro A 內部的 override PC 已被更新為 73，不再殘留舊的 49
+    const afterOverride = StyleRemixer.getSectionChannelOverride(realSty, introRange!.startTick, introRange!.endTick, 4);
+    expect(afterOverride.pc).toBe(73);
+    expect(afterOverride.bankMsb).toBe(0);
+    expect(afterOverride.bankLsb).toBe(112);
+
+    // 驗證所有 Track 0 上的 PC 事件在 Ch 4 均已變成 73
+    let cur = 0;
+    const ch4PcEvents: number[] = [];
+    for (const ev of realSty.tracks[0].events) {
+      cur += ev.delta;
+      if (ev.type === 'programChange' && ev.channel === 4) {
+        ch4PcEvents.push(ev.program);
+      }
+    }
+    expect(ch4PcEvents.length).toBeGreaterThanOrEqual(2);
+    expect(ch4PcEvents.every((p) => p === 73)).toBe(true);
+  });
+
+  it('支援針對單一伴奏段落 (如 Intro A) 進行專屬音色與混音覆寫 (Section-Specific Revoicing)', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const sampleStyPath = path.resolve(__dirname, '../public/samples/4006_SX900.T547.sty');
+    const sampleStyBuffer = fs.readFileSync(sampleStyPath);
+    const realSty = YamahaParser.parse(new Uint8Array(sampleStyBuffer), 'STY');
+
+    const introRange = StyleRemixer.getSectionTickRange(realSty, 'Intro A');
+    const mainARange = StyleRemixer.getSectionTickRange(realSty, 'Main A');
+
+    // 僅在 Intro A 中將 Channel 4 (Pad) 改為 PC 25 (Steel Guitar)
+    const ok = YamahaStyleModifier.setPartMixing(
+      realSty,
+      4,
+      {
+        bankMsb: 0,
+        bankLsb: 112,
+        programChange: 25,
+      },
+      { targetSection: 'Intro A' }
+    );
+    expect(ok).toBe(true);
+
+    // Intro A 內的 override 應為 25
+    const introOverride = StyleRemixer.getSectionChannelOverride(realSty, introRange!.startTick, introRange!.endTick, 4);
+    expect(introOverride.pc).toBe(25);
+
+    // Track 0 開頭 (Main A 繼承的初始設定) 依然保持原始設定 (PC 49)
+    const mainAOverride = StyleRemixer.getSectionChannelOverride(realSty, mainARange!.startTick, mainARange!.endTick, 4);
+    // Main A 沒有內部 override，繼承初始設定 49
+    expect(mainAOverride.pc).toBeUndefined();
+    const padPart = realSty.parts.find((p) => p.channel === 4);
+    expect(padPart?.programChange).toBe(25); // part 本身記錄最新狀態
+  });
 });
+
+
+
+

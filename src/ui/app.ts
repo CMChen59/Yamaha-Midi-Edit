@@ -212,6 +212,111 @@ const STY_PART_META: Record<number, { id: StylePartId; name: string; shortName: 
   15: { id: 'Phrase2', name: 'Phrase 2', shortName: 'Phrase 2', icon: '🎷', color: '#e11d48', bg: 'rgba(225,29,72,0.15)', border: 'rgba(225,29,72,0.35)' },
 };
 
+/**
+ * 智慧解析試聽樂器聲音模型 (相容 Yamaha PSR-SX920 1,500+ 音色庫、General MIDI 128 樂器家族與原廠標準聲部)
+ */
+export function resolveAuditionInstrumentId(
+  msb: number = 0,
+  lsb: number = 0,
+  pc: number = 0,
+  ch?: number
+): { instrumentId: string; isDrum: boolean } {
+  // 1. 打擊樂器 / 鼓組判定 (MIDI Ch 10 即 ch 9，或 ch 8，或 MSB 126/127，或 PC >= 120)
+  const isDrum = (ch !== undefined && (ch === 8 || ch === 9)) || msb === 127 || msb === 126 || pc >= 120;
+  if (isDrum) {
+    return { instrumentId: 'standard-drum-kit', isDrum: true };
+  }
+
+  // 2. 優先在 Yamaha PSR-SX920 原廠 1,500+ 音色庫中精確查找
+  const yVoice = findYamahaVoice(msb, lsb, pc);
+  if (yVoice) {
+    if (yVoice.category === 'Drums' || yVoice.category === 'Percussion') {
+      return { instrumentId: 'standard-drum-kit', isDrum: true };
+    }
+    if (yVoice.category === 'Bass') {
+      return { instrumentId: 'electric-bass', isDrum: false };
+    }
+    if (yVoice.category === 'Guitar') {
+      return { instrumentId: 'steel_guitar', isDrum: false };
+    }
+    if (yVoice.category === 'Strings') {
+      return { instrumentId: yVoice.id.includes('pizz') ? 'pizzicato' : 'strings', isDrum: false };
+    }
+    if (yVoice.category === 'Saxophone') {
+      return { instrumentId: 'wind_sax', isDrum: false };
+    }
+    if (yVoice.category === 'Brass') {
+      return { instrumentId: 'brass', isDrum: false };
+    }
+    if (yVoice.category === 'Woodwind') {
+      return { instrumentId: 'flute', isDrum: false };
+    }
+    if (yVoice.category === 'Synth' || yVoice.category === 'Pad') {
+      return { instrumentId: 'synth_pad', isDrum: false };
+    }
+    if (yVoice.category === 'Piano' || yVoice.category === 'E.Piano' || yVoice.category === 'Organ' || yVoice.category === 'Accordion') {
+      return { instrumentId: 'grand-piano', isDrum: false };
+    }
+  }
+
+  // 3. 通用 General MIDI (GM) 128 種樂器家族全覆蓋分類
+  if (pc >= 24 && pc <= 31) {
+    // 吉他類 (Nylon, Steel, Jazz, Clean, Muted, Overdrive, Distortion, Harmonics)
+    return { instrumentId: 'steel_guitar', isDrum: false };
+  }
+  if (pc >= 32 && pc <= 39) {
+    // 貝斯類 (Acoustic, Finger, Pick, Fretless, Slap 1/2, Synth Bass 1/2)
+    return { instrumentId: 'electric-bass', isDrum: false };
+  }
+  if (pc === 45) {
+    // 撥弦 (Pizzicato Strings)
+    return { instrumentId: 'pizzicato', isDrum: false };
+  }
+  if ((pc >= 40 && pc <= 44) || (pc >= 46 && pc <= 55)) {
+    // 弦樂獨奏與弦樂合奏群 (Violin, Viola, Cello, Strings, Synth Strings, Choir, Voice)
+    return { instrumentId: 'strings', isDrum: false };
+  }
+  if (pc >= 56 && pc <= 63) {
+    // 銅管組 (Trumpet, Trombone, Tuba, French Horn, Brass Section, Synth Brass)
+    return { instrumentId: 'brass', isDrum: false };
+  }
+  if (pc >= 64 && pc <= 71) {
+    // 簧樂/薩克斯風組 (Soprano, Alto, Tenor, Baritone, Oboe, Clarinet, etc.)
+    return { instrumentId: 'wind_sax', isDrum: false };
+  }
+  if (pc >= 72 && pc <= 79) {
+    // 管樂/長笛組 (Piccolo, Flute, Recorder, Pan Flute, Whistle, Ocarina)
+    return { instrumentId: 'flute', isDrum: false };
+  }
+  if (pc >= 80 && pc <= 87) {
+    // 合成主奏 (Synth Lead: Square, Sawtooth, etc.)
+    return { instrumentId: 'synth_lead', isDrum: false };
+  }
+  if (pc >= 88 && pc <= 95) {
+    // 鋪底音色 (Synth Pad: Warm Pad, Poly Synth, Bowed Pad, etc.)
+    return { instrumentId: 'synth_pad', isDrum: false };
+  }
+  if (pc >= 8 && pc <= 15) {
+    // 鐵琴/木琴/鍾琴 (Chromatic Percussion)
+    return { instrumentId: 'pizzicato', isDrum: false };
+  }
+
+  // 4. PRESET_INSTRUMENTS 比對 (備用相容)
+  const matched = PRESET_INSTRUMENTS.find(i => i.pc === pc && (msb === 0 || i.msb === msb))
+    || PRESET_INSTRUMENTS.find(i => i.pc === pc);
+  if (matched) {
+    return { instrumentId: matched.id, isDrum: false };
+  }
+
+  // 5. 聲部預設回退
+  if (ch !== undefined) {
+    const meta = STY_PART_META[ch];
+    if (meta?.id === 'Bass') return { instrumentId: 'electric-bass', isDrum: false };
+  }
+
+  return { instrumentId: 'grand-piano', isDrum: false };
+}
+
 let stylePartMuteState: Record<number, boolean> = {};
 let stylePartSoloChannel: number | null = null;
 // 模組二 (步驟 2.2): 段落專屬伴奏聲部發聲/靜音狀態字典
@@ -4541,7 +4646,12 @@ function applyVoiceToStylePart(channel: number, voice: YamahaVoice) {
   // 6. 關閉視窗
   closeVoiceModal();
 
-  // 7. 若當前正在試聽伴奏段落，重啟試聽以套用新音色
+  // 7. 更新當前聚焦段落的連動狀態與專屬標籤
+  if (currentActiveStySection) {
+    updateStyPartsSectionLinkage(currentParsed, currentActiveStySection);
+  }
+
+  // 8. 若當前正在試聽伴奏段落，重啟試聽以套用新音色
   restartCurrentStySectionAudition();
 }
 
@@ -5638,10 +5748,7 @@ function togglePadAudition(padNum: number) {
 
   const padIdx = padNum - 1;
   const isRepeat = currentParsed.padConfig?.repeatFlags[padIdx] ?? false;
-  const matchedInst = PRESET_INSTRUMENTS.find(i => i.pc === currentPc && (currentMsb === 0 || i.msb === currentMsb) && (currentLsb === 0 || i.lsb === currentLsb))
-    || PRESET_INSTRUMENTS.find(i => i.pc === currentPc && (currentMsb === 0 || i.msb === currentMsb))
-    || PRESET_INSTRUMENTS.find(i => i.pc === currentPc);
-  const instrumentId = matchedInst ? matchedInst.id : 'grand-piano';
+  const { instrumentId } = resolveAuditionInstrumentId(currentMsb, currentLsb, currentPc, padNum - 1);
 
   const division = currentParsed.division || 96;
   const beatsPerBar = currentParsed.timeSignature?.numerator || 4;
@@ -5809,14 +5916,8 @@ function toggleStySectionAudition(sectionName: string) {
     const reverb = part.reverb ?? 40;
     const chorus = part.chorus ?? 0;
 
-    // 判定是否為打擊樂器 (MIDI Ch 10 即 ch 9 固定為鼓組，或 Bank MSB 為 127/126)
-    const isDrum = ch === 9 || msb === 127 || msb === 126;
-
-    let matchedInst = PRESET_INSTRUMENTS.find(i => i.pc === pc && (msb === 0 || i.msb === msb));
-    if (!matchedInst) matchedInst = PRESET_INSTRUMENTS.find(i => i.pc === pc);
-    const meta = STY_PART_META[ch];
-    const defaultInst = meta?.id === 'Bass' ? 'electric-bass' : 'grand-piano';
-    const instId = isDrum ? 'standard-drum-kit' : (matchedInst ? matchedInst.id : defaultInst);
+    // 智慧判定樂器聲音物理/諧波合成模型與打擊樂器屬性
+    const { instrumentId: instId, isDrum } = resolveAuditionInstrumentId(msb, lsb, pc, ch);
 
     backingItems.push({
       padNum: ch + 1,
@@ -6364,24 +6465,14 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection | null 
     ? `${yVoice.name} (${yVoice.chineseName})`
     : (matchedInst ? matchedInst.label : `自訂音色 (PC ${currentPc}, Bank ${currentMsb}-${currentLsb})`);
 
-  let instId = 'grand-piano';
-  if (yVoice) {
-    if (yVoice.category === 'Strings') instId = yVoice.id.includes('pizz') ? 'pizzicato' : 'strings';
-    else if (yVoice.category === 'Guitar') instId = 'guitar';
-    else if (yVoice.category === 'Bass') instId = 'bass';
-    else if (yVoice.category === 'Saxophone' || yVoice.category === 'Brass') instId = 'brass';
-    else if (yVoice.category === 'Woodwind') instId = 'flute';
-    else if (yVoice.category === 'Drums' || yVoice.category === 'Percussion') instId = 'drums';
-  } else if (matchedInst) {
-    instId = matchedInst.id;
-  }
+  const { instrumentId: instId, isDrum: padIsDrum } = resolveAuditionInstrumentId(currentMsb, currentLsb, currentPc, padNum - 1);
   currentCanvasPadInstrument = {
     instrumentId: instId,
     pc: currentPc,
     msb: currentMsb,
     lsb: currentLsb,
     channel: padNum - 1,
-    isDrum: (currentPc >= 120 || (yVoice && (yVoice.category === 'Drums' || yVoice.category === 'Percussion'))),
+    isDrum: padIsDrum,
   };
 
   if (notes.length === 0) {
@@ -9855,6 +9946,9 @@ function renderParts(parsed: YamahaFileParsed) {
         midiManager.sendMixerControllers(ch, { volume: val });
         markModified(`伴奏聲部 ${meta.name} 音量調整為: ${val}`);
       });
+      volRange.addEventListener('change', () => {
+        restartCurrentStySectionAudition();
+      });
 
       // 監聽聲相推桿事件
       const panRange = tr.querySelector(`.pan-range-sty-${ch}`) as HTMLInputElement;
@@ -9865,6 +9959,9 @@ function renderParts(parsed: YamahaFileParsed) {
         YamahaStyleModifier.setPartMixing(parsed, ch, { pan: val });
         midiManager.sendMixerControllers(ch, { pan: val });
         markModified(`伴奏聲部 ${meta.name} 聲相調整為: ${formatPan(val)}`);
+      });
+      panRange.addEventListener('change', () => {
+        restartCurrentStySectionAudition();
       });
 
       // 監聽混響推桿事件
@@ -9905,6 +10002,9 @@ function renderParts(parsed: YamahaFileParsed) {
         });
         midiManager.sendVoiceChange(ch, { msb, lsb, pc: program });
         markModified(`伴奏聲部 ${meta.name} 音色調整為: Bank ${msb}-${lsb}, PC ${program}`);
+        if (currentActiveStySection) {
+          updateStyPartsSectionLinkage(parsed, currentActiveStySection);
+        }
         restartCurrentStySectionAudition();
       };
 

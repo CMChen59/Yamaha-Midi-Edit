@@ -861,7 +861,7 @@ export class AudioEngine {
     const freq = midiToFreq(note);
     if (isDrum) {
       this.synthesizeDrum(note, velocity, startTime, channelGain);
-    } else if (inst.includes('strings') || inst.includes('kino')) {
+    } else if (inst.includes('strings') || inst.includes('kino') || inst.includes('pad')) {
       this.synthesizeStrings(freq, startTime, durationSec, channelGain);
     } else if (inst.includes('pizz')) {
       this.synthesizePizzicato(freq, startTime, durationSec, channelGain);
@@ -869,9 +869,9 @@ export class AudioEngine {
       this.synthesizeGuitar(freq, startTime, durationSec, channelGain);
     } else if (inst.includes('bass')) {
       this.synthesizeBass(freq, startTime, durationSec, channelGain);
-    } else if (inst.includes('brass') || inst.includes('trumpet') || inst.includes('sax')) {
+    } else if (inst.includes('brass') || inst.includes('trumpet') || inst.includes('sax') || inst.includes('lead')) {
       this.synthesizeBrass(freq, startTime, durationSec, channelGain);
-    } else if (inst.includes('flute')) {
+    } else if (inst.includes('flute') || inst.includes('pipe') || inst.includes('woodwind')) {
       this.synthesizeFlute(freq, startTime, durationSec, channelGain);
     } else {
       // 鋼琴與鍵盤類 (Piano default)
