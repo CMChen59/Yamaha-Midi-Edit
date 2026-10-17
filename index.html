@@ -222,40 +222,98 @@
             </div>
 
             <!-- 音符即時屬性檢查器 (Note Inspector) - 置於 Canvas 下方，徹底杜絕任何畫布垂直位移抖動 -->
+            <!-- 音符即時屬性檢查器 (Note Inspector) - 置於 Canvas 下方，徹底杜絕任何畫布垂直位移抖動 -->
             <div id="note-inspector-bar" class="note-inspector-bar" style="display: none; margin-top: 8px; margin-bottom: 2px;">
-              <div class="inspector-badge">
-                <span class="inspector-dot"></span>
-                <span id="insp-note-title" style="font-weight: 700; color: #fbbf24;">選取音符</span>
+              <!-- 單音檢查器 (Single Note Inspector) -->
+              <div id="single-note-inspector" style="display: flex; align-items: center; gap: 14px; width: 100%; flex-wrap: wrap;">
+                <div class="inspector-badge">
+                  <span class="inspector-dot"></span>
+                  <span id="insp-note-title" style="font-weight: 700; color: #fbbf24;">選取音符</span>
+                </div>
+                <div class="inspector-item" style="display: flex; align-items: center; gap: 4px;">
+                  <span class="inspector-label">音高:</span>
+                  <button type="button" id="btn-pitch-down-oct" class="toggle-btn" style="padding: 1px 5px; font-size: 0.7rem;" title="降 1 個八度 (-12半音，Shift + ↓)">-8度</button>
+                  <button type="button" id="btn-pitch-down-semi" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem;" title="降半音 (鍵盤 ↓)">▼</button>
+                  <span id="insp-pitch-name" class="inspector-val-pitch" style="min-width: 62px; text-align: center;">E5 (76)</span>
+                  <button type="button" id="btn-pitch-up-semi" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem;" title="升半音 (鍵盤 ↑)">▲</button>
+                  <button type="button" id="btn-pitch-up-oct" class="toggle-btn" style="padding: 1px 5px; font-size: 0.7rem;" title="升 1 個八度 (+12半音，Shift + ↑)">+8度</button>
+                </div>
+                <div class="inspector-item" style="display: flex; align-items: center; gap: 4px;">
+                  <span class="inspector-label">位置:</span>
+                  <button type="button" id="btn-nudge-prev-bar" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem;" title="往前移動 1 小節">⏪</button>
+                  <button type="button" id="btn-nudge-prev-beat" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem;" title="往前移動 1 拍">◀</button>
+                  <span id="insp-position-text" class="inspector-val-pos" style="min-width: 95px; text-align: center; font-variant-numeric: tabular-nums;">第 2 小節 第 4.5 拍</span>
+                  <button type="button" id="btn-nudge-next-beat" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem;" title="往後移動 1 拍">▶</button>
+                  <button type="button" id="btn-nudge-next-bar" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem;" title="往後移動 1 小節">⏩</button>
+                </div>
+                <div class="inspector-item">
+                  <label for="insp-duration-input" class="inspector-label">音長(Ticks):</label>
+                  <input type="number" id="insp-duration-input" min="1" max="7680" step="12" class="inspector-input" title="修改音長 (96 Ticks = 1 拍)" />
+                  <span id="insp-duration-desc" class="inspector-dur-desc">(16分音符)</span>
+                </div>
+                <div class="inspector-item">
+                  <label for="insp-velocity-input" class="inspector-label">力度(Velocity):</label>
+                  <input type="number" id="insp-velocity-input" min="1" max="127" class="inspector-input" title="修改敲擊力度 (1~127)" />
+                </div>
+                <div class="inspector-actions" style="margin-left: auto; display: flex; align-items: center; gap: 6px;">
+                  <button type="button" id="btn-insp-preview" class="btn-insp-preview" title="試聽此單音">▶ 試聽單音</button>
+                  <button type="button" id="btn-insp-delete" class="toggle-btn" style="padding: 3px 8px; font-size: 0.74rem; background: #dc2626; color: #ffffff; border-color: #ef4444;" title="刪除此音符 (鍵盤 Delete / Backspace)">🗑️ 刪除</button>
+                  <button type="button" id="btn-insp-close" class="modal-close-btn" style="font-size: 1.1rem; padding: 0 4px;" title="取消選取 (Esc)">&times;</button>
+                </div>
               </div>
-              <div class="inspector-item" style="display: flex; align-items: center; gap: 4px;">
-                <span class="inspector-label">音高:</span>
-                <button type="button" id="btn-pitch-down-oct" class="toggle-btn" style="padding: 1px 5px; font-size: 0.7rem;" title="降 1 個八度 (-12半音，Shift + ↓)">-8度</button>
-                <button type="button" id="btn-pitch-down-semi" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem;" title="降半音 (鍵盤 ↓)">▼</button>
-                <span id="insp-pitch-name" class="inspector-val-pitch" style="min-width: 62px; text-align: center;">E5 (76)</span>
-                <button type="button" id="btn-pitch-up-semi" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem;" title="升半音 (鍵盤 ↑)">▲</button>
-                <button type="button" id="btn-pitch-up-oct" class="toggle-btn" style="padding: 1px 5px; font-size: 0.7rem;" title="升 1 個八度 (+12半音，Shift + ↑)">+8度</button>
-              </div>
-              <div class="inspector-item" style="display: flex; align-items: center; gap: 4px;">
-                <span class="inspector-label">位置:</span>
-                <button type="button" id="btn-nudge-prev-bar" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem;" title="往前移動 1 小節">⏪</button>
-                <button type="button" id="btn-nudge-prev-beat" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem;" title="往前移動 1 拍">◀</button>
-                <span id="insp-position-text" class="inspector-val-pos" style="min-width: 95px; text-align: center; font-variant-numeric: tabular-nums;">第 2 小節 第 4.5 拍</span>
-                <button type="button" id="btn-nudge-next-beat" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem;" title="往後移動 1 拍">▶</button>
-                <button type="button" id="btn-nudge-next-bar" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem;" title="往後移動 1 小節">⏩</button>
-              </div>
-              <div class="inspector-item">
-                <label for="insp-duration-input" class="inspector-label">音長(Ticks):</label>
-                <input type="number" id="insp-duration-input" min="1" max="7680" step="12" class="inspector-input" title="修改音長 (96 Ticks = 1 拍)" />
-                <span id="insp-duration-desc" class="inspector-dur-desc">(16分音符)</span>
-              </div>
-              <div class="inspector-item">
-                <label for="insp-velocity-input" class="inspector-label">力度(Velocity):</label>
-                <input type="number" id="insp-velocity-input" min="1" max="127" class="inspector-input" title="修改敲擊力度 (1~127)" />
-              </div>
-              <div class="inspector-actions">
-                <button type="button" id="btn-insp-preview" class="btn-insp-preview" title="試聽此單音">▶ 試聽單音</button>
-                <button type="button" id="btn-insp-delete" class="toggle-btn" style="padding: 3px 8px; font-size: 0.74rem; background: #dc2626; color: #ffffff; border-color: #ef4444;" title="刪除此音符 (鍵盤 Delete / Backspace)">🗑️ 刪除</button>
-                <button type="button" id="btn-insp-close" class="modal-close-btn" style="font-size: 1.1rem; padding: 0 4px;" title="取消選取">&times;</button>
+
+              <!-- 多音符批次工具列 (Multi-Note Batch Bar) -->
+              <div id="multi-note-inspector" style="display: none; align-items: center; gap: 12px; width: 100%; flex-wrap: wrap;">
+                <div class="inspector-badge" style="border-color: rgba(56, 189, 248, 0.35);">
+                  <span class="inspector-dot" style="background: #38bdf8; box-shadow: 0 0 6px #38bdf8;"></span>
+                  <span id="batch-note-title" style="font-weight: 700; color: #38bdf8;">已選取 0 顆音符</span>
+                </div>
+                <!-- 批次力度 -->
+                <div class="inspector-item" style="display: flex; align-items: center; gap: 4px;">
+                  <span class="inspector-label">力度:</span>
+                  <button type="button" id="btn-batch-vel-minus10" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem;" title="選取音符力度 -10 (保持原演奏動態強弱)">-10</button>
+                  <button type="button" id="btn-batch-vel-plus10" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem;" title="選取音符力度 +10 (保持原演奏動態強弱)">+10</button>
+                  <select id="batch-vel-preset-select" class="inspector-input" style="padding: 1px 4px; font-size: 0.72rem; min-width: 82px;" title="統一設定固定力度">
+                    <option value="">統一力度...</option>
+                    <option value="60">Soft (60)</option>
+                    <option value="80">Medium (80)</option>
+                    <option value="100">Standard (100)</option>
+                    <option value="120">Hard (120)</option>
+                    <option value="127">Max (127)</option>
+                  </select>
+                </div>
+                <!-- 批次移調 -->
+                <div class="inspector-item" style="display: flex; align-items: center; gap: 4px;">
+                  <span class="inspector-label">移調:</span>
+                  <button type="button" id="btn-batch-pitch-down-oct" class="toggle-btn" style="padding: 1px 5px; font-size: 0.7rem;" title="全體降 1 個八度 (-12半音，Shift + ↓)">-8度</button>
+                  <button type="button" id="btn-batch-pitch-down-semi" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem;" title="全體降半音 (鍵盤 ↓)">▼</button>
+                  <span style="font-size: 0.72rem; color: #94a3b8; padding: 0 2px;">半音</span>
+                  <button type="button" id="btn-batch-pitch-up-semi" class="toggle-btn" style="padding: 1px 6px; font-size: 0.72rem;" title="全體升半音 (鍵盤 ↑)">▲</button>
+                  <button type="button" id="btn-batch-pitch-up-oct" class="toggle-btn" style="padding: 1px 5px; font-size: 0.7rem;" title="全體升 1 個八度 (+12半音，Shift + ↑)">+8度</button>
+                </div>
+                <!-- 批次音長 -->
+                <div class="inspector-item" style="display: flex; align-items: center; gap: 4px;">
+                  <span class="inspector-label">音長:</span>
+                  <button type="button" id="btn-batch-dur-50" class="toggle-btn" style="padding: 1px 5px; font-size: 0.7rem;" title="縮短為 50% 時值 (短斷奏)">50%</button>
+                  <button type="button" id="btn-batch-dur-80" class="toggle-btn" style="padding: 1px 5px; font-size: 0.7rem;" title="調整為 80% 時值 (標準跳音)">80%</button>
+                  <button type="button" id="btn-batch-dur-100" class="toggle-btn" style="padding: 1px 5px; font-size: 0.7rem;" title="調整為 100% 滿格時值">100%</button>
+                  <button type="button" id="btn-batch-dur-120" class="toggle-btn" style="padding: 1px 5px; font-size: 0.7rem;" title="延長為 120% 時值 (連音 Legato)">120%</button>
+                </div>
+                <!-- 批次位置與量化 -->
+                <div class="inspector-item" style="display: flex; align-items: center; gap: 4px;">
+                  <span class="inspector-label">位置:</span>
+                  <button type="button" id="btn-batch-nudge-prev-bar" class="toggle-btn" style="padding: 1px 5px; font-size: 0.7rem;" title="全體往前移動 1 小節">⏪</button>
+                  <button type="button" id="btn-batch-nudge-prev-beat" class="toggle-btn" style="padding: 1px 5px; font-size: 0.7rem;" title="全體往前移動 1 拍">◀</button>
+                  <button type="button" id="btn-batch-nudge-next-beat" class="toggle-btn" style="padding: 1px 5px; font-size: 0.7rem;" title="全體往後移動 1 拍">▶</button>
+                  <button type="button" id="btn-batch-nudge-next-bar" class="toggle-btn" style="padding: 1px 5px; font-size: 0.7rem;" title="全體往後移動 1 小節">⏩</button>
+                  <button type="button" id="btn-batch-quantize" class="toggle-btn active-cm" style="padding: 1px 7px; font-size: 0.72rem; margin-left: 2px;" title="依據上方工具列所選網格一鍵吸附量化">🎛️ 吸附量化</button>
+                </div>
+                <!-- 批次操作 -->
+                <div class="inspector-actions" style="margin-left: auto; display: flex; align-items: center; gap: 6px;">
+                  <button type="button" id="btn-batch-preview" class="btn-insp-preview" style="padding: 3px 10px; font-size: 0.74rem;" title="試聽選取音符短句">▶ 試聽選取</button>
+                  <button type="button" id="btn-batch-delete" class="toggle-btn" style="padding: 3px 8px; font-size: 0.74rem; background: #dc2626; color: #ffffff; border-color: #ef4444;" title="刪除所有選取的音符 (鍵盤 Delete / Backspace)">🗑️ 批次刪除</button>
+                  <button type="button" id="btn-batch-close" class="modal-close-btn" style="font-size: 1.1rem; padding: 0 4px;" title="取消選取 (Esc)">&times;</button>
+                </div>
               </div>
             </div>
 

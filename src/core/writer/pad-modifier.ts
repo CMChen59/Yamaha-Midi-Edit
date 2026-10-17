@@ -411,6 +411,197 @@ export class YamahaPadModifier {
   }
 
   /**
+   * 批次更新指定 Pad 音軌中多顆音符 (支援批次修改音高、力度、時值、起始位置)
+   * 採用單次標註、批次更新、末端一次性重新計算 Delta-Time 與重構 RawChunk，確保極致效能
+   */
+  public static batchUpdateNotes(
+    parsed: YamahaFileParsed,
+    padNum: number,
+    items: Array<{
+      target: { note: number; startTick: number; oldDurationTick: number };
+      updates: { velocity?: number; durationTick?: number; startTick?: number; note?: number };
+    }>
+  ): number {
+    const track = parsed.tracks[padNum];
+    if (!track || !track.events || items.length === 0) return 0;
+
+    let curTick = 0;
+    const annotated = track.events.map((ev, index) => {
+      curTick += ev.delta;
+      return { ev, absTick: curTick, index };
+    });
+
+    let updatedCount = 0;
+
+    for (const item of items) {
+      const { target, updates } = item;
+      // 尋找目標 Note-On
+      const onEntry = annotated.find(
+        (entry) =>
+          entry.absTick === target.startTick &&
+          entry.ev.type === 'noteOn' &&
+          entry.ev.noteNumber === target.note &&
+          (entry.ev.velocity ?? 0) > 0
+      );
+      if (!onEntry) continue;
+
+      // 尋找對應 Note-Off
+      let offEntry = annotated.find(
+        (entry) =>
+          entry.index > onEntry.index &&
+          entry.absTick === target.startTick + target.oldDurationTick &&
+          entry.ev.noteNumber === target.note &&
+          (entry.ev.type === 'noteOff' || (entry.ev.type === 'noteOn' && entry.ev.velocity === 0))
+      );
+      if (!offEntry) {
+        offEntry = annotated.find(
+          (entry) =>
+            entry.index > onEntry.index &&
+            entry.ev.noteNumber === target.note &&
+            (entry.ev.type === 'noteOff' || (entry.ev.type === 'noteOn' && entry.ev.velocity === 0))
+        );
+      }
+
+      let modified = false;
+      const effectiveDur = updates.durationTick !== undefined
+        ? Math.max(1, Math.round(updates.durationTick))
+        : (offEntry ? offEntry.absTick - onEntry.absTick : target.oldDurationTick);
+
+      if (updates.velocity !== undefined) {
+        onEntry.ev.velocity = Math.max(1, Math.min(127, Math.round(updates.velocity)));
+        modified = true;
+      }
+
+      if (updates.note !== undefined) {
+        const newNote = Math.max(0, Math.min(127, Math.round(updates.note)));
+        onEntry.ev.noteNumber = newNote;
+        if (offEntry) offEntry.ev.noteNumber = newNote;
+        modified = true;
+      }
+
+      if (updates.startTick !== undefined) {
+        const newStart = Math.max(0, Math.round(updates.startTick));
+        onEntry.absTick = newStart;
+        if (offEntry) offEntry.absTick = newStart + effectiveDur;
+        modified = true;
+      } else if (updates.durationTick !== undefined && offEntry) {
+        offEntry.absTick = onEntry.absTick + effectiveDur;
+        modified = true;
+      }
+
+      if (modified) {
+        updatedCount++;
+      }
+    }
+
+    if (updatedCount === 0) return 0;
+
+    // 保證 End of Track (0x2F) 不早於任何事件
+    const endMeta = annotated.find((entry) => entry.ev.type === 'meta' && entry.ev.metaType === 0x2f);
+    if (endMeta) {
+      for (const entry of annotated) {
+        if (entry.ev !== endMeta.ev && entry.absTick > endMeta.absTick) {
+          endMeta.absTick = entry.absTick;
+        }
+      }
+    }
+
+    // 依據 absTick 重新排序
+    annotated.sort((a, b) => {
+      if (a.absTick !== b.absTick) return a.absTick - b.absTick;
+      return a.index - b.index;
+    });
+
+    // 重新計算各事件之 delta-time
+    let prevTick = 0;
+    track.events = annotated.map((entry) => {
+      const delta = entry.absTick - prevTick;
+      prevTick = entry.absTick;
+      entry.ev.delta = Math.max(0, delta);
+      return entry.ev;
+    });
+
+    // 重新編碼該 Track 的二進位 rawChunk
+    this.rebuildTrackRawChunk(track);
+    return updatedCount;
+  }
+
+  /**
+   * 批次刪除指定 Pad 音軌中多顆音符
+   */
+  public static batchDeleteNotes(
+    parsed: YamahaFileParsed,
+    padNum: number,
+    targets: Array<{ note: number; startTick: number; oldDurationTick: number }>
+  ): number {
+    const track = parsed.tracks[padNum];
+    if (!track || !track.events || targets.length === 0) return 0;
+
+    let curTick = 0;
+    const annotated = track.events.map((ev, index) => {
+      curTick += ev.delta;
+      return { ev, absTick: curTick, index };
+    });
+
+    const entriesToRemove = new Set<any>();
+    let deletedCount = 0;
+
+    for (const target of targets) {
+      const onEntry = annotated.find(
+        (entry) =>
+          !entriesToRemove.has(entry) &&
+          entry.absTick === target.startTick &&
+          entry.ev.type === 'noteOn' &&
+          entry.ev.noteNumber === target.note &&
+          (entry.ev.velocity ?? 0) > 0
+      );
+      if (!onEntry) continue;
+
+      let offEntry = annotated.find(
+        (entry) =>
+          !entriesToRemove.has(entry) &&
+          entry.index > onEntry.index &&
+          entry.absTick === target.startTick + target.oldDurationTick &&
+          entry.ev.noteNumber === target.note &&
+          (entry.ev.type === 'noteOff' || (entry.ev.type === 'noteOn' && entry.ev.velocity === 0))
+      );
+      if (!offEntry) {
+        offEntry = annotated.find(
+          (entry) =>
+            !entriesToRemove.has(entry) &&
+            entry.index > onEntry.index &&
+            entry.ev.noteNumber === target.note &&
+            (entry.ev.type === 'noteOff' || (entry.ev.type === 'noteOn' && entry.ev.velocity === 0))
+        );
+      }
+
+      entriesToRemove.add(onEntry);
+      if (offEntry) entriesToRemove.add(offEntry);
+      deletedCount++;
+    }
+
+    if (deletedCount === 0) return 0;
+
+    const remaining = annotated.filter((entry) => !entriesToRemove.has(entry));
+
+    remaining.sort((a, b) => {
+      if (a.absTick !== b.absTick) return a.absTick - b.absTick;
+      return a.index - b.index;
+    });
+
+    let prevTick = 0;
+    track.events = remaining.map((entry) => {
+      const delta = entry.absTick - prevTick;
+      prevTick = entry.absTick;
+      entry.ev.delta = Math.max(0, delta);
+      return entry.ev;
+    });
+
+    this.rebuildTrackRawChunk(track);
+    return deletedCount;
+  }
+
+  /**
    * 在指定 Pad 音軌中新增一顆音符 (自動配置 Channel、Note-On 與 Note-Off，並重新排序 Delta Times 與 RawChunk)
    */
   public static addNoteEvent(

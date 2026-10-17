@@ -3697,12 +3697,28 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection | null 
   updateMeasureControlsUI(actualBars);
 
   // 若當前有已選取的音符，重新在最新渲染方塊中比對並維持選取態
-  if (selectedNoteBox) {
+  if (selectedNoteBoxes.length > 0) {
+    const reFoundList: RenderedNoteBox[] = [];
+    for (const prev of selectedNoteBoxes) {
+      const found = lastRenderedNoteBoxes.find(b => b.startTick === prev.startTick && b.note === prev.note);
+      if (found) reFoundList.push(found);
+    }
+    selectedNoteBoxes = reFoundList;
+    if (selectedNoteBoxes.length === 1) {
+      selectedNoteBox = selectedNoteBoxes[0];
+      updateInspectorFields(selectedNoteBox);
+    } else if (selectedNoteBoxes.length > 1) {
+      selectedNoteBox = selectedNoteBoxes[0];
+      updateBatchInspectorUI();
+    } else {
+      deselectNote();
+    }
+  } else if (selectedNoteBox) {
     const reFound = lastRenderedNoteBoxes.find(b => b.startTick === selectedNoteBox!.startTick && b.note === selectedNoteBox!.note);
     if (reFound) {
       selectedNoteBox = reFound;
+      selectedNoteBoxes = [reFound];
       updateInspectorFields(reFound);
-      if (currentCanvasRedraw) currentCanvasRedraw();
     } else {
       deselectNote();
     }
@@ -3799,6 +3815,10 @@ interface RenderedNoteBox {
 let lastRenderedNoteBoxes: RenderedNoteBox[] = [];
 let hoveredNoteBox: RenderedNoteBox | null = null;
 let selectedNoteBox: RenderedNoteBox | null = null;
+let selectedNoteBoxes: RenderedNoteBox[] = [];
+let isMarqueeSelecting = false;
+let marqueeStart: { x: number; y: number; clientX: number; clientY: number } | null = null;
+let marqueeCurrent: { x: number; y: number } | null = null;
 let currentCanvasPadInstrument: {
   instrumentId?: string;
   pc?: number;
@@ -4279,7 +4299,8 @@ function drawNoteRoll(
         currentVelocity = velocityPreviewOverride.velocity;
       }
 
-      const isSelected = selectedNoteBox && selectedNoteBox.startTick === n.startTick && selectedNoteBox.note === n.note;
+      const isSelected = selectedNoteBoxes.some(b => b.startTick === n.startTick && b.note === n.note) ||
+                         (selectedNoteBox !== null && selectedNoteBox.startTick === n.startTick && selectedNoteBox.note === n.note);
       const isHovered = (highlightedBox && highlightedBox.startTick === n.startTick && highlightedBox.note === n.note) ||
                         (hoveredVelocityStalk && hoveredVelocityStalk.startTick === n.startTick && hoveredVelocityStalk.note === n.note);
       const isSounding = playheadRelTick !== null && playheadRelTick !== undefined &&
@@ -4373,6 +4394,24 @@ function drawNoteRoll(
         ctx.fill();
         ctx.restore();
       }
+    }
+
+    // 8.5 繪製滑鼠拖曳框選虛線方框 (Marquee Box Selection)
+    if (isMarqueeSelecting && marqueeStart && marqueeCurrent) {
+      ctx.save();
+      const rx = Math.min(marqueeStart.x, marqueeCurrent.x);
+      const ry = Math.min(marqueeStart.y, marqueeCurrent.y);
+      const rw = Math.abs(marqueeCurrent.x - marqueeStart.x);
+      const rh = Math.abs(marqueeCurrent.y - marqueeStart.y);
+
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.16)';
+      ctx.fillRect(rx, ry, rw, rh);
+
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 3]);
+      ctx.strokeRect(rx, ry, rw, rh);
+      ctx.restore();
     }
 
     // 9. 同步繪製下方 DAW 力度軌道 (Velocity Lane)
@@ -4545,7 +4584,8 @@ function drawVelocityLane(
       const stalkH = Math.max(3, Math.round((currentVel / 127) * stalkMaxH));
       const stalkTopY = stalkBaseY - stalkH;
 
-      const isSelected = selectedNoteBox && selectedNoteBox.startTick === n.startTick && selectedNoteBox.note === n.note;
+      const isSelected = selectedNoteBoxes.some(b => b.startTick === n.startTick && b.note === n.note) ||
+                         (selectedNoteBox !== null && selectedNoteBox.startTick === n.startTick && selectedNoteBox.note === n.note);
       const isHovered = (hoveredNoteBox && hoveredNoteBox.startTick === n.startTick && hoveredNoteBox.note === n.note) ||
                         (highlightedStalk && highlightedStalk.startTick === n.startTick && highlightedStalk.note === n.note);
 
@@ -5633,9 +5673,23 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
       currentResizingDuration = edgeHit.durationTick;
       isResizingNote = false;
       selectedRulerBar = null;
-      selectNote(edgeHit);
+      selectNote(edgeHit, e.ctrlKey || e.metaKey);
       e.preventDefault();
     } else if (bodyHit) {
+      if (e.ctrlKey || e.metaKey) {
+        selectNote(bodyHit, true);
+        potentialMoveTarget = null;
+        potentialResizeTarget = null;
+        selectedRulerBar = null;
+        e.preventDefault();
+        return;
+      }
+
+      const isAlreadySelected = selectedNoteBoxes.some(b => b.startTick === bodyHit.startTick && b.note === bodyHit.note);
+      if (!isAlreadySelected) {
+        selectNote(bodyHit, false);
+      }
+
       potentialMoveTarget = bodyHit;
       potentialResizeTarget = null;
       movingStartMouseX = e.clientX;
@@ -5644,18 +5698,41 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
       currentMovingStartTick = bodyHit.startTick;
       isMovingNote = false;
       selectedRulerBar = null;
-      selectNote(bodyHit);
       e.preventDefault();
     } else {
       potentialResizeTarget = null;
       potentialMoveTarget = null;
-      deselectNote();
       selectedRulerBar = null;
+
+      // 啟動框選 (Marquee Box Selection) 追蹤
+      marqueeStart = { x: mouseX, y: mouseY, clientX: e.clientX, clientY: e.clientY };
+      marqueeCurrent = { x: mouseX, y: mouseY };
+      isMarqueeSelecting = false;
     }
   });
 
   // 全域滑鼠拖曳監聽 (Window Mousemove for smooth dragging outside canvas)
   window.addEventListener('mousemove', (e) => {
+    if (marqueeStart) {
+      if (!isMarqueeSelecting) {
+        if (Math.hypot(e.clientX - marqueeStart.clientX, e.clientY - marqueeStart.clientY) >= 5) {
+          isMarqueeSelecting = true;
+          document.body.style.cursor = 'crosshair';
+          canvas.style.cursor = 'crosshair';
+        }
+      }
+      if (isMarqueeSelecting) {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        const curMouseX = (e.clientX - rect.left) * scaleX;
+        const curMouseY = (e.clientY - rect.top) * scaleY;
+        marqueeCurrent = { x: curMouseX, y: curMouseY };
+        if (currentCanvasRedraw) currentCanvasRedraw();
+        return;
+      }
+    }
+
     if (potentialResizeTarget) {
       const deltaClientX = e.clientX - resizingStartMouseX;
       if (!isResizingNote) {
@@ -5743,7 +5820,53 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
   });
 
   // 全域滑鼠釋放監聽 (Window Mouseup to commit duration or position modification)
-  window.addEventListener('mouseup', () => {
+  window.addEventListener('mouseup', (e: MouseEvent) => {
+    if (marqueeStart) {
+      if (isMarqueeSelecting && marqueeCurrent) {
+        hasJustDragged = true;
+        const rx1 = Math.min(marqueeStart.x, marqueeCurrent.x);
+        const rx2 = Math.max(marqueeStart.x, marqueeCurrent.x);
+        const ry1 = Math.min(marqueeStart.y, marqueeCurrent.y);
+        const ry2 = Math.max(marqueeStart.y, marqueeCurrent.y);
+
+        // 搜尋與選取框相交的所有音符
+        const hitBoxes = lastRenderedNoteBoxes.filter((b) => {
+          const bRight = b.x + b.w;
+          const bBottom = b.y + b.h;
+          return !(b.x > rx2 || bRight < rx1 || b.y > ry2 || bBottom < ry1);
+        });
+
+        if (e.ctrlKey || e.metaKey) {
+          const merged = [...selectedNoteBoxes];
+          for (const hit of hitBoxes) {
+            if (!merged.some(b => b.startTick === hit.startTick && b.note === hit.note)) {
+              merged.push(hit);
+            }
+          }
+          selectMultipleNotes(merged);
+        } else {
+          selectMultipleNotes(hitBoxes);
+        }
+      } else {
+        // 純點擊空白處 (未拖曳超過門檻)：若未按 Ctrl 則清空選取
+        if (!e.ctrlKey && !e.metaKey) {
+          deselectNote();
+        }
+      }
+
+      isMarqueeSelecting = false;
+      marqueeStart = null;
+      marqueeCurrent = null;
+      document.body.style.cursor = '';
+      if (canvas) canvas.style.cursor = 'default';
+      if (currentCanvasRedraw) currentCanvasRedraw();
+
+      setTimeout(() => {
+        hasJustDragged = false;
+      }, 100);
+      return;
+    }
+
     if (potentialResizeTarget) {
       const target = potentialResizeTarget;
       const finalDuration = currentResizingDuration;
@@ -5950,26 +6073,77 @@ function setupCanvasHoverEvents(canvas: HTMLCanvasElement) {
   initNoteInspectorEvents();
 }
 
-function selectNote(box: RenderedNoteBox) {
-  selectedNoteBox = box;
-  if (isCanvasStepInputActive) {
-    const nextTick = box.startTick + box.durationTick;
+function selectNote(box: RenderedNoteBox, isCtrl: boolean = false) {
+  if (isCtrl) {
+    const idx = selectedNoteBoxes.findIndex(b => b.startTick === box.startTick && b.note === box.note);
+    if (idx >= 0) {
+      selectedNoteBoxes.splice(idx, 1);
+    } else {
+      selectedNoteBoxes.push(box);
+    }
+  } else {
+    selectedNoteBoxes = [box];
+  }
+
+  if (selectedNoteBoxes.length === 0) {
+    deselectNote();
+    return;
+  }
+
+  selectedNoteBox = selectedNoteBoxes[selectedNoteBoxes.length - 1];
+
+  if (isCanvasStepInputActive && selectedNoteBox) {
+    const nextTick = selectedNoteBox.startTick + selectedNoteBox.durationTick;
     canvasStepRecorder.seekToTick(nextTick);
     const hoverInfoEl = document.getElementById('canvas-hover-info');
     if (hoverInfoEl) {
       hoverInfoEl.innerHTML = `🎹 <span style="color:#38bdf8;font-weight:700;">手彈步進游標已接續於音符後方 (Tick ${nextTick})</span>：彈奏琴鍵或電腦鍵盤直接印入下一組音符！`;
     }
   }
+
   if (currentCanvasRedraw) currentCanvasRedraw();
 
-  updateInspectorFields(box);
+  if (selectedNoteBoxes.length === 1) {
+    updateInspectorFields(selectedNoteBoxes[0]);
+    auditionSelectedNote(selectedNoteBoxes[0].note, selectedNoteBoxes[0].durationTick, selectedNoteBoxes[0].velocity);
+  } else {
+    updateBatchInspectorUI();
+  }
+}
 
-  // 點擊即時發聲試聽
-  auditionSelectedNote(box.note, box.durationTick, box.velocity);
+function selectMultipleNotes(boxes: RenderedNoteBox[]) {
+  selectedNoteBoxes = [...boxes];
+  if (selectedNoteBoxes.length === 0) {
+    deselectNote();
+    return;
+  }
+  selectedNoteBox = selectedNoteBoxes[0];
+  if (currentCanvasRedraw) currentCanvasRedraw();
+  if (selectedNoteBoxes.length === 1) {
+    updateInspectorFields(selectedNoteBoxes[0]);
+  } else {
+    updateBatchInspectorUI();
+  }
+}
+
+function updateBatchInspectorUI() {
+  const inspectorBar = document.getElementById('note-inspector-bar');
+  const singleInspector = document.getElementById('single-note-inspector');
+  const multiInspector = document.getElementById('multi-note-inspector');
+  const batchTitle = document.getElementById('batch-note-title');
+
+  if (inspectorBar) inspectorBar.style.display = 'flex';
+  if (singleInspector) singleInspector.style.display = 'none';
+  if (multiInspector) multiInspector.style.display = 'flex';
+  if (batchTitle) {
+    batchTitle.textContent = `已選取 ${selectedNoteBoxes.length} 顆音符`;
+  }
 }
 
 function updateInspectorFields(box: RenderedNoteBox) {
   const inspectorBar = document.getElementById('note-inspector-bar');
+  const singleInspector = document.getElementById('single-note-inspector');
+  const multiInspector = document.getElementById('multi-note-inspector');
   const pitchEl = document.getElementById('insp-pitch-name');
   const posEl = document.getElementById('insp-position-text');
   const durInput = document.getElementById('insp-duration-input') as HTMLInputElement | null;
@@ -5977,6 +6151,9 @@ function updateInspectorFields(box: RenderedNoteBox) {
   const velInput = document.getElementById('insp-velocity-input') as HTMLInputElement | null;
 
   if (inspectorBar) inspectorBar.style.display = 'flex';
+  if (singleInspector) singleInspector.style.display = 'flex';
+  if (multiInspector) multiInspector.style.display = 'none';
+
   if (pitchEl) pitchEl.textContent = `${midiNoteToName(box.note)} (${box.note})`;
   if (posEl) {
     if (currentGridStartTick > 0) {
@@ -5993,9 +6170,15 @@ function updateInspectorFields(box: RenderedNoteBox) {
 
 function deselectNote() {
   selectedNoteBox = null;
+  selectedNoteBoxes = [];
   if (currentCanvasRedraw) currentCanvasRedraw();
 
   const inspectorBar = document.getElementById('note-inspector-bar');
+  const singleInspector = document.getElementById('single-note-inspector');
+  const multiInspector = document.getElementById('multi-note-inspector');
+
+  if (singleInspector) singleInspector.style.display = 'none';
+  if (multiInspector) multiInspector.style.display = 'none';
   if (inspectorBar) inspectorBar.style.display = 'none';
 }
 
@@ -6005,6 +6188,23 @@ function auditionSelectedNote(note: number, durTicks: number, velocity: number) 
     ...currentCanvasPadInstrument,
     volume: velocity,
   });
+}
+
+function auditionSelectedNotes(boxes: RenderedNoteBox[]) {
+  if (boxes.length === 0) return;
+  const sorted = [...boxes].sort((a, b) => a.startTick - b.startTick);
+  const baseTick = sorted[0].startTick;
+  for (const b of sorted) {
+    const offsetTicks = Math.max(0, b.startTick - baseTick);
+    const offsetSec = ticksToSeconds(offsetTicks, 120, currentTicksPerBeat);
+    const durSec = Math.max(0.1, Math.min(2.0, ticksToSeconds(b.durationTick, 120, currentTicksPerBeat)));
+    setTimeout(() => {
+      audioEngine.playAuditionNote(b.note, durSec, {
+        ...currentCanvasPadInstrument,
+        volume: b.velocity,
+      });
+    }, Math.min(offsetSec * 1000, 3000));
+  }
 }
 
 function refreshCurrentPadDetail() {
@@ -6200,6 +6400,210 @@ function initNoteInspectorEvents() {
     });
   }
 
+  // ==========================================
+  // 多音符批次工具列 (Multi-Note Batch Bar) 事件綁定
+  // ==========================================
+
+  // 1. 批次力度增減 (-10 / +10)
+  const btnBatchVelMinus10 = document.getElementById('btn-batch-vel-minus10');
+  if (btnBatchVelMinus10) {
+    btnBatchVelMinus10.addEventListener('click', () => {
+      if (!currentParsed || selectedNoteBoxes.length === 0) return;
+      pushUndoSnapshot(`批次調整 Pad ${currentCanvasPadNum} 力度 -10`);
+      const updates = selectedNoteBoxes.map(b => {
+        const newVel = Math.max(1, Math.min(127, b.velocity - 10));
+        b.velocity = newVel;
+        return {
+          target: { note: b.note, startTick: b.startTick, oldDurationTick: b.durationTick },
+          updates: { velocity: newVel }
+        };
+      });
+      YamahaPadModifier.batchUpdateNotes(currentParsed, currentCanvasPadNum, updates);
+      markModified(`已批次將 Pad ${currentCanvasPadNum} 的 ${selectedNoteBoxes.length} 顆音符力度 -10`);
+      refreshCurrentPadDetail();
+    });
+  }
+
+  const btnBatchVelPlus10 = document.getElementById('btn-batch-vel-plus10');
+  if (btnBatchVelPlus10) {
+    btnBatchVelPlus10.addEventListener('click', () => {
+      if (!currentParsed || selectedNoteBoxes.length === 0) return;
+      pushUndoSnapshot(`批次調整 Pad ${currentCanvasPadNum} 力度 +10`);
+      const updates = selectedNoteBoxes.map(b => {
+        const newVel = Math.max(1, Math.min(127, b.velocity + 10));
+        b.velocity = newVel;
+        return {
+          target: { note: b.note, startTick: b.startTick, oldDurationTick: b.durationTick },
+          updates: { velocity: newVel }
+        };
+      });
+      YamahaPadModifier.batchUpdateNotes(currentParsed, currentCanvasPadNum, updates);
+      markModified(`已批次將 Pad ${currentCanvasPadNum} 的 ${selectedNoteBoxes.length} 顆音符力度 +10`);
+      refreshCurrentPadDetail();
+    });
+  }
+
+  // 2. 統一固定力度下拉選單
+  const selectBatchVelPreset = document.getElementById('batch-vel-preset-select') as HTMLSelectElement | null;
+  if (selectBatchVelPreset) {
+    selectBatchVelPreset.addEventListener('change', () => {
+      const val = parseInt(selectBatchVelPreset.value, 10);
+      if (isNaN(val) || !currentParsed || selectedNoteBoxes.length === 0) return;
+      pushUndoSnapshot(`批次設定 Pad ${currentCanvasPadNum} 力度為 ${val}`);
+      const updates = selectedNoteBoxes.map(b => {
+        b.velocity = val;
+        return {
+          target: { note: b.note, startTick: b.startTick, oldDurationTick: b.durationTick },
+          updates: { velocity: val }
+        };
+      });
+      YamahaPadModifier.batchUpdateNotes(currentParsed, currentCanvasPadNum, updates);
+      markModified(`已批次將 Pad ${currentCanvasPadNum} 的 ${selectedNoteBoxes.length} 顆音符力度統一設為 ${val}`);
+      selectBatchVelPreset.value = '';
+      refreshCurrentPadDetail();
+    });
+  }
+
+  // 3. 批次移調
+  const shiftBatchNotesPitch = (semiDelta: number) => {
+    if (!currentParsed || selectedNoteBoxes.length === 0) return;
+    const wouldOverflow = selectedNoteBoxes.some(b => b.note + semiDelta < 0 || b.note + semiDelta > 127);
+    if (wouldOverflow) {
+      showStatus('移調將超出 MIDI 音高範圍 (0~127)，已自動取消操作', true);
+      return;
+    }
+    pushUndoSnapshot(`批次移調 Pad ${currentCanvasPadNum} (${semiDelta > 0 ? '+' : ''}${semiDelta} 半音)`);
+    const updates = selectedNoteBoxes.map(b => {
+      const newNote = b.note + semiDelta;
+      const target = { note: b.note, startTick: b.startTick, oldDurationTick: b.durationTick };
+      b.note = newNote;
+      return {
+        target,
+        updates: { note: newNote }
+      };
+    });
+    YamahaPadModifier.batchUpdateNotes(currentParsed, currentCanvasPadNum, updates);
+    markModified(`已批次將 Pad ${currentCanvasPadNum} 的 ${selectedNoteBoxes.length} 顆音符移調 ${semiDelta > 0 ? '+' : ''}${semiDelta} 半音`);
+    refreshCurrentPadDetail();
+    auditionSelectedNotes(selectedNoteBoxes);
+  };
+
+  const btnBatchPitchDownOct = document.getElementById('btn-batch-pitch-down-oct');
+  if (btnBatchPitchDownOct) btnBatchPitchDownOct.addEventListener('click', () => shiftBatchNotesPitch(-12));
+  const btnBatchPitchDownSemi = document.getElementById('btn-batch-pitch-down-semi');
+  if (btnBatchPitchDownSemi) btnBatchPitchDownSemi.addEventListener('click', () => shiftBatchNotesPitch(-1));
+  const btnBatchPitchUpSemi = document.getElementById('btn-batch-pitch-up-semi');
+  if (btnBatchPitchUpSemi) btnBatchPitchUpSemi.addEventListener('click', () => shiftBatchNotesPitch(1));
+  const btnBatchPitchUpOct = document.getElementById('btn-batch-pitch-up-oct');
+  if (btnBatchPitchUpOct) btnBatchPitchUpOct.addEventListener('click', () => shiftBatchNotesPitch(12));
+
+  // 4. 批次音長縮放 (50%, 80%, 100%, 120%)
+  const scaleBatchNotesDuration = (ratio: number, desc: string) => {
+    if (!currentParsed || selectedNoteBoxes.length === 0) return;
+    pushUndoSnapshot(`批次縮放 Pad ${currentCanvasPadNum} 音長 (${desc})`);
+    const updates = selectedNoteBoxes.map(b => {
+      const newDur = Math.max(12, Math.round(b.durationTick * ratio));
+      const target = { note: b.note, startTick: b.startTick, oldDurationTick: b.durationTick };
+      b.durationTick = newDur;
+      return {
+        target,
+        updates: { durationTick: newDur }
+      };
+    });
+    YamahaPadModifier.batchUpdateNotes(currentParsed, currentCanvasPadNum, updates);
+    markModified(`已批次將 Pad ${currentCanvasPadNum} 的 ${selectedNoteBoxes.length} 顆音符音長調整為 ${desc}`);
+    refreshCurrentPadDetail();
+  };
+
+  const btnBatchDur50 = document.getElementById('btn-batch-dur-50');
+  if (btnBatchDur50) btnBatchDur50.addEventListener('click', () => scaleBatchNotesDuration(0.5, '50% 斷奏'));
+  const btnBatchDur80 = document.getElementById('btn-batch-dur-80');
+  if (btnBatchDur80) btnBatchDur80.addEventListener('click', () => scaleBatchNotesDuration(0.8, '80% 跳音'));
+  const btnBatchDur100 = document.getElementById('btn-batch-dur-100');
+  if (btnBatchDur100) btnBatchDur100.addEventListener('click', () => scaleBatchNotesDuration(1.0, '100% 滿格'));
+  const btnBatchDur120 = document.getElementById('btn-batch-dur-120');
+  if (btnBatchDur120) btnBatchDur120.addEventListener('click', () => scaleBatchNotesDuration(1.2, '120% 連音'));
+
+  // 5. 批次位置平移
+  const shiftBatchNotesPosition = (tickDelta: number) => {
+    if (!currentParsed || selectedNoteBoxes.length === 0) return;
+    const wouldUnderflow = selectedNoteBoxes.some(b => b.startTick + tickDelta < 0);
+    if (wouldUnderflow) {
+      showStatus('平移將超出開頭 (Tick 0)，已自動取消操作', true);
+      return;
+    }
+    pushUndoSnapshot(`批次平移 Pad ${currentCanvasPadNum} 位置 (${tickDelta > 0 ? '+' : ''}${tickDelta} Ticks)`);
+    const updates = selectedNoteBoxes.map(b => {
+      const newStart = b.startTick + tickDelta;
+      const target = { note: b.note, startTick: b.startTick, oldDurationTick: b.durationTick };
+      b.startTick = newStart;
+      return {
+        target,
+        updates: { startTick: newStart }
+      };
+    });
+    YamahaPadModifier.batchUpdateNotes(currentParsed, currentCanvasPadNum, updates);
+    markModified(`已批次平移 Pad ${currentCanvasPadNum} 的 ${selectedNoteBoxes.length} 顆音符位置`);
+    refreshCurrentPadDetail();
+  };
+
+  const btnBatchNudgePrevBar = document.getElementById('btn-batch-nudge-prev-bar');
+  if (btnBatchNudgePrevBar) btnBatchNudgePrevBar.addEventListener('click', () => shiftBatchNotesPosition(-(currentTicksPerBeat * currentBeatsPerBar)));
+  const btnBatchNudgePrevBeat = document.getElementById('btn-batch-nudge-prev-beat');
+  if (btnBatchNudgePrevBeat) btnBatchNudgePrevBeat.addEventListener('click', () => shiftBatchNotesPosition(-currentTicksPerBeat));
+  const btnBatchNudgeNextBeat = document.getElementById('btn-batch-nudge-next-beat');
+  if (btnBatchNudgeNextBeat) btnBatchNudgeNextBeat.addEventListener('click', () => shiftBatchNotesPosition(currentTicksPerBeat));
+  const btnBatchNudgeNextBar = document.getElementById('btn-batch-nudge-next-bar');
+  if (btnBatchNudgeNextBar) btnBatchNudgeNextBar.addEventListener('click', () => shiftBatchNotesPosition(currentTicksPerBeat * currentBeatsPerBar));
+
+  // 6. 批次量化
+  const btnBatchQuantize = document.getElementById('btn-batch-quantize');
+  if (btnBatchQuantize) {
+    btnBatchQuantize.addEventListener('click', () => {
+      if (!currentParsed || selectedNoteBoxes.length === 0) return;
+      const selectGridEl = document.getElementById('opt-quantize-grid') as HTMLSelectElement | null;
+      const grid = (selectGridEl ? selectGridEl.value : '1/16') as QuantizeGrid;
+      pushUndoSnapshot(`批次量化 Pad ${currentCanvasPadNum} (${grid})`);
+      const updates = selectedNoteBoxes.map(b => {
+        const newStart = PadRecorder.snapTickToGrid(b.startTick, currentTicksPerBeat, grid);
+        const target = { note: b.note, startTick: b.startTick, oldDurationTick: b.durationTick };
+        b.startTick = newStart;
+        return {
+          target,
+          updates: { startTick: newStart }
+        };
+      });
+      YamahaPadModifier.batchUpdateNotes(currentParsed, currentCanvasPadNum, updates);
+      markModified(`已批次將 Pad ${currentCanvasPadNum} 的 ${selectedNoteBoxes.length} 顆音符量化吸附至 ${grid}`);
+      refreshCurrentPadDetail();
+    });
+  }
+
+  // 7. 批次試聽
+  const btnBatchPreview = document.getElementById('btn-batch-preview');
+  if (btnBatchPreview) {
+    btnBatchPreview.addEventListener('click', () => auditionSelectedNotes(selectedNoteBoxes));
+  }
+
+  // 8. 批次刪除
+  const deleteBatchNotes = () => {
+    if (!currentParsed || selectedNoteBoxes.length === 0) return;
+    const count = selectedNoteBoxes.length;
+    if (!confirm(`確定要刪除選取的 ${count} 顆音符嗎？`)) return;
+    pushUndoSnapshot(`批次刪除 Pad ${currentCanvasPadNum} 的 ${count} 顆音符`);
+    const targets = selectedNoteBoxes.map(b => ({ note: b.note, startTick: b.startTick, oldDurationTick: b.durationTick }));
+    const deletedCount = YamahaPadModifier.batchDeleteNotes(currentParsed, currentCanvasPadNum, targets);
+    markModified(`已批次刪除 Pad ${currentCanvasPadNum} 的 ${deletedCount} 顆音符`);
+    deselectNote();
+    refreshCurrentPadDetail();
+  };
+
+  const btnBatchDelete = document.getElementById('btn-batch-delete');
+  if (btnBatchDelete) btnBatchDelete.addEventListener('click', deleteBatchNotes);
+
+  const btnBatchClose = document.getElementById('btn-batch-close');
+  if (btnBatchClose) btnBatchClose.addEventListener('click', () => deselectNote());
+
   // 鍵盤方向鍵與小節快捷鍵支援 (DAW 級操作手感)
   window.addEventListener('keydown', (e) => {
     if (!currentParsed) return;
@@ -6208,6 +6612,15 @@ function initNoteInspectorEvents() {
     if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
 
     const hoverInfoEl = document.getElementById('canvas-hover-info');
+
+    // 支援 Ctrl+A 全選當前畫布所有音符
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+      if (lastRenderedNoteBoxes.length > 0) {
+        e.preventDefault();
+        selectMultipleNotes(lastRenderedNoteBoxes);
+        return;
+      }
+    }
 
     // 支援 Ctrl+C / Ctrl+V / Ctrl+D 小節與音符操作
     if (e.ctrlKey || e.metaKey) {
@@ -6275,9 +6688,13 @@ function initNoteInspectorEvents() {
       }
     }
 
-    // 快捷鍵：Delete / Backspace
+    // 快捷鍵：Delete / Backspace (支援單音與批次刪除)
     if (e.key === 'Delete' || e.key === 'Backspace') {
-      if (selectedNoteBox) {
+      if (selectedNoteBoxes.length > 1) {
+        e.preventDefault();
+        deleteBatchNotes();
+        return;
+      } else if (selectedNoteBox) {
         e.preventDefault();
         deleteSelectedNote();
         return;
@@ -6291,7 +6708,7 @@ function initNoteInspectorEvents() {
       }
     }
 
-    if (!selectedNoteBox) {
+    if (!selectedNoteBox && selectedNoteBoxes.length === 0) {
       if (e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
         const btnOct = document.getElementById(e.key === 'ArrowUp' ? 'btn-roll-octave-up' : 'btn-roll-octave-down');
         if (btnOct) {
@@ -6305,19 +6722,35 @@ function initNoteInspectorEvents() {
     if (e.key === 'ArrowUp') {
       e.preventDefault();
       const delta = e.shiftKey ? 12 : 1;
-      shiftSelectedNotePitch(delta);
+      if (selectedNoteBoxes.length > 1) {
+        shiftBatchNotesPitch(delta);
+      } else if (selectedNoteBox) {
+        shiftSelectedNotePitch(delta);
+      }
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       const delta = e.shiftKey ? -12 : -1;
-      shiftSelectedNotePitch(delta);
+      if (selectedNoteBoxes.length > 1) {
+        shiftBatchNotesPitch(delta);
+      } else if (selectedNoteBox) {
+        shiftSelectedNotePitch(delta);
+      }
     } else if (e.key === 'ArrowLeft') {
       e.preventDefault();
       const deltaTicks = e.shiftKey ? -currentTicksPerBeat * currentBeatsPerBar : -currentTicksPerBeat;
-      shiftSelectedNotePosition(deltaTicks);
+      if (selectedNoteBoxes.length > 1) {
+        shiftBatchNotesPosition(deltaTicks);
+      } else if (selectedNoteBox) {
+        shiftSelectedNotePosition(deltaTicks);
+      }
     } else if (e.key === 'ArrowRight') {
       e.preventDefault();
       const deltaTicks = e.shiftKey ? currentTicksPerBeat * currentBeatsPerBar : currentTicksPerBeat;
-      shiftSelectedNotePosition(deltaTicks);
+      if (selectedNoteBoxes.length > 1) {
+        shiftBatchNotesPosition(deltaTicks);
+      } else if (selectedNoteBox) {
+        shiftSelectedNotePosition(deltaTicks);
+      }
     } else if (e.key === 'Escape') {
       e.preventDefault();
       deselectNote();
