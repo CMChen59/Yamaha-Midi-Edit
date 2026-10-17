@@ -2333,10 +2333,12 @@ function closeStyleImportModal() {
   const modal = document.getElementById('style-import-modal');
   if (modal) modal.style.display = 'none';
 
-  if (currentStyleAuditionTrackIndex !== null) {
-    audioEngine.stop();
-    currentStyleAuditionTrackIndex = null;
-  }
+  audioEngine.stopBackingTrack();
+  audioEngine.stop();
+  currentStyleAuditionTrackIndex = null;
+  isStyleEnsemblePlaying = false;
+  const btnAll = document.getElementById('btn-style-audition-all');
+  if (btnAll) btnAll.innerHTML = '🎧 試聽所選小節合奏';
 }
 
 function resetStyleMappingsToSmartRecommendation() {
@@ -2427,10 +2429,20 @@ function renderStyleSourceTracksList() {
   });
 }
 
+let isStyleEnsemblePlaying: boolean = false;
+
 function toggleStyleTrackAudition(trackIndex: number) {
   if (!currentStyleAnalysis) return;
   const track = currentStyleAnalysis.tracks.find((t) => t.trackIndex === trackIndex);
   if (!track || track.noteCount === 0) return;
+
+  // 停止合奏試聽
+  if (isStyleEnsemblePlaying) {
+    audioEngine.stopBackingTrack();
+    isStyleEnsemblePlaying = false;
+    const btnAll = document.getElementById('btn-style-audition-all');
+    if (btnAll) btnAll.innerHTML = '🎧 試聽所選小節合奏';
+  }
 
   if (currentStyleAuditionTrackIndex === trackIndex) {
     audioEngine.stop();
@@ -2445,22 +2457,167 @@ function toggleStyleTrackAudition(trackIndex: number) {
   renderStyleSourceTracksList();
   renderStylePartMappingsGrid();
 
-  audioEngine.playSequence(track.trackIndex + 1, track.notes, {
+  // 取得使用者設定的切片小節區間
+  const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
+  const endBarInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
+  const startBar = Math.max(1, parseInt(startBarInput?.value || '1', 10));
+  const endBar = Math.max(startBar, parseInt(endBarInput?.value || '4', 10));
+
+  const division = currentStyleAnalysis.division;
+  const ticksPerBar = division * 4;
+  const sliceStartTick = (startBar - 1) * ticksPerBar;
+  const sliceEndTick = endBar * ticksPerBar;
+  const sliceTotalTicks = (endBar - startBar + 1) * ticksPerBar;
+
+  // 優先過濾出當前選定切片小節內的音符
+  let notesToPlay = track.notes.filter((n) => n.startTick >= sliceStartTick && n.startTick < sliceEndTick);
+  let playStartTick = sliceStartTick;
+  let playTotalTicks = sliceTotalTicks;
+
+  // 若該軌在選定小節內尚未開口進場 (例如副歌才進場的樂器)，自動跳至該軌第一顆音符所在的真正開口小節，避免數十秒的乾等無聲
+  if (notesToPlay.length === 0) {
+    const firstNoteTick = track.notes[0].startTick;
+    const firstBar = Math.floor(firstNoteTick / ticksPerBar);
+    playStartTick = firstBar * ticksPerBar;
+    playTotalTicks = Math.min(sliceTotalTicks, track.totalTicks - playStartTick);
+    notesToPlay = track.notes.filter((n) => n.startTick >= playStartTick && n.startTick < playStartTick + playTotalTicks);
+  }
+
+  // 轉為從 0 開始的相對 Tick
+  const relNotes = notesToPlay.map((n) => ({
+    note: n.note,
+    velocity: n.velocity,
+    startTick: Math.max(0, n.startTick - playStartTick),
+    durationTick: n.durationTick,
+  }));
+
+  // 樂器合成音色與鼓組判定
+  const styleTrack = currentStyleAnalysis.styleTracks.find((st) => st.trackIndex === trackIndex);
+  const cat = styleTrack?.detectedCategory || 'other';
+  const isDrum = cat === 'drums' || cat === 'percussion' || track.channel === 9;
+
+  let instrumentId = 'grand-piano';
+  if (cat === 'bass') instrumentId = 'bass';
+  else if (cat === 'guitar') instrumentId = 'guitar';
+  else if (cat === 'strings' || cat === 'pad') instrumentId = 'strings';
+  else if (cat === 'brass') instrumentId = 'brass';
+  else if (cat === 'reed') instrumentId = 'flute';
+
+  audioEngine.playSequence(track.trackIndex + 1, relNotes, {
     bpm: currentStyleAnalysis.bpm,
     division: currentStyleAnalysis.division,
     loop: false,
     gridStartTick: 0,
-    totalTicks: track.totalTicks,
+    totalTicks: Math.max(playTotalTicks, 1),
     channelParams: {
       msb: track.bankMsb ?? 0,
       lsb: track.bankLsb ?? 112,
       pc: track.programChange ?? 0,
       channel: track.channel,
+      isDrum,
+      instrumentId,
     },
     onEnded: () => {
       currentStyleAuditionTrackIndex = null;
       renderStyleSourceTracksList();
       renderStylePartMappingsGrid();
+    },
+  });
+}
+
+function toggleStyleEnsembleAudition() {
+  if (!currentStyleAnalysis) return;
+
+  const btnAll = document.getElementById('btn-style-audition-all');
+
+  if (isStyleEnsemblePlaying) {
+    audioEngine.stopBackingTrack();
+    isStyleEnsemblePlaying = false;
+    if (btnAll) btnAll.innerHTML = '🎧 試聽所選小節合奏';
+    return;
+  }
+
+  // 停止單軌試聽
+  if (currentStyleAuditionTrackIndex !== null) {
+    audioEngine.stop();
+    currentStyleAuditionTrackIndex = null;
+    renderStyleSourceTracksList();
+    renderStylePartMappingsGrid();
+  }
+
+  const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
+  const endBarInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
+  const startBar = Math.max(1, parseInt(startBarInput?.value || '1', 10));
+  const endBar = Math.max(startBar, parseInt(endBarInput?.value || '4', 10));
+
+  const division = currentStyleAnalysis.division;
+  const ticksPerBar = division * 4;
+  const sliceStartTick = (startBar - 1) * ticksPerBar;
+  const sliceEndTick = endBar * ticksPerBar;
+  const sliceTotalTicks = (endBar - startBar + 1) * ticksPerBar;
+
+  const backingTracks: BackingTrackItem[] = [];
+
+  for (let i = 0; i < currentStyleMappings.length; i++) {
+    const mapping = currentStyleMappings[i];
+    if (mapping.sourceTrackIndex === null || mapping.sourceTrackIndex === undefined) continue;
+
+    const track = currentStyleAnalysis.tracks.find((t) => t.trackIndex === mapping.sourceTrackIndex);
+    if (!track || track.notes.length === 0) continue;
+
+    const sliceNotes = track.notes.filter((n) => n.startTick >= sliceStartTick && n.startTick < sliceEndTick);
+    if (sliceNotes.length === 0) continue;
+
+    const shift = mapping.transposeShift || 0;
+    const relNotes: NoteEvent[] = sliceNotes.map((n) => ({
+      note: Math.min(127, Math.max(0, n.note + shift)),
+      velocity: n.velocity,
+      startTick: Math.max(0, n.startTick - sliceStartTick),
+      durationTick: n.durationTick,
+    }));
+
+    const styleTrack = currentStyleAnalysis.styleTracks.find((st) => st.trackIndex === mapping.sourceTrackIndex);
+    const cat = styleTrack?.detectedCategory || 'other';
+    const isDrum = cat === 'drums' || cat === 'percussion' || track.channel === 9;
+
+    let instrumentId = 'grand-piano';
+    if (cat === 'bass') instrumentId = 'bass';
+    else if (cat === 'guitar') instrumentId = 'guitar';
+    else if (cat === 'strings' || cat === 'pad') instrumentId = 'strings';
+    else if (cat === 'brass') instrumentId = 'brass';
+    else if (cat === 'reed') instrumentId = 'flute';
+
+    backingTracks.push({
+      padNum: i + 1,
+      notes: relNotes,
+      totalTicks: sliceTotalTicks,
+      channelParams: {
+        msb: track.bankMsb ?? 0,
+        lsb: track.bankLsb ?? 112,
+        pc: track.programChange ?? 0,
+        channel: track.channel,
+        isDrum,
+        instrumentId,
+      },
+    });
+  }
+
+  if (backingTracks.length === 0) {
+    alert(`在第 ${startBar} ~ ${endBar} 小節內，所有已指派的伴奏聲部均無音符事件！請確認小節設定或更換區間。`);
+    return;
+  }
+
+  isStyleEnsemblePlaying = true;
+  if (btnAll) btnAll.innerHTML = '⏹ 停止合奏試聽';
+
+  audioEngine.startBackingTrack(backingTracks, {
+    bpm: currentStyleAnalysis.bpm,
+    division: currentStyleAnalysis.division,
+    loop: true,
+    volumeRatio: 0.8,
+    onEnded: () => {
+      isStyleEnsemblePlaying = false;
+      if (btnAll) btnAll.innerHTML = '🎧 試聽所選小節合奏';
     },
   });
 }
@@ -2587,12 +2744,14 @@ function initStyleImportModal() {
 
   const btnClose = document.getElementById('btn-close-style-import-modal');
   const btnCancel = document.getElementById('btn-cancel-style-import');
+  const btnAuditionAll = document.getElementById('btn-style-audition-all');
   const btnSmartAssign = document.getElementById('btn-style-smart-assign');
   const btnClearAssign = document.getElementById('btn-style-clear-assign');
   const btnConfirm = document.getElementById('btn-confirm-style-import');
 
   btnClose?.addEventListener('click', closeStyleImportModal);
   btnCancel?.addEventListener('click', closeStyleImportModal);
+  btnAuditionAll?.addEventListener('click', toggleStyleEnsembleAudition);
 
   modal.addEventListener('click', (e) => {
     if (e.target === modal) {
