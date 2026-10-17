@@ -2360,8 +2360,68 @@ const STYLE_PART_ORDER: { id: StylePartId; title: string; defaultCh: number; col
 let currentSlicerMode: 'multi' | 'single' = 'multi';
 let currentStyleSlices: StyleSectionSliceConfig[] = [];
 let currentAuditionSliceIndex: number | null = null;
+let currentFocusedSliceIndex: number = 0;
 let isCNormEnabled: boolean = true;
 let selectedKeyOverride: string = 'auto';
+
+function updateSlicerCardFocusUI() {
+  document.querySelectorAll('.slicer-section-card').forEach((card, idx) => {
+    if (idx === currentFocusedSliceIndex) {
+      card.classList.add('active');
+    } else {
+      card.classList.remove('active');
+    }
+  });
+}
+
+function updateAuditionAllButtonText() {
+  const btnAll = document.getElementById('btn-style-audition-all');
+  if (!btnAll) return;
+
+  if (isStyleEnsemblePlaying) {
+    const targetSectionSelect = document.getElementById('style-import-target-section') as HTMLSelectElement | null;
+    const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
+    const endBarInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
+    const secName = targetSectionSelect?.value || 'Main A';
+    const sBar = startBarInput?.value || '1';
+    const eBar = endBarInput?.value || '4';
+    btnAll.innerHTML = `⏹ 停止 ${secName} (第 ${sBar}~${eBar} 節) 試聽`;
+    btnAll.style.background = '#dc2626';
+    btnAll.style.borderColor = '#ef4444';
+    return;
+  }
+
+  if (currentAuditionSliceIndex !== null && currentStyleSlices[currentAuditionSliceIndex]) {
+    const slice = currentStyleSlices[currentAuditionSliceIndex];
+    btnAll.innerHTML = `⏹ 停止 ${slice.sectionName} (第 ${slice.startBar}~${slice.endBar} 節) 試聽`;
+    btnAll.style.background = '#dc2626';
+    btnAll.style.borderColor = '#ef4444';
+    return;
+  }
+
+  btnAll.style.background = '';
+  btnAll.style.borderColor = '';
+
+  if (currentSlicerMode === 'multi') {
+    const slice = currentStyleSlices[currentFocusedSliceIndex] || currentStyleSlices[0];
+    if (slice) {
+      btnAll.innerHTML = `🎧 試聽 ${slice.sectionName} (第 ${slice.startBar}~${slice.endBar} 節) 合奏`;
+      btnAll.title = `點擊循環試聽目前選定段落 [${slice.sectionName}] (第 ${slice.startBar} ~ ${slice.endBar} 小節) 之多軌伴奏合奏`;
+    } else {
+      btnAll.innerHTML = `🎧 試聽所選段落合奏`;
+      btnAll.title = `點擊試聽伴奏段落合奏`;
+    }
+  } else {
+    const targetSectionSelect = document.getElementById('style-import-target-section') as HTMLSelectElement | null;
+    const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
+    const endBarInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
+    const secName = targetSectionSelect?.value || 'Main A';
+    const sBar = startBarInput?.value || '1';
+    const eBar = endBarInput?.value || '4';
+    btnAll.innerHTML = `🎧 試聽 ${secName} (第 ${sBar}~${eBar} 節) 合奏`;
+    btnAll.title = `點擊循環試聽單一段落 [${secName}] (第 ${sBar} ~ ${eBar} 小節) 之多軌伴奏合奏`;
+  }
+}
 
 function initDefaultStyleSlices(totalMeasures: number): StyleSectionSliceConfig[] {
   const tot = Math.max(4, totalMeasures);
@@ -2464,12 +2524,14 @@ function renderStyleSlicerUI() {
       block.textContent = `${slice.sectionName} (${bars}m)`;
 
       block.addEventListener('click', () => {
+        currentFocusedSliceIndex = idx;
         const card = document.getElementById(`slicer-card-${idx}`);
         if (card && cardsContainer) {
           card.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
           document.querySelectorAll('.slicer-section-card').forEach(c => c.classList.remove('active'));
           card.classList.add('active');
         }
+        updateAuditionAllButtonText();
       });
 
       track.appendChild(block);
@@ -2490,7 +2552,8 @@ function renderStyleSlicerUI() {
     currentStyleSlices.forEach((slice, idx) => {
       const card = document.createElement('div');
       card.id = `slicer-card-${idx}`;
-      card.className = 'slicer-section-card';
+      const isFocused = currentFocusedSliceIndex === idx;
+      card.className = `slicer-section-card ${isFocused ? 'active' : ''}`;
 
       const bars = Math.max(1, slice.endBar - slice.startBar + 1);
       const isAuditioning = currentAuditionSliceIndex === idx;
@@ -2520,58 +2583,90 @@ function renderStyleSlicerUI() {
         </div>
       `;
 
+      // 點擊卡片本體聚焦此段落
+      card.addEventListener('click', (e) => {
+        const tag = (e.target as HTMLElement).tagName;
+        if (tag !== 'BUTTON' && tag !== 'INPUT' && tag !== 'SELECT') {
+          currentFocusedSliceIndex = idx;
+          updateSlicerCardFocusUI();
+          updateAuditionAllButtonText();
+        }
+      });
+
       // 監聽段落名稱變更
       const nameSelect = card.querySelector('.slicer-sec-name-select') as HTMLSelectElement | null;
       nameSelect?.addEventListener('change', () => {
         slice.sectionName = nameSelect.value;
+        currentFocusedSliceIndex = idx;
         renderStyleSlicerUI();
       });
 
-      // 監聽小節變更
+      // 監聽小節變更 (input 即時連動頂部按鈕，change 觸發整塊重繪)
       const startInput = card.querySelector('.slicer-start-bar') as HTMLInputElement | null;
       const endInput = card.querySelector('.slicer-end-bar') as HTMLInputElement | null;
-      startInput?.addEventListener('change', () => {
+      startInput?.addEventListener('input', () => {
         const val = Math.max(1, Math.min(totalMeasures, parseInt(startInput.value || '1', 10)));
         slice.startBar = val;
         if (slice.endBar < val) slice.endBar = val;
+        currentFocusedSliceIndex = idx;
+        updateSlicerCardFocusUI();
+        updateAuditionAllButtonText();
+      });
+      startInput?.addEventListener('change', () => {
         renderStyleSlicerUI();
       });
-      endInput?.addEventListener('change', () => {
+
+      endInput?.addEventListener('input', () => {
         const val = Math.max(slice.startBar, Math.min(totalMeasures, parseInt(endInput.value || '1', 10)));
         slice.endBar = val;
+        currentFocusedSliceIndex = idx;
+        updateSlicerCardFocusUI();
+        updateAuditionAllButtonText();
+      });
+      endInput?.addEventListener('change', () => {
         renderStyleSlicerUI();
       });
 
       // 監聽刪除
       const btnDel = card.querySelector('.btn-slicer-del') as HTMLButtonElement | null;
-      btnDel?.addEventListener('click', () => {
+      btnDel?.addEventListener('click', (e) => {
+        e.stopPropagation();
         if (currentStyleSlices.length <= 1) {
           alert('請至少保留一個伴奏段落！');
           return;
         }
         currentStyleSlices.splice(idx, 1);
+        if (currentFocusedSliceIndex >= currentStyleSlices.length) {
+          currentFocusedSliceIndex = Math.max(0, currentStyleSlices.length - 1);
+        }
         renderStyleSlicerUI();
       });
 
       // 監聽段落試聽
       const btnAudition = card.querySelector('.btn-slicer-audition') as HTMLButtonElement | null;
-      btnAudition?.addEventListener('click', () => {
+      btnAudition?.addEventListener('click', (e) => {
+        e.stopPropagation();
         toggleStyleSliceAudition(idx);
       });
 
       cardsContainer.appendChild(card);
     });
   }
+
+  updateAuditionAllButtonText();
 }
 
 function toggleStyleSliceAudition(sliceIdx: number) {
   if (!currentStyleAnalysis) return;
+
+  currentFocusedSliceIndex = sliceIdx;
 
   if (currentAuditionSliceIndex === sliceIdx && (audioEngine.isPlaying() || audioEngine.isBackingTrackPlaying())) {
     audioEngine.stopBackingTrack();
     audioEngine.stop();
     currentAuditionSliceIndex = null;
     renderStyleSlicerUI();
+    updateAuditionAllButtonText();
     showStatus('已停止段落試聽');
     return;
   }
@@ -2642,6 +2737,7 @@ function toggleStyleSliceAudition(sliceIdx: number) {
 
   currentAuditionSliceIndex = sliceIdx;
   renderStyleSlicerUI();
+  updateAuditionAllButtonText();
 
   const bpmInput = document.getElementById('style-import-bpm') as HTMLInputElement | null;
   const bpm = Math.max(30, Math.min(300, parseInt(bpmInput?.value || '120', 10)));
@@ -2655,6 +2751,7 @@ function toggleStyleSliceAudition(sliceIdx: number) {
     onEnded: () => {
       currentAuditionSliceIndex = null;
       renderStyleSlicerUI();
+      updateAuditionAllButtonText();
     },
   });
 
@@ -2708,6 +2805,7 @@ function openStyleImportModal(bytes: Uint8Array, fileName: string) {
   // 3.1 初始化多段落切片與 C 調基準校正 (Phase 3.3)
   currentStyleSlices = initDefaultStyleSlices(currentStyleAnalysis.totalMeasures);
   currentSlicerMode = 'multi';
+  currentFocusedSliceIndex = 0;
   currentAuditionSliceIndex = null;
   renderStyleSlicerUI();
   updateCNormUI();
@@ -2731,7 +2829,10 @@ function openStyleImportModal(bytes: Uint8Array, fileName: string) {
   // 5. 同步發聲路由與實體琴連線控制項
   refreshMidiControlsUI();
 
-  // 6. 顯示彈窗
+  // 6. 同步頂部試聽按鈕文字
+  updateAuditionAllButtonText();
+
+  // 7. 顯示彈窗
   modal.style.display = 'flex';
 }
 
@@ -2744,8 +2845,7 @@ function closeStyleImportModal() {
   currentStyleAuditionTrackIndex = null;
   currentAuditionSliceIndex = null;
   isStyleEnsemblePlaying = false;
-  const btnAll = document.getElementById('btn-style-audition-all');
-  if (btnAll) btnAll.innerHTML = '🎧 試聽所選小節合奏';
+  updateAuditionAllButtonText();
 
   // 同步更新記憶體中已載入 MIDI 快速喚回狀態
   updateResumeMidiUI();
@@ -2940,12 +3040,17 @@ function toggleStyleTrackAudition(trackIndex: number) {
 function toggleStyleEnsembleAudition() {
   if (!currentStyleAnalysis) return;
 
-  const btnAll = document.getElementById('btn-style-audition-all');
+  if (currentSlicerMode === 'multi') {
+    // 多段落模式下，點擊頂部按鈕直接觸發目前選定段落的試聽/停止
+    const targetIdx = currentFocusedSliceIndex < currentStyleSlices.length ? currentFocusedSliceIndex : 0;
+    toggleStyleSliceAudition(targetIdx);
+    return;
+  }
 
   if (isStyleEnsemblePlaying) {
     audioEngine.stopBackingTrack();
     isStyleEnsemblePlaying = false;
-    if (btnAll) btnAll.innerHTML = '🎧 試聽所選小節合奏';
+    updateAuditionAllButtonText();
     return;
   }
 
@@ -3023,7 +3128,7 @@ function toggleStyleEnsembleAudition() {
   }
 
   isStyleEnsemblePlaying = true;
-  if (btnAll) btnAll.innerHTML = '⏹ 停止合奏試聽';
+  updateAuditionAllButtonText();
 
   audioEngine.startBackingTrack(backingTracks, {
     bpm: currentStyleAnalysis.bpm,
@@ -3032,7 +3137,7 @@ function toggleStyleEnsembleAudition() {
     volumeRatio: 0.8,
     onEnded: () => {
       isStyleEnsemblePlaying = false;
-      if (btnAll) btnAll.innerHTML = '🎧 試聽所選小節合奏';
+      updateAuditionAllButtonText();
     },
   });
 }
@@ -3213,6 +3318,7 @@ function initStyleImportModal() {
     btnSingle?.classList.remove('active-rp');
     if (slicerPanel) slicerPanel.style.display = 'flex';
     if (singlePanel) singlePanel.style.display = 'none';
+    updateAuditionAllButtonText();
   });
 
   btnSingle?.addEventListener('click', () => {
@@ -3221,7 +3327,16 @@ function initStyleImportModal() {
     btnMulti?.classList.remove('active-rp');
     if (slicerPanel) slicerPanel.style.display = 'none';
     if (singlePanel) singlePanel.style.display = 'flex';
+    updateAuditionAllButtonText();
   });
+
+  // 單一段落模式輸入框即時連動頂部試聽按鈕文字
+  const singleSecSelect = document.getElementById('style-import-target-section');
+  const singleStartInput = document.getElementById('style-import-start-bar');
+  const singleEndInput = document.getElementById('style-import-end-bar');
+  singleSecSelect?.addEventListener('change', updateAuditionAllButtonText);
+  singleStartInput?.addEventListener('input', updateAuditionAllButtonText);
+  singleEndInput?.addEventListener('input', updateAuditionAllButtonText);
 
   // Phase 3.3 快速曲式範本
   const btnTplSingle = document.getElementById('btn-slicer-template-single');
@@ -3234,7 +3349,9 @@ function initStyleImportModal() {
     currentStyleSlices = [
       { id: 'sec-1', sectionName: 'Main A', startBar: 1, endBar: Math.min(4, tot) }
     ];
+    currentFocusedSliceIndex = 0;
     renderStyleSlicerUI();
+    updateAuditionAllButtonText();
     showStatus('⚡ 已套用「單段 Main A」切片範本');
   });
 
@@ -3247,7 +3364,9 @@ function initStyleImportModal() {
       { id: 'sec-3', sectionName: 'Main B', startBar: Math.min(tot, m + 2), endBar: Math.min(tot, m * 2 + 1) },
       { id: 'sec-4', sectionName: 'Ending A', startBar: Math.min(tot, m * 2 + 2), endBar: tot },
     ];
+    currentFocusedSliceIndex = 0;
     renderStyleSlicerUI();
+    updateAuditionAllButtonText();
     showStatus('⚡ 已套用「經典 4 段 (Main A/B + Fill + Ending)」切片範本');
   });
 
@@ -3262,7 +3381,9 @@ function initStyleImportModal() {
       { id: 'sec-6', sectionName: 'Main C', startBar: Math.min(tot, 15), endBar: Math.min(tot, 18) },
       { id: 'sec-7', sectionName: 'Ending A', startBar: Math.min(tot, 19), endBar: Math.min(tot, 22) },
     ];
+    currentFocusedSliceIndex = 0;
     renderStyleSlicerUI();
+    updateAuditionAllButtonText();
     showStatus('⚡ 已套用「完整曲式 (Intro + 3 Main + 2 Fills + Ending)」切片範本');
   });
 
@@ -3282,7 +3403,9 @@ function initStyleImportModal() {
       startBar: nextStart,
       endBar: nextEnd,
     });
+    currentFocusedSliceIndex = currentStyleSlices.length - 1;
     renderStyleSlicerUI();
+    updateAuditionAllButtonText();
     showStatus(`➕ 已新增段落切片: [${nextName}] (小節 ${nextStart} ~ ${nextEnd})`);
   });
 
