@@ -1,15 +1,17 @@
 # Yamaha PSR-SX920 伴奏 / 打擊墊編輯器 — 專案進度存檔與執行藍圖
 
-> **更新時間**：2026-10-17  
+> **更新時間**：2026-10-18  
 > **重大里程碑**：
 > 1. 🎉 **Phase 1.5 實琴驗收 100% 通過！**（PSR-SX920 實機二進位解析與重構完全相容）  
 > 2. 🎉 **Phase 2.3 外部標準 MIDI 匯入與切片分配精靈全面完工！**  
 > 3. 🎉 **Phase 2.7 琴端手彈即時錄音 (Mode A)、單步步進 (Mode B)、音色嗅探自動綁定 (Direction B) 與畫布手彈步進直刻 100% 完工！**  
 > 4. 🎉 **Phase 2.8 Multi Pad 進階工作站級增強 (疊錄伴奏監聽 + Swing 搖擺量化 + 八度移調 + Chorus CC93 混音 + 多音符框選與自訂力度/試聽) 100% 完工！**  
 > 5. 🎉 **Phase 2.5 PSR-SX920 實體琴端對端全功能實機驗收 100% 通過！**（包含 Web MIDI 直連、模式 A/B 錄音、音色嗅探綁定、畫布直刻、隨身碟載入、和弦轉調與原廠 DSP 效果驗證無誤）  
-> 6. 📌 **正式將【Phase 3.0：MIDI 轉 Yamaha Style 伴奏風格 (.sty) 精靈】納入下一階段核心旗艦衝刺計畫！**  
+> 6. 🎉 **Phase 3.0 (Module 3) 純 STY 伴奏視覺化工作台 100% 完工！**（雙視野時間軸、Track 0 音符編輯、小節動態剪裁、琴鍵試聽、雷射紅走帶遊標、SFF2 CASM 完整保留與匯出防呆驗證）  
+> 7. 🎉 **Style Section Assembly Studio 伴奏聲部組裝精靈 100% 完工！**（聲部開口矩陣、跨段落/跨風格自由拼貼、小節循環填滿、移調力度縮放、新增自訂段落、多聲部自由勾選與批次組裝）  
+> 8. 📌 **正式將【5 大後續進階計畫 (CASM轉調規則 / 樣式庫批次載入 / 外部MIDI匯入 / OTS編輯 / WebMIDI琴端直連)】納入待執行庫！詳細請見：[`PENDING_EXECUTION_PLANS.md`](file:///d:/Vibe%20Coding/MIDI/Yamaha-Midi-Edit/PENDING_EXECUTION_PLANS.md)**  
 > **代碼倉庫**：`https://github.com/CMChen59/Yamaha-Midi-Edit.git`（分支: `main`）  
-> **測試狀態**：88 / 88 項單元測試全數通過（通過率 100%），16 個測試套件全數綠燈通過，TypeScript 編譯 0 錯誤，Vite 生產打包無誤。
+> **測試狀態**：153 / 153 項單元測試全數通過（通過率 100%），26 個測試套件全數綠燈通過，TypeScript 編譯 0 錯誤，Vite 生產打包無誤。
 
 ---
 
@@ -70,14 +72,25 @@ flowchart TD
         Step25["Phase 2.5：PSR-SX920 實體琴端對端實機連線驗收\n【🎉 實琴驗收 100% 通過】"]
     end
 
-    subgraph S3 ["第三階段：伴奏風格旗艦拓展 (下一階段)"]
-        Step30["Phase 3.0：外部 MIDI 轉 Yamaha Style 伴奏風格 (.sty) 精靈\n(8 聲部映射 + 多段落曲式切片 + SFF2 CASM/OTS 合成)\n【🚀 核心旗艦計畫】"]
+    subgraph S3 ["第三階段：純 STY 伴奏工作台與聲部組裝精靈 (已完工)"]
+        Step31["Phase 3.0 (Module 3)：STY 視覺化編輯工作台\n(雙視野時間軸 / 音符編輯 / 小節剪裁 / 走帶琴鍵試聽 / 匯出防呆)\n【🎉 100% 完工】"]
+        Step32["Style Assembly Studio：伴奏聲部組裝精靈\n(聲部開口矩陣 / 跨段落拼貼 / 新增段落 / 多聲部自由勾選與批次組裝)\n【🎉 100% 完工】"]
+    end
+
+    subgraph S4 ["第四階段：伴奏進階深化與專業工作站拓展 (待執行計畫)"]
+        P1["計畫 1：CASM 和弦轉調規則編輯器 (NTR / NTT)"]
+        P2["計畫 2：樣式庫多檔批次載入 (Multi-Style Library)"]
+        P3["計畫 3：外部 MIDI 旋律/鼓圈直接匯入聲部"]
+        P4["計畫 4：風格標頭與 OTS 檢視編輯器"]
+        P5["計畫 5：實體琴 WebMIDI 直連伴奏試聽"]
     end
 
     Step15 --> Step21 --> Step22 --> Step24 --> Step23 --> Step27
     Step27 --> Step28
     Step28 --> Step25
-    Step25 --> Step30
+    Step25 --> Step31
+    Step31 --> Step32
+    Step32 --> S4
 ```
 
 ---
@@ -96,7 +109,9 @@ flowchart TD
 | **Phase 2.8-B** | **Swing 搖擺量化與整軌八度移調 (Groove/Shift)** | **🎉 已完工** | **1/16 Swing (54%, 60%, 66%) 搖擺律動量化、畫布一鍵升/降八度 (+12/-12)、Shift+↑/↓ 快捷鍵** |
 | **Phase 2.8-C** | **Chorus (合唱效果 CC93) & 混音深度擴充** | **🎉 已完工** | **混音推桿 CC93 (0~127)、Web Audio 立體聲雙路微延遲 LFO 顫動效果器、PSR-SX920 原廠 DSP CC93 雙向即時同步** |
 | **Phase 2.5** | **PSR-SX920 實體琴全功能端對端實機驗收** | **🎉 驗收通過** | **Web MIDI 雙向通訊、模式 A/B 錄音、音色嗅探綁定、隨身碟插琴回放、CM 和弦轉調與 RP 循環驗收全數合格** |
-| **Phase 3.0** | **外部 MIDI 轉 Yamaha Style 伴奏風格 (.sty) 精靈** | **🚀 核心旗艦** | **8 聲部映射 (Ch 9~16)、曲式切片 (Main A~D / Fill In / Intro / Ending)、SFF2 CASM 合成** |
+| **Phase 3.0** | **純 STY 伴奏工作台 (Module 3)** | **🎉 100% 完工** | **雙視野時間軸、Track 0 音符編輯、小節動態剪裁延伸、雷射紅走帶/琴鍵試聽、SFF2 CASM 完好保留與匯出防呆** |
+| **Style Assembly** | **伴奏聲部組裝精靈 (Studio)** | **🎉 100% 完工** | **聲部開口矩陣 (Option A)、跨段落拼貼 (Option B)、新增自訂段落、多聲部自由勾選與批次組裝 (Requirement 3)** |
+| **Pending Plans** | **5 大後續進階計畫 (詳見清單)** | **📌 待執行庫** | **CASM 和弦轉調規則 / 樣式庫多檔批次載入 / 外部 MIDI 匯入 / OTS 編輯 / WebMIDI 琴端直連** |
 
 ---
 
