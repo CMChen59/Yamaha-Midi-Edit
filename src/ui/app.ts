@@ -6446,11 +6446,11 @@ function updateAssemblyDestInfoBox() {
   const voiceName = yVoice ? `${yVoice.name} (${yVoice.chineseName})` : `PC ${pc} (Bank ${msb}-${lsb})`;
 
   if (totalSecNotes === 0) {
-    detailsText.innerHTML = `此段落目前為 <strong style="color: #f87171;">空白段落 (0 音符)</strong> | 💡 可點擊右側按鈕一鍵複製來源段落`;
+    const selectSrcSection = document.getElementById('assembly-src-section') as HTMLSelectElement | null;
+    const srcSecName = selectSrcSection?.value || '來源段落';
+    detailsText.innerHTML = `此段落目前為 <strong style="color: #f87171;">空白段落 (0 音符)</strong> | 💡 可點擊正下方紫色按鈕一鍵填滿：`;
     if (btnQuickClone) {
       btnQuickClone.style.display = 'inline-block';
-      const selectSrcSection = document.getElementById('assembly-src-section') as HTMLSelectElement | null;
-      const srcSecName = selectSrcSection?.value || '來源段落';
       btnQuickClone.textContent = `⚡ 從 [${srcSecName}] 整段填滿`;
     }
   } else {
