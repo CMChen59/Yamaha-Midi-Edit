@@ -163,9 +163,31 @@ export class YamahaStyleAssembly {
     const range = StyleRemixer.getSectionTickRange(parsed, sectionName);
     if (!range) return null;
 
-    // Yamaha 伴奏標準通道清單 (Ch 9 ~ 16, index 8 ~ 15)
-    // 若原始檔有 SFF1 通道 (Ch 1 ~ 8, index 0 ~ 7) 亦一併探測
-    const candidateChannels = [8, 9, 10, 11, 12, 13, 14, 15];
+    // 伴奏通道動態探測：
+    // 完整納入 parsed.parts 中登記的所有伴奏通道 (相容 SFF1 Ch 1~8 與 SFF2 Ch 9~16)，
+    // 以及當前段落或全風格 Track 0 中實際擁有 NoteOn 音符的通道
+    const channelSet = new Set<number>();
+    for (const p of parsed.parts || []) {
+      channelSet.add(p.channel);
+    }
+    if (parsed.tracks[0]) {
+      let cur = 0;
+      for (const ev of parsed.tracks[0].events) {
+        cur += ev.delta;
+        if (cur >= range.startTick && cur < range.endTick && ev.channel !== undefined && ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
+          channelSet.add(ev.channel);
+        }
+      }
+    }
+
+    // 若為全新空白檔案或無任何通道資訊，預設使用標準 Yamaha SFF2 通道 8~15 (Ch 9~16)
+    if (channelSet.size === 0) {
+      for (let ch = 8; ch <= 15; ch++) {
+        channelSet.add(ch);
+      }
+    }
+
+    const candidateChannels = Array.from(channelSet).sort((a, b) => a - b);
     const parts: SectionPartOverview[] = [];
     let totalNotes = 0;
 
@@ -173,9 +195,9 @@ export class YamahaStyleAssembly {
       const noteCount = StyleRemixer.countNotesInChannel(parsed, range.startTick, range.endTick, ch);
       totalNotes += noteCount;
 
-      const meta = YamahaStyleModifier.getPartDisplayMeta(ch);
-      const override = StyleRemixer.getSectionChannelOverride(parsed, range.startTick, range.endTick, ch);
       const parsedPart = parsed.parts.find((p) => p.channel === ch);
+      const meta = YamahaStyleModifier.getPartDisplayMeta(ch, parsedPart?.partName);
+      const override = StyleRemixer.getSectionChannelOverride(parsed, range.startTick, range.endTick, ch);
 
       parts.push({
         channel: ch,

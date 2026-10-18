@@ -21,7 +21,12 @@ describe('方案 B: Yamaha 段落聲部組裝精靈 (Style Section Assembly Stud
     expect(overview).toBeDefined();
     expect(overview?.name).toBe('Main A');
     expect(overview?.measureCount).toBe(8);
-    expect(overview?.parts.length).toBe(8);
+    expect(overview?.parts.length).toBeGreaterThanOrEqual(8);
+    // 驗證真實現實風格樣品 4006_SX900 的 Bass 位於 Ch 2 (Channel 1) 且精確包含 34 音符
+    const bassPart = overview?.parts.find((p) => p.channel === 1);
+    expect(bassPart).toBeDefined();
+    expect(bassPart?.shortName).toBe('Bass');
+    expect(bassPart?.noteCount).toBe(34);
 
     // 檢查全風格概覽
     const allOverviews = YamahaStyleAssembly.getAllSectionsOverview(parsed);
