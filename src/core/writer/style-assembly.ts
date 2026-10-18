@@ -77,6 +77,8 @@ export interface SectionCloneOptions {
   copyMode?: 'replace' | 'merge';
   loopMode?: 'loop' | 'once';
   copyVoiceParams?: boolean;
+  transposeShift?: number;
+  velocityScale?: number;
 }
 
 export interface SectionCloneResult {
@@ -791,6 +793,8 @@ export class YamahaStyleAssembly {
         copyMode: options.copyMode ?? 'replace',
         loopMode: options.loopMode ?? 'loop',
         copyVoiceParams: options.copyVoiceParams ?? true,
+        transposeShift: options.transposeShift ?? 0,
+        velocityScale: options.velocityScale ?? 1.0,
       });
 
       results.push(res);

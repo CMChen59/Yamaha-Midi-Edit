@@ -313,6 +313,31 @@
             </div>
           </div>
 
+          <!-- 多聲部自由勾選與批次組裝面板 (Multi-Part Selection & Batch Assembly) -->
+          <div id="assembly-parts-selector-panel" style="background: #0d111a; border: 1px solid #1e293b; border-radius: 6px; padding: 10px 14px; margin-bottom: 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 0.8rem; font-weight: 700; color: #38bdf8; display: flex; align-items: center; gap: 4px;">
+                  🎛️ 欲組裝之聲部勾選清單 (可自由多選，或只勾選 1 軌)
+                </span>
+                <span id="assembly-selected-parts-count-badge" class="badge" style="background: rgba(56,189,248,0.15); color: #38bdf8; border: 1px solid rgba(56,189,248,0.3); font-size: 0.7rem; font-weight: 700;">已勾選 0 個聲部</span>
+              </div>
+              <!-- 快捷勾選按鈕群 -->
+              <div style="display: flex; gap: 5px; flex-wrap: wrap;">
+                <button type="button" id="btn-assembly-select-all" class="toggle-btn" style="padding: 2px 8px; font-size: 0.7rem; font-weight: 600;" title="全選所有聲部">✓ 全選</button>
+                <button type="button" id="btn-assembly-select-with-notes" class="toggle-btn" style="padding: 2px 8px; font-size: 0.7rem; font-weight: 600; color: #34d399; border-color: rgba(16,185,129,0.4);" title="只勾選來源段落中真正有音符演奏的聲部">🎵 僅有音符</button>
+                <button type="button" id="btn-assembly-select-rhythm" class="toggle-btn" style="padding: 2px 8px; font-size: 0.7rem; font-weight: 600; color: #f59e0b; border-color: rgba(245,158,11,0.4);" title="一鍵勾選鼓組與貝斯 (最常用的節奏骨架)">🥁 節奏組 (鼓+Bass)</button>
+                <button type="button" id="btn-assembly-select-harmony" class="toggle-btn" style="padding: 2px 8px; font-size: 0.7rem; font-weight: 600; color: #a855f7; border-color: rgba(168,85,247,0.4);" title="一鍵勾選和弦與背景鋪底">🎹 和聲組 (和弦+Pad)</button>
+                <button type="button" id="btn-assembly-clear-selection" class="toggle-btn" style="padding: 2px 8px; font-size: 0.7rem; color: #94a3b8;" title="清空所有勾選">✕ 清空</button>
+              </div>
+            </div>
+
+            <!-- 動態聲部勾選卡片容器 -->
+            <div id="assembly-parts-checkboxes-container" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(175px, 1fr)); gap: 8px;">
+              <!-- 動態由 TypeScript 渲染 -->
+            </div>
+          </div>
+
           <!-- 組裝模式與進階參數列 -->
           <div class="assembly-settings-bar" style="background: #0f121a; border: 1px solid #1e2536; border-radius: 6px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 12px;">
             <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 0.76rem;">

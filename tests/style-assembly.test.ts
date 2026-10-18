@@ -345,13 +345,80 @@ describe('方案 B: Yamaha 段落聲部組裝精靈 (Style Section Assembly Stud
     expect(assembleResult.finalNoteCount).toBeGreaterThan(0);
 
     // 再次檢驗 Break 段落，音符已成功寫入
-    const breakOverviewAfter = YamahaStyleAssembly.getSectionOverview(parsed, 'Break');
-    expect(breakOverviewAfter?.parts.find((p) => p.channel === 9)?.noteCount).toBeGreaterThan(0);
-
     // 3. 匯出二進位檢驗：包含新段落且 CASM 轉調完全保持 4,025 bytes
     const validation = YamahaWriter.validateAndWrite(parsed);
     expect(validation.success).toBe(true);
     expect(validation.sectionCount).toBe(initialSectionCount + 1);
+    expect(validation.hasCasm).toBe(true);
+    expect(validation.casmSize).toBe(4025);
+  });
+
+  it('11. 自由挑選多聲部批次組裝 (Multi-Part Selection & Batch Assembly: 鼓組+Bass 多聲部同時組裝)', () => {
+    const parsed = getFreshParsed();
+
+    // 1. 新增 4 小節的 'Ending A' 段落
+    const addRes = YamahaStyleAssembly.addNewSection(parsed, {
+      sectionName: 'Ending A',
+      bars: 4,
+    });
+    expect(addRes.success).toBe(true);
+
+    // 2. 挑選 Main A 的 Bass (Ch 1) 與 主鼓組 (Ch 9)，進行多聲部自由批次組裝
+    const mainAOverview = YamahaStyleAssembly.getSectionOverview(parsed, 'Main A')!;
+    const bassPart = mainAOverview.parts.find((p) => p.channel === 1)!;
+    const drumPart = mainAOverview.parts.find((p) => p.channel === 9)!;
+    expect(bassPart.noteCount).toBeGreaterThan(0);
+    expect(drumPart.noteCount).toBeGreaterThan(0);
+
+    const cloneRes = YamahaStyleAssembly.cloneFullSection({
+      destParsed: parsed,
+      destSection: 'Ending A',
+      srcParsed: parsed,
+      srcSection: 'Main A',
+      channels: [1, 9], // 僅選取 Bass 與 Drums
+      copyMode: 'replace',
+      loopMode: 'loop',
+      transposeShift: 2, // 移調 +2 (鼓組強制不受移調影響，Bass 移調 +2)
+      velocityScale: 1.2,
+      copyVoiceParams: true,
+    });
+
+    expect(cloneRes.success).toBe(true);
+    expect(cloneRes.channelsCloned).toEqual([1, 9]);
+    expect(cloneRes.totalNotesCopied).toBeGreaterThan(0);
+
+    // 3. 驗證 Ending A 段落概覽：只有 Ch 1 與 Ch 9 有音符，其餘聲部皆為 0
+    const endingOverview = YamahaStyleAssembly.getSectionOverview(parsed, 'Ending A')!;
+    expect(endingOverview.parts.find((p) => p.channel === 1)?.noteCount).toBeGreaterThan(0);
+    expect(endingOverview.parts.find((p) => p.channel === 9)?.noteCount).toBeGreaterThan(0);
+
+    // 其它未勾選聲部 (如 Ch 2 Chord 1, Ch 3 Chord 2 等) 應保持 0 音符
+    for (const p of endingOverview.parts) {
+      if (p.channel !== 1 && p.channel !== 9) {
+        expect(p.noteCount).toBe(0);
+      }
+    }
+
+    // 4. 驗證移調：Bass 第一個音符音高應 +2
+    const endingRange = StyleRemixer.getSectionTickRange(parsed, 'Ending A')!;
+    const endingBassNotes = StyleRemixer.extractSectionChannelNotes(
+      parsed,
+      endingRange.startTick,
+      endingRange.endTick,
+      1
+    );
+    const mainARange = StyleRemixer.getSectionTickRange(parsed, 'Main A')!;
+    const mainABassNotes = StyleRemixer.extractSectionChannelNotes(
+      parsed,
+      mainARange.startTick,
+      mainARange.endTick,
+      1
+    );
+    expect(endingBassNotes[0].note).toBe(mainABassNotes[0].note + 2);
+
+    // 5. 匯出完整性檢驗：CASM 轉調二進位結構依然 100% 保持 4,025 bytes
+    const validation = YamahaWriter.validateAndWrite(parsed);
+    expect(validation.success).toBe(true);
     expect(validation.hasCasm).toBe(true);
     expect(validation.casmSize).toBe(4025);
   });

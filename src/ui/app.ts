@@ -16,7 +16,7 @@ import {
 } from '../core/writer/style-importer';
 import { YamahaStyleSynthesizer } from '../core/writer/style-synthesizer';
 import { YamahaStyleModifier } from '../core/writer/style-modifier';
-import { YamahaStyleAssembly } from '../core/writer/style-assembly';
+import { YamahaStyleAssembly, type SectionOverview } from '../core/writer/style-assembly';
 import {
   StyleRemixer,
   type StylePoolEntry,
@@ -6324,6 +6324,162 @@ function getAssemblySourceParsed(): YamahaFileParsed {
   return currentParsed!;
 }
 
+let assemblySelectedChannels = new Set<number>();
+
+function renderAssemblyPartsChecklist() {
+  const srcParsed = getAssemblySourceParsed();
+  const selectSrcSection = document.getElementById('assembly-src-section') as HTMLSelectElement | null;
+  const selectSrcPart = document.getElementById('assembly-src-part') as HTMLSelectElement | null;
+  const container = document.getElementById('assembly-parts-checkboxes-container');
+  if (!srcParsed || !selectSrcSection || !container) return;
+
+  const secName = selectSrcSection.value;
+  const overview = YamahaStyleAssembly.getSectionOverview(srcParsed, secName);
+  if (!overview) return;
+
+  // 若當前未選中任何通道，或勾選的通道不在當前段落概覽中，預設選取當前 selectSrcPart 通道或第 1 個有音符通道
+  const validChannels = new Set(overview.parts.map((p) => p.channel));
+  const hasValidSelection = Array.from(assemblySelectedChannels).some((ch) => validChannels.has(ch));
+  if (!hasValidSelection) {
+    assemblySelectedChannels.clear();
+    if (selectSrcPart && selectSrcPart.value && validChannels.has(parseInt(selectSrcPart.value, 10))) {
+      assemblySelectedChannels.add(parseInt(selectSrcPart.value, 10));
+    } else {
+      const firstActive = overview.parts.find((p) => p.noteCount > 0);
+      if (firstActive) {
+        assemblySelectedChannels.add(firstActive.channel);
+      } else if (overview.parts[0]) {
+        assemblySelectedChannels.add(overview.parts[0].channel);
+      }
+    }
+  }
+
+  let html = '';
+  for (const part of overview.parts) {
+    const isChecked = assemblySelectedChannels.has(part.channel);
+    const hasNotes = part.noteCount > 0;
+    const borderStyle = isChecked
+      ? 'border: 1px solid #0ea5e9; background: rgba(14,165,233,0.14); box-shadow: 0 0 8px rgba(14,165,233,0.25);'
+      : (hasNotes ? 'border: 1px solid #243048; background: #141926;' : 'border: 1px dashed #1e2536; background: #0f121a; opacity: 0.65;');
+
+    html += `
+      <label class="assembly-part-chip" data-channel="${part.channel}" style="display: flex; align-items: center; gap: 8px; ${borderStyle} border-radius: 5px; padding: 6px 10px; cursor: pointer; transition: all 0.15s ease; user-select: none;">
+        <input type="checkbox" class="assembly-part-chk" value="${part.channel}" ${isChecked ? 'checked' : ''} style="cursor: pointer; accent-color: #0ea5e9; width: 14px; height: 14px;" />
+        <span style="font-size: 1.05rem; line-height: 1;">${part.icon}</span>
+        <div style="flex: 1; min-width: 0;">
+          <div style="font-size: 0.74rem; font-weight: 700; color: ${isChecked ? '#38bdf8' : '#f1f5f9'}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+            ${escapeHtml(part.shortName)} <span style="font-size: 0.68rem; color: #94a3b8; font-weight: normal;">(Ch ${part.channel + 1})</span>
+          </div>
+          <div style="font-size: 0.68rem; color: ${hasNotes ? '#34d399' : '#64748b'}; font-weight: 600;">
+            ${hasNotes ? `${part.noteCount} 音符` : '無音符'}
+          </div>
+        </div>
+      </label>
+    `;
+  }
+  container.innerHTML = html;
+
+  // 綁定聲部核取方塊切換事件
+  container.querySelectorAll<HTMLInputElement>('.assembly-part-chk').forEach((chk) => {
+    chk.addEventListener('change', () => {
+      const ch = parseInt(chk.value, 10);
+      if (chk.checked) {
+        assemblySelectedChannels.add(ch);
+      } else {
+        assemblySelectedChannels.delete(ch);
+      }
+      onAssemblySelectedChannelsChanged(overview);
+    });
+  });
+
+  updateAssemblyExecuteButtonState(overview);
+}
+
+function onAssemblySelectedChannelsChanged(overview: SectionOverview) {
+  const selectSrcPart = document.getElementById('assembly-src-part') as HTMLSelectElement | null;
+  const selectDestPart = document.getElementById('assembly-dest-part') as HTMLSelectElement | null;
+
+  // 若當前勾選恰好為 1 個聲部，同步更新左右兩側的單一聲部下拉選單
+  if (assemblySelectedChannels.size === 1) {
+    const singleCh = Array.from(assemblySelectedChannels)[0];
+    if (selectSrcPart) selectSrcPart.value = String(singleCh);
+    updateAssemblySrcInfoBox();
+    if (selectDestPart && overview.parts.some((p) => p.channel === singleCh)) {
+      selectDestPart.value = String(singleCh);
+    }
+    updateAssemblyDestInfoBox();
+  }
+
+  // 重新渲染 Chip 外框高亮
+  const container = document.getElementById('assembly-parts-checkboxes-container');
+  if (container) {
+    container.querySelectorAll<HTMLLabelElement>('.assembly-part-chip').forEach((label) => {
+      const chk = label.querySelector<HTMLInputElement>('.assembly-part-chk');
+      if (!chk) return;
+      const ch = parseInt(chk.value, 10);
+      const isChecked = assemblySelectedChannels.has(ch);
+      chk.checked = isChecked;
+      const part = overview.parts.find((p) => p.channel === ch);
+      const hasNotes = (part?.noteCount ?? 0) > 0;
+      if (isChecked) {
+        label.style.border = '1px solid #0ea5e9';
+        label.style.background = 'rgba(14,165,233,0.14)';
+        label.style.boxShadow = '0 0 8px rgba(14,165,233,0.25)';
+      } else {
+        label.style.border = hasNotes ? '1px solid #243048' : '1px dashed #1e2536';
+        label.style.background = hasNotes ? '#141926' : '#0f121a';
+        label.style.boxShadow = 'none';
+      }
+    });
+  }
+
+  updateAssemblyDestInfoBox();
+  updateAssemblyExecuteButtonState(overview);
+}
+
+function updateAssemblyExecuteButtonState(overview: SectionOverview) {
+  const countBadge = document.getElementById('assembly-selected-parts-count-badge');
+  const btnExecute = document.getElementById('btn-assembly-execute') as HTMLButtonElement | null;
+  const count = assemblySelectedChannels.size;
+  const activeCount = overview.parts.filter((p) => p.noteCount > 0).length;
+
+  if (countBadge) {
+    countBadge.textContent = `已勾選 ${count} 個聲部`;
+    countBadge.style.color = count > 0 ? '#38bdf8' : '#94a3b8';
+    countBadge.style.borderColor = count > 0 ? 'rgba(56,189,248,0.4)' : '#334155';
+  }
+
+  if (!btnExecute) return;
+
+  if (count === 0) {
+    btnExecute.disabled = true;
+    btnExecute.style.opacity = '0.5';
+    btnExecute.style.cursor = 'not-allowed';
+    btnExecute.textContent = '🧩 請至少勾選 1 個欲組裝的聲部';
+  } else if (count === 1) {
+    btnExecute.disabled = false;
+    btnExecute.style.opacity = '1';
+    btnExecute.style.cursor = 'pointer';
+    const ch = Array.from(assemblySelectedChannels)[0];
+    const p = overview.parts.find((x) => x.channel === ch);
+    btnExecute.textContent = `🧩 立即組裝已勾選聲部：${p?.shortName || 'Ch ' + (ch + 1)}`;
+  } else if (count >= activeCount && activeCount > 1) {
+    btnExecute.disabled = false;
+    btnExecute.style.opacity = '1';
+    btnExecute.style.cursor = 'pointer';
+    btnExecute.textContent = `⚡ 立即組裝所有 ${count} 個聲部 (整段克隆)`;
+  } else {
+    btnExecute.disabled = false;
+    btnExecute.style.opacity = '1';
+    btnExecute.style.cursor = 'pointer';
+    const names = Array.from(assemblySelectedChannels)
+      .map((c) => overview.parts.find((x) => x.channel === c)?.shortName || 'Ch ' + (c + 1))
+      .slice(0, 3)
+      .join(', ') + (count > 3 ? '...' : '');
+    btnExecute.textContent = `⚡ 立即批次組裝已勾選的 ${count} 個聲部 (${names})`;
+  }
+}
+
 function refreshAssemblySrcParts() {
   const srcParsed = getAssemblySourceParsed();
   const selectSrcSection = document.getElementById('assembly-src-section') as HTMLSelectElement | null;
@@ -6345,6 +6501,9 @@ function refreshAssemblySrcParts() {
     partOptions += `<option value="${part.channel}" ${isPreferred ? 'selected' : ''}>${part.icon} ${part.shortName} - Ch ${part.channel + 1} ${noteBadge}</option>`;
   }
   selectSrcPart.innerHTML = partOptions;
+
+  // 同步渲染多聲部勾選卡片清單
+  renderAssemblyPartsChecklist();
 }
 
 function refreshAssemblyDestParts() {
@@ -6411,18 +6570,15 @@ function updateAssemblyDestInfoBox() {
   const measureBadge = document.getElementById('assembly-dest-measure-badge');
   const btnQuickClone = document.getElementById('btn-assembly-quick-clone-dest') as HTMLButtonElement | null;
 
-  if (!selectDestSection || !selectDestPart || !detailsText) return;
+  if (!selectDestSection || !detailsText) return;
 
   const secName = selectDestSection.value;
-  const channel = parseInt(selectDestPart.value, 10);
   const range = StyleRemixer.getSectionTickRange(currentParsed, secName);
   const bars = range?.measureCount ?? 1;
 
   if (measureBadge) {
     measureBadge.textContent = `${bars} 小節`;
   }
-
-  const noteCount = range ? StyleRemixer.countNotesInChannel(currentParsed, range.startTick, range.endTick, channel) : 0;
 
   // 計算整段總音符數（判斷是否為全空白段落）
   let totalSecNotes = 0;
@@ -6435,6 +6591,39 @@ function updateAssemblyDestInfoBox() {
       }
     }
   }
+
+  // 若勾選了多個聲部 (Multi-Part Batch Mode)
+  if (assemblySelectedChannels.size > 1) {
+    if (selectDestPart) {
+      selectDestPart.disabled = true;
+      selectDestPart.title = '多聲部批次組裝模式下，各聲部將自動 1:1 對齊至目標段落的對應通道';
+    }
+    const selectSrcSection = document.getElementById('assembly-src-section') as HTMLSelectElement | null;
+    const srcSecName = selectSrcSection?.value || '來源段落';
+    if (totalSecNotes === 0) {
+      detailsText.innerHTML = `此段落目前為 <strong style="color: #f87171;">空白段落 (0 音符)</strong> | 💡 可點擊正下方紫色按鈕一鍵整段填滿：`;
+      if (btnQuickClone) {
+        btnQuickClone.style.display = 'inline-block';
+        btnQuickClone.textContent = `⚡ 從 [${srcSecName}] 整段填滿`;
+      }
+    } else {
+      detailsText.innerHTML = `已勾選 <strong style="color: #38bdf8;">${assemblySelectedChannels.size} 個聲部</strong> 批次組裝 (原軌 1:1 對齊) | 目標段落現有總音符: <strong style="color: #34d399;">${totalSecNotes}</strong>`;
+      if (btnQuickClone) {
+        btnQuickClone.style.display = 'none';
+      }
+    }
+    return;
+  }
+
+  if (selectDestPart) {
+    selectDestPart.disabled = false;
+    selectDestPart.title = '';
+  }
+
+  if (!selectDestPart) return;
+
+  const channel = parseInt(selectDestPart.value, 10);
+  const noteCount = range ? StyleRemixer.countNotesInChannel(currentParsed, range.startTick, range.endTick, channel) : 0;
 
   const override = range ? StyleRemixer.getSectionChannelOverride(currentParsed, range.startTick, range.endTick, channel) : {};
   const part = currentParsed.parts.find((p) => p.channel === channel);
@@ -6669,34 +6858,82 @@ function executeSingleAssembly() {
   const selectVelocity = document.getElementById('assembly-velocity-scale') as HTMLSelectElement | null;
   const chkSyncVoice = document.getElementById('assembly-sync-voice') as HTMLInputElement | null;
 
-  if (!selectSrcSection || !selectSrcPart || !selectDestSection || !selectDestPart) return;
+  if (!selectSrcSection || !selectDestSection) return;
 
   const srcParsed = getAssemblySourceParsed();
   const srcSection = selectSrcSection.value;
-  const srcChannel = parseInt(selectSrcPart.value, 10);
   const destSection = selectDestSection.value;
-  const destChannel = parseInt(selectDestPart.value, 10);
+
+  let channelsToAssemble = Array.from(assemblySelectedChannels);
+  if (channelsToAssemble.length === 0 && selectSrcPart && selectSrcPart.value) {
+    channelsToAssemble = [parseInt(selectSrcPart.value, 10)];
+  }
+
+  if (channelsToAssemble.length === 0) {
+    showStatus('請至少勾選 1 個欲組裝的聲部', true);
+    return;
+  }
+
+  if (srcParsed === currentParsed && srcSection === destSection) {
+    showStatus('來源段落與目標段落相同，請選擇不同的目標段落進行組裝', true);
+    return;
+  }
 
   lastAssemblySnapshotBytes = YamahaWriter.write(currentParsed);
 
-  const res = YamahaStyleAssembly.assemblePart({
-    destParsed: currentParsed,
-    destSection,
-    destChannel,
-    srcParsed,
-    srcSection,
-    srcChannel,
-    copyMode: (selectCopyMode?.value as 'replace' | 'merge') || 'replace',
-    loopMode: (selectLoopMode?.value as 'loop' | 'once') || 'loop',
-    transposeShift: parseInt(inputTranspose?.value || '0', 10) || 0,
-    velocityScale: parseFloat(selectVelocity?.value || '1.0') || 1.0,
-    copyVoiceParams: chkSyncVoice ? chkSyncVoice.checked : true,
-  });
+  const copyMode = (selectCopyMode?.value as 'replace' | 'merge') || 'replace';
+  const loopMode = (selectLoopMode?.value as 'loop' | 'once') || 'loop';
+  const transposeShift = parseInt(inputTranspose?.value || '0', 10) || 0;
+  const velocityScale = parseFloat(selectVelocity?.value || '1.0') || 1.0;
+  const copyVoiceParams = chkSyncVoice ? chkSyncVoice.checked : true;
 
-  if (res.success) {
-    handleAssemblySuccess(res.message);
+  if (channelsToAssemble.length === 1) {
+    const srcChannel = channelsToAssemble[0];
+    const destChannel = selectDestPart && selectDestPart.value ? parseInt(selectDestPart.value, 10) : srcChannel;
+
+    const res = YamahaStyleAssembly.assemblePart({
+      destParsed: currentParsed,
+      destSection,
+      destChannel,
+      srcParsed,
+      srcSection,
+      srcChannel,
+      copyMode,
+      loopMode,
+      transposeShift,
+      velocityScale,
+      copyVoiceParams,
+    });
+
+    if (res.success) {
+      handleAssemblySuccess(res.message);
+    } else {
+      showStatus(res.message, true);
+    }
   } else {
-    showStatus(res.message, true);
+    // 多聲部自由組裝 (Multi-Part Selection & Batch Assembly)
+    const res = YamahaStyleAssembly.cloneFullSection({
+      destParsed: currentParsed,
+      destSection,
+      srcParsed,
+      srcSection,
+      channels: channelsToAssemble,
+      copyMode,
+      loopMode,
+      transposeShift,
+      velocityScale,
+      copyVoiceParams,
+    });
+
+    if (res.success) {
+      const partNames = channelsToAssemble
+        .map((ch) => YamahaStyleModifier.getPartDisplayMeta(ch).shortName)
+        .join(', ');
+      const msg = `成功將 [${srcSection}] 的 ${res.channelsCloned.length} 個聲部 (${partNames}) 批次組裝至 [${destSection}]：共複製 ${res.totalNotesCopied} 個音符！`;
+      handleAssemblySuccess(msg);
+    } else {
+      showStatus(res.message, true);
+    }
   }
 }
 
@@ -6710,26 +6947,48 @@ function executeBatchAllMains() {
   const selectVelocity = document.getElementById('assembly-velocity-scale') as HTMLSelectElement | null;
   const chkSyncVoice = document.getElementById('assembly-sync-voice') as HTMLInputElement | null;
 
-  if (!selectSrcSection || !selectSrcPart) return;
+  if (!selectSrcSection) return;
 
   const srcParsed = getAssemblySourceParsed();
   const srcSection = selectSrcSection.value;
-  const channel = parseInt(selectSrcPart.value, 10);
+
+  let channels = Array.from(assemblySelectedChannels);
+  if (channels.length === 0 && selectSrcPart && selectSrcPart.value) {
+    channels = [parseInt(selectSrcPart.value, 10)];
+  }
+  if (channels.length === 0) {
+    showStatus('請至少勾選 1 個欲複製到所有 Main 的聲部', true);
+    return;
+  }
 
   lastAssemblySnapshotBytes = YamahaWriter.write(currentParsed);
 
-  const res = YamahaStyleAssembly.copyPartToAllMains(currentParsed, srcSection, channel, srcParsed, {
+  const options = {
     copyMode: (selectCopyMode?.value as 'replace' | 'merge') || 'replace',
     loopMode: (selectLoopMode?.value as 'loop' | 'once') || 'loop',
     transposeShift: parseInt(inputTranspose?.value || '0', 10) || 0,
     velocityScale: parseFloat(selectVelocity?.value || '1.0') || 1.0,
     copyVoiceParams: chkSyncVoice ? chkSyncVoice.checked : true,
-  });
+  };
 
-  if (res.success) {
-    handleAssemblySuccess(res.message);
+  let totalNotesCopied = 0;
+  const modifiedSections = new Set<string>();
+  const clonedPartsNames: string[] = [];
+
+  for (const ch of channels) {
+    const res = YamahaStyleAssembly.copyPartToAllMains(currentParsed, srcSection, ch, srcParsed, options);
+    if (res.success) {
+      totalNotesCopied += res.totalNotesCopied;
+      res.sectionsModified.forEach((s) => modifiedSections.add(s));
+      const meta = YamahaStyleModifier.getPartDisplayMeta(ch);
+      clonedPartsNames.push(meta.shortName);
+    }
+  }
+
+  if (modifiedSections.size > 0) {
+    handleAssemblySuccess(`成功將 [${srcSection}] 的 ${channels.length} 個聲部 (${clonedPartsNames.join(', ')}) 批次複製至所有 Main (${Array.from(modifiedSections).join(', ')})：共複製 ${totalNotesCopied} 個音符！`);
   } else {
-    showStatus(res.message, true);
+    showStatus('複製到所有 Main 未成功套用至任何段落', true);
   }
 }
 
@@ -6743,26 +7002,48 @@ function executeBatchAllFills() {
   const selectVelocity = document.getElementById('assembly-velocity-scale') as HTMLSelectElement | null;
   const chkSyncVoice = document.getElementById('assembly-sync-voice') as HTMLInputElement | null;
 
-  if (!selectSrcSection || !selectSrcPart) return;
+  if (!selectSrcSection) return;
 
   const srcParsed = getAssemblySourceParsed();
   const srcSection = selectSrcSection.value;
-  const channel = parseInt(selectSrcPart.value, 10);
+
+  let channels = Array.from(assemblySelectedChannels);
+  if (channels.length === 0 && selectSrcPart && selectSrcPart.value) {
+    channels = [parseInt(selectSrcPart.value, 10)];
+  }
+  if (channels.length === 0) {
+    showStatus('請至少勾選 1 個欲複製到所有 Fill In 的聲部', true);
+    return;
+  }
 
   lastAssemblySnapshotBytes = YamahaWriter.write(currentParsed);
 
-  const res = YamahaStyleAssembly.copyPartToAllFills(currentParsed, srcSection, channel, srcParsed, {
+  const options = {
     copyMode: (selectCopyMode?.value as 'replace' | 'merge') || 'replace',
     loopMode: (selectLoopMode?.value as 'loop' | 'once') || 'loop',
     transposeShift: parseInt(inputTranspose?.value || '0', 10) || 0,
     velocityScale: parseFloat(selectVelocity?.value || '1.0') || 1.0,
     copyVoiceParams: chkSyncVoice ? chkSyncVoice.checked : true,
-  });
+  };
 
-  if (res.success) {
-    handleAssemblySuccess(res.message);
+  let totalNotesCopied = 0;
+  const modifiedSections = new Set<string>();
+  const clonedPartsNames: string[] = [];
+
+  for (const ch of channels) {
+    const res = YamahaStyleAssembly.copyPartToAllFills(currentParsed, srcSection, ch, srcParsed, options);
+    if (res.success) {
+      totalNotesCopied += res.totalNotesCopied;
+      res.sectionsModified.forEach((s) => modifiedSections.add(s));
+      const meta = YamahaStyleModifier.getPartDisplayMeta(ch);
+      clonedPartsNames.push(meta.shortName);
+    }
+  }
+
+  if (modifiedSections.size > 0) {
+    handleAssemblySuccess(`成功將 [${srcSection}] 的 ${channels.length} 個聲部 (${clonedPartsNames.join(', ')}) 批次複製至所有 Fill In (${Array.from(modifiedSections).join(', ')})：共複製 ${totalNotesCopied} 個音符！`);
   } else {
-    showStatus(res.message, true);
+    showStatus('複製到所有 Fill In 未成功套用至任何段落', true);
   }
 }
 
@@ -6772,6 +7053,8 @@ function executeCloneFullSection() {
   const selectDestSection = document.getElementById('assembly-dest-section') as HTMLSelectElement | null;
   const selectCopyMode = document.getElementById('assembly-copy-mode') as HTMLSelectElement | null;
   const selectLoopMode = document.getElementById('assembly-loop-mode') as HTMLSelectElement | null;
+  const inputTranspose = document.getElementById('assembly-transpose') as HTMLInputElement | null;
+  const selectVelocity = document.getElementById('assembly-velocity-scale') as HTMLSelectElement | null;
   const chkSyncVoice = document.getElementById('assembly-sync-voice') as HTMLInputElement | null;
 
   if (!selectSrcSection || !selectDestSection) return;
@@ -6794,6 +7077,8 @@ function executeCloneFullSection() {
     srcSection,
     copyMode: (selectCopyMode?.value as 'replace' | 'merge') || 'replace',
     loopMode: (selectLoopMode?.value as 'loop' | 'once') || 'loop',
+    transposeShift: parseInt(inputTranspose?.value || '0', 10) || 0,
+    velocityScale: parseFloat(selectVelocity?.value || '1.0') || 1.0,
     copyVoiceParams: chkSyncVoice ? chkSyncVoice.checked : true,
   });
 
@@ -6884,6 +7169,16 @@ function initStyleAssemblyUI() {
   });
 
   selectSrcPart?.addEventListener('change', () => {
+    const ch = parseInt(selectSrcPart.value, 10);
+    assemblySelectedChannels.clear();
+    assemblySelectedChannels.add(ch);
+    const srcParsed = getAssemblySourceParsed();
+    if (srcParsed && selectSrcSection) {
+      const overview = YamahaStyleAssembly.getSectionOverview(srcParsed, selectSrcSection.value);
+      if (overview) {
+        onAssemblySelectedChannelsChanged(overview);
+      }
+    }
     updateAssemblySrcInfoBox();
     if (selectSrcPart && selectDestPart) {
       selectDestPart.value = selectSrcPart.value;
@@ -6897,6 +7192,70 @@ function initStyleAssemblyUI() {
 
   selectDestPart?.addEventListener('change', () => {
     updateAssemblyDestInfoBox();
+  });
+
+  // 多聲部快捷挑選按鈕群 (Quick Select Buttons)
+  const getSrcOverviewForSelection = (): SectionOverview | null => {
+    const srcParsed = getAssemblySourceParsed();
+    if (!srcParsed || !selectSrcSection) return null;
+    return YamahaStyleAssembly.getSectionOverview(srcParsed, selectSrcSection.value);
+  };
+
+  document.getElementById('btn-assembly-select-all')?.addEventListener('click', () => {
+    const overview = getSrcOverviewForSelection();
+    if (!overview) return;
+    assemblySelectedChannels.clear();
+    for (const p of overview.parts) {
+      assemblySelectedChannels.add(p.channel);
+    }
+    onAssemblySelectedChannelsChanged(overview);
+  });
+
+  document.getElementById('btn-assembly-select-with-notes')?.addEventListener('click', () => {
+    const overview = getSrcOverviewForSelection();
+    if (!overview) return;
+    assemblySelectedChannels.clear();
+    for (const p of overview.parts) {
+      if (p.noteCount > 0) {
+        assemblySelectedChannels.add(p.channel);
+      }
+    }
+    onAssemblySelectedChannelsChanged(overview);
+  });
+
+  document.getElementById('btn-assembly-select-rhythm')?.addEventListener('click', () => {
+    const overview = getSrcOverviewForSelection();
+    if (!overview) return;
+    assemblySelectedChannels.clear();
+    for (const p of overview.parts) {
+      const isRhythm = p.partId === 'Rhythm1' || p.partId === 'Rhythm2' || p.partId === 'Bass' ||
+        YamahaStyleModifier.isRhythmChannel(p.channel, p.partName);
+      if (isRhythm) {
+        assemblySelectedChannels.add(p.channel);
+      }
+    }
+    onAssemblySelectedChannelsChanged(overview);
+  });
+
+  document.getElementById('btn-assembly-select-harmony')?.addEventListener('click', () => {
+    const overview = getSrcOverviewForSelection();
+    if (!overview) return;
+    assemblySelectedChannels.clear();
+    for (const p of overview.parts) {
+      const isRhythm = p.partId === 'Rhythm1' || p.partId === 'Rhythm2' || p.partId === 'Bass' ||
+        YamahaStyleModifier.isRhythmChannel(p.channel, p.partName);
+      if (!isRhythm) {
+        assemblySelectedChannels.add(p.channel);
+      }
+    }
+    onAssemblySelectedChannelsChanged(overview);
+  });
+
+  document.getElementById('btn-assembly-clear-selection')?.addEventListener('click', () => {
+    const overview = getSrcOverviewForSelection();
+    if (!overview) return;
+    assemblySelectedChannels.clear();
+    onAssemblySelectedChannelsChanged(overview);
   });
 
   // 新增段落互動面板
