@@ -6870,6 +6870,102 @@ function initStyleAssemblyUI() {
     updateAssemblyDestInfoBox();
   });
 
+  // 新增段落互動面板
+  const btnOpenAddSection = document.getElementById('btn-assembly-open-add-section') as HTMLButtonElement | null;
+  const addSectionPanel = document.getElementById('assembly-add-section-panel');
+  const btnCloseAddSec = document.getElementById('btn-assembly-close-add-section');
+  const btnCancelAddSec = document.getElementById('btn-assembly-cancel-add-sec');
+  const btnConfirmAddSec = document.getElementById('btn-assembly-confirm-add-sec');
+  const selectNewSecName = document.getElementById('assembly-new-sec-name-select') as HTMLSelectElement | null;
+  const inputNewSecCustomName = document.getElementById('assembly-new-sec-custom-name') as HTMLInputElement | null;
+  const inputNewSecBars = document.getElementById('assembly-new-sec-bars') as HTMLInputElement | null;
+
+  const toggleAddSectionPanel = (show?: boolean) => {
+    if (!addSectionPanel) return;
+    const isVisible = show ?? (addSectionPanel.style.display === 'none');
+    addSectionPanel.style.display = isVisible ? 'block' : 'none';
+    if (isVisible && currentParsed) {
+      populateNewSectionOptions();
+    }
+  };
+
+  btnOpenAddSection?.addEventListener('click', () => toggleAddSectionPanel());
+  btnCloseAddSec?.addEventListener('click', () => toggleAddSectionPanel(false));
+  btnCancelAddSec?.addEventListener('click', () => toggleAddSectionPanel(false));
+
+  const populateNewSectionOptions = () => {
+    if (!currentParsed || !selectNewSecName) return;
+    const missing = YamahaStyleAssembly.getMissingStandardSections(currentParsed);
+    let optionsHtml = '';
+    if (missing.length > 0) {
+      for (const name of missing) {
+        optionsHtml += `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
+      }
+    }
+    optionsHtml += `<option value="__custom__">➕ 自訂段落名稱...</option>`;
+    selectNewSecName.innerHTML = optionsHtml;
+    handleSecNameChange();
+  };
+
+  const handleSecNameChange = () => {
+    if (!selectNewSecName || !inputNewSecCustomName || !inputNewSecBars) return;
+    const isCustom = selectNewSecName.value === '__custom__';
+    inputNewSecCustomName.style.display = isCustom ? 'block' : 'none';
+    if (isCustom) {
+      inputNewSecCustomName.focus();
+    } else {
+      const val = selectNewSecName.value;
+      if (val.startsWith('Fill') || val === 'Break') {
+        inputNewSecBars.value = '1';
+      } else if (val.startsWith('Intro') || val.startsWith('Ending')) {
+        inputNewSecBars.value = '4';
+      } else if (val.startsWith('Main')) {
+        inputNewSecBars.value = '8';
+      }
+    }
+  };
+
+  selectNewSecName?.addEventListener('change', handleSecNameChange);
+
+  document.querySelectorAll<HTMLButtonElement>('.btn-new-sec-bar-preset').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const bars = btn.dataset.bars;
+      if (bars && inputNewSecBars) {
+        inputNewSecBars.value = bars;
+      }
+    });
+  });
+
+  btnConfirmAddSec?.addEventListener('click', () => {
+    if (!currentParsed || currentParsed.format !== 'STY') return;
+    if (!selectNewSecName || !inputNewSecBars) return;
+
+    let sectionName = selectNewSecName.value;
+    if (sectionName === '__custom__') {
+      sectionName = inputNewSecCustomName ? inputNewSecCustomName.value.trim() : '';
+    }
+    if (!sectionName) {
+      showStatus('請輸入或選擇段落名稱', true);
+      return;
+    }
+
+    const bars = parseInt(inputNewSecBars.value, 10) || 1;
+
+    lastAssemblySnapshotBytes = YamahaWriter.write(currentParsed);
+
+    const res = YamahaStyleAssembly.addNewSection(currentParsed, { sectionName, bars });
+    if (res.success) {
+      toggleAddSectionPanel(false);
+      handleAssemblySuccess(res.message);
+      if (selectDestSection) {
+        selectDestSection.value = sectionName;
+      }
+      updateAssemblyDestInfoBox();
+    } else {
+      showStatus(res.message, true);
+    }
+  });
+
   // 試聽來源聲部
   const btnAuditionSrc = document.getElementById('btn-assembly-audition-src') as HTMLButtonElement | null;
   btnAuditionSrc?.addEventListener('click', () => {

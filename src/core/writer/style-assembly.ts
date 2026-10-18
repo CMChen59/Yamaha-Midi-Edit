@@ -116,6 +116,44 @@ export interface SectionOverview {
   totalNotes: number;
 }
 
+/**
+ * Yamaha Style 原廠標準常用段落清單 (標準 Arranger Workstation 規範)
+ */
+export const STANDARD_YAMAHA_SECTIONS: string[] = [
+  'Main A',
+  'Main B',
+  'Main C',
+  'Main D',
+  'Fill In AA',
+  'Fill In BB',
+  'Fill In CC',
+  'Fill In DD',
+  'Fill In BA',
+  'Break',
+  'Intro A',
+  'Intro B',
+  'Intro C',
+  'Intro D',
+  'Ending A',
+  'Ending B',
+  'Ending C',
+  'Ending D',
+];
+
+export interface AddSectionOptions {
+  sectionName: string;
+  bars: number;
+}
+
+export interface AddSectionResult {
+  success: boolean;
+  sectionName: string;
+  bars: number;
+  startTick: number;
+  endTick: number;
+  message: string;
+}
+
 export class YamahaStyleAssembly {
   /**
    * 取得指定伴奏段落 (Section) 之 8 伴奏聲部概覽資訊（音符數、名稱、圖示、音色設定）
@@ -181,6 +219,187 @@ export class YamahaStyleAssembly {
       }
     }
     return list;
+  }
+
+  /**
+   * 取得指定伴奏風格中「尚缺少的 Yamaha 原廠標準段落」清單
+   * 例如若風格僅包含 Main A~D、Intro A、Fill In BB，則會回傳 Break、Fill In AA、Ending A 等，方便使用者一鍵選取新增
+   */
+  public static getMissingStandardSections(parsed: YamahaFileParsed): string[] {
+    if (!parsed || !parsed.sections) return [...STANDARD_YAMAHA_SECTIONS];
+    const existingNames = new Set(parsed.sections.map((s) => s.name.trim().toLowerCase()));
+    return STANDARD_YAMAHA_SECTIONS.filter((name) => !existingNames.has(name.toLowerCase()));
+  }
+
+  /**
+   * 在伴奏風格中新增全新音樂段落 (Add New Musical Section)
+   * 於 Track 0 插入段落 Marker (0xFF 0x06)，分配時間軸 Ticks 並更新 parsed.sections
+   * 保持 SFF2 CASM 轉調與 SMF 0 格式結構 100% 完整相容
+   */
+  public static addNewSection(
+    parsed: YamahaFileParsed,
+    options: AddSectionOptions
+  ): AddSectionResult {
+    const rawName = options.sectionName ? options.sectionName.trim() : '';
+    if (!rawName) {
+      return {
+        success: false,
+        sectionName: '',
+        bars: 0,
+        startTick: 0,
+        endTick: 0,
+        message: '新增失敗：段落名稱不可為空',
+      };
+    }
+
+    if (!parsed || !parsed.tracks || parsed.tracks.length === 0) {
+      return {
+        success: false,
+        sectionName: rawName,
+        bars: 0,
+        startTick: 0,
+        endTick: 0,
+        message: '新增失敗：伴奏結構無效或缺少音軌',
+      };
+    }
+
+    const track0 = parsed.tracks[0];
+    if (!track0 || !track0.events) {
+      return {
+        success: false,
+        sectionName: rawName,
+        bars: 0,
+        startTick: 0,
+        endTick: 0,
+        message: '新增失敗：伴奏 Track 0 不存在',
+      };
+    }
+
+    // 檢查名稱是否已存在 (不分大小寫)
+    const exists = parsed.sections.some(
+      (s) => s.name.trim().toLowerCase() === rawName.toLowerCase()
+    );
+    if (exists) {
+      return {
+        success: false,
+        sectionName: rawName,
+        bars: 0,
+        startTick: 0,
+        endTick: 0,
+        message: `新增失敗：伴奏段落 [${rawName}] 已經存在，請使用不同的名稱`,
+      };
+    }
+
+    const bars = Math.max(1, Math.min(128, Math.round(options.bars || 1)));
+    const division = parsed.division || 480;
+    const timeSig = parsed.timeSignature || { numerator: 4, denominator: 4 };
+    const ticksPerMeasure = Math.round(division * timeSig.numerator * (4 / timeSig.denominator));
+    const sectionTicks = bars * ticksPerMeasure;
+
+    // 計算新段落的起始插入 Tick：置於現有所有音樂段落結尾
+    const musicalSections = StyleRemixer.getMusicalSections(parsed);
+    let insertTick = 0;
+    if (musicalSections.length > 0) {
+      const lastSec = musicalSections[musicalSections.length - 1];
+      const lastRange = StyleRemixer.getSectionTickRange(parsed, lastSec.name);
+      if (lastRange) {
+        insertTick = lastRange.endTick;
+      } else {
+        insertTick = lastSec.startTick + (lastSec.measureCount ?? 1) * ticksPerMeasure;
+      }
+    }
+    const endTick = insertTick + sectionTicks;
+
+    // 展開 Track 0 所有事件至絕對 Tick
+    let curTick = 0;
+    const annotatedEvents: Array<{ ev: MidiEvent; absTick: number; order: number }> = [];
+    let orderCounter = 0;
+    let endOfTrackEvent: { ev: MidiEvent; absTick: number; order: number } | null = null;
+
+    for (const ev of track0.events) {
+      curTick += ev.delta;
+      if (ev.type === 'meta' && ev.metaType === 0x2f) {
+        endOfTrackEvent = { ev: { ...ev }, absTick: Math.max(curTick, endTick), order: 999999 };
+      } else {
+        annotatedEvents.push({ ev: { ...ev }, absTick: curTick, order: orderCounter++ });
+      }
+    }
+
+    // 建立新段落 Marker 事件 (0xFF 0x06)
+    const markerEvent: MidiEvent = {
+      delta: 0,
+      type: 'meta',
+      metaType: 0x06,
+      text: rawName,
+      metaData: new TextEncoder().encode(rawName),
+    };
+    annotatedEvents.push({ ev: markerEvent, absTick: insertTick, order: orderCounter++ });
+
+    // 確保 End of Track 事件位於所有事件最末端
+    if (endOfTrackEvent) {
+      annotatedEvents.push(endOfTrackEvent);
+    } else {
+      annotatedEvents.push({
+        ev: { delta: 0, type: 'meta', metaType: 0x2f, metaData: new Uint8Array(0) },
+        absTick: endTick,
+        order: 999999,
+      });
+    }
+
+    // 排序所有事件
+    annotatedEvents.sort((a, b) => {
+      if (a.absTick !== b.absTick) return a.absTick - b.absTick;
+
+      const aIsMeta = a.ev.type === 'meta';
+      const bIsMeta = b.ev.type === 'meta';
+      if (aIsMeta && !bIsMeta) return -1;
+      if (!aIsMeta && bIsMeta) return 1;
+
+      const aIsEOT = a.ev.type === 'meta' && a.ev.metaType === 0x2f;
+      const bIsEOT = b.ev.type === 'meta' && b.ev.metaType === 0x2f;
+      if (aIsEOT && !bIsEOT) return 1;
+      if (!aIsEOT && bIsEOT) return -1;
+
+      return a.order - b.order;
+    });
+
+    // 重新編碼 Delta-times
+    let prevTick = 0;
+    track0.events = annotatedEvents.map((item) => {
+      item.ev.delta = Math.max(0, item.absTick - prevTick);
+      prevTick = item.absTick;
+      return item.ev;
+    });
+
+    // 重編碼 Track 0 二進位 Chunk
+    YamahaPadModifier.rebuildTrackRawChunk(track0);
+
+    // 更新 parsed.sections 列表
+    if (musicalSections.length > 0) {
+      const lastSec = musicalSections[musicalSections.length - 1];
+      const secInParsed = parsed.sections.find((s) => s.name === lastSec.name);
+      if (secInParsed) {
+        secInParsed.endTick = insertTick;
+        secInParsed.measureCount = Math.max(1, Math.round((insertTick - secInParsed.startTick) / ticksPerMeasure));
+      }
+    }
+
+    parsed.sections.push({
+      name: rawName,
+      startTick: insertTick,
+      endTick,
+      measureCount: bars,
+    });
+    parsed.sections.sort((a, b) => a.startTick - b.startTick);
+
+    return {
+      success: true,
+      sectionName: rawName,
+      bars,
+      startTick: insertTick,
+      endTick,
+      message: `成功建立全新伴奏段落 [${rawName}] (${bars} 小節，Tick 範圍: ${insertTick} ~ ${endTick})！`,
+    };
   }
 
   /**

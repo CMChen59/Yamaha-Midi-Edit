@@ -256,8 +256,44 @@
               </div>
               <div style="display: grid; grid-template-columns: 80px 1fr; gap: 8px; align-items: center; font-size: 0.76rem; margin-bottom: 6px;">
                 <label for="assembly-dest-section" style="color: #94a3b8;">目標段落：</label>
-                <select id="assembly-dest-section" style="background: #141824; border: 1px solid #2d3748; border-radius: 4px; color: #10b981; padding: 3px 6px; font-size: 0.76rem; font-weight: 600;"></select>
+                <div style="display: flex; gap: 6px; align-items: center;">
+                  <select id="assembly-dest-section" style="flex: 1; background: #141824; border: 1px solid #2d3748; border-radius: 4px; color: #10b981; padding: 3px 6px; font-size: 0.76rem; font-weight: 600;"></select>
+                  <button type="button" id="btn-assembly-open-add-section" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem; background: rgba(16,185,129,0.18); color: #34d399; border: 1px solid rgba(16,185,129,0.35); font-weight: 600; white-space: nowrap;" title="在當前伴奏風格中新增全新段落 (如 Break、Fill In AA、Ending A 等)">➕ 新增段落</button>
+                </div>
               </div>
+
+              <!-- 新增段落互動面板 (預設隱藏) -->
+              <div id="assembly-add-section-panel" style="display: none; background: #161c28; border: 1px solid #059669; border-radius: 5px; padding: 8px 10px; margin-bottom: 8px; animation: fadeInAssembly 0.15s ease;">
+                <div style="font-size: 0.74rem; font-weight: 700; color: #34d399; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+                  <span>➕ 新增伴奏段落 (Add New Section)</span>
+                  <button type="button" id="btn-assembly-close-add-section" style="background: none; border: none; color: #94a3b8; cursor: pointer; font-size: 0.85rem;" title="取消">&times;</button>
+                </div>
+                <div style="display: grid; grid-template-columns: 80px 1fr; gap: 6px; align-items: center; font-size: 0.74rem; margin-bottom: 6px;">
+                  <label for="assembly-new-sec-name-select" style="color: #cbd5e1;">段落名稱：</label>
+                  <div style="display: flex; gap: 4px; align-items: center;">
+                    <select id="assembly-new-sec-name-select" style="flex: 1; background: #0f131d; border: 1px solid #334155; border-radius: 4px; color: #f8fafc; padding: 2px 4px; font-size: 0.74rem;"></select>
+                    <input type="text" id="assembly-new-sec-custom-name" placeholder="自訂名稱..." style="display: none; flex: 1; background: #0f131d; border: 1px solid #334155; border-radius: 4px; color: #f8fafc; padding: 2px 6px; font-size: 0.74rem;" />
+                  </div>
+                </div>
+                <div style="display: grid; grid-template-columns: 80px 1fr; gap: 6px; align-items: center; font-size: 0.74rem; margin-bottom: 8px;">
+                  <label for="assembly-new-sec-bars" style="color: #cbd5e1;">小節長度：</label>
+                  <div style="display: flex; gap: 6px; align-items: center;">
+                    <input type="number" id="assembly-new-sec-bars" min="1" max="64" value="1" style="width: 45px; background: #0f131d; border: 1px solid #334155; border-radius: 4px; color: #f8fafc; padding: 2px 4px; font-size: 0.74rem; text-align: center;" />
+                    <span style="color: #94a3b8;">小節</span>
+                    <div style="display: flex; gap: 3px;">
+                      <button type="button" class="btn-new-sec-bar-preset toggle-btn" data-bars="1" style="padding: 1px 5px; font-size: 0.68rem;" title="1 小節 (過門/Break 常見)">1小節</button>
+                      <button type="button" class="btn-new-sec-bar-preset toggle-btn" data-bars="2" style="padding: 1px 5px; font-size: 0.68rem;" title="2 小節">2小節</button>
+                      <button type="button" class="btn-new-sec-bar-preset toggle-btn" data-bars="4" style="padding: 1px 5px; font-size: 0.68rem;" title="4 小節">4小節</button>
+                      <button type="button" class="btn-new-sec-bar-preset toggle-btn" data-bars="8" style="padding: 1px 5px; font-size: 0.68rem;" title="8 小節 (Main 常見)">8小節</button>
+                    </div>
+                  </div>
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 6px;">
+                  <button type="button" id="btn-assembly-cancel-add-sec" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem;">取消</button>
+                  <button type="button" id="btn-assembly-confirm-add-sec" class="btn btn-primary" style="background: linear-gradient(135deg, #10b981, #059669); border: none; padding: 2px 10px; font-size: 0.72rem; font-weight: 700;">✓ 建立段落</button>
+                </div>
+              </div>
+
               <div style="display: grid; grid-template-columns: 80px 1fr; gap: 8px; align-items: center; font-size: 0.76rem; margin-bottom: 10px;">
                 <label for="assembly-dest-part" style="color: #94a3b8;">目標聲部：</label>
                 <select id="assembly-dest-part" style="background: #141824; border: 1px solid #2d3748; border-radius: 4px; color: #f8fafc; padding: 3px 6px; font-size: 0.76rem; font-weight: 600;"></select>

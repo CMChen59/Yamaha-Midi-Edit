@@ -285,4 +285,69 @@ describe('方案 B: Yamaha 段落聲部組裝精靈 (Style Section Assembly Stud
     expect(validation.casmSize).toBe(4025);
     expect(validation.bytes.length).toBeGreaterThan(10000);
   });
+
+  it('9. 能智慧探測風格中尚缺少的 Yamaha 原廠標準段落 (getMissingStandardSections)', () => {
+    const parsed = getFreshParsed();
+    const missing = YamahaStyleAssembly.getMissingStandardSections(parsed);
+
+    // 4006_SX900.T547.sty 缺少 Break、Fill In AA、Ending A、Ending C 等
+    expect(missing).toContain('Break');
+    expect(missing).toContain('Fill In AA');
+    expect(missing).toContain('Ending A');
+    expect(missing).toContain('Ending C');
+
+    // 已有的段落不應出現在缺少清單中
+    expect(missing).not.toContain('Main A');
+    expect(missing).not.toContain('Main B');
+    expect(missing).not.toContain('Intro A');
+  });
+
+  it('10. 支援新增全新伴奏段落 (addNewSection) 並立即組裝聲部寫入音符', () => {
+    const parsed = getFreshParsed();
+    const initialSectionCount = parsed.sections.length; // 14
+
+    // 1. 新增 1 小節的 'Break' 轉折過門段落
+    const addResult = YamahaStyleAssembly.addNewSection(parsed, {
+      sectionName: 'Break',
+      bars: 1,
+    });
+
+    expect(addResult.success).toBe(true);
+    expect(addResult.sectionName).toBe('Break');
+    expect(addResult.bars).toBe(1);
+    expect(parsed.sections.length).toBe(initialSectionCount + 1);
+
+    // 驗證新建立的 Break 段落存在於概覽中且初始音符數為 0
+    const breakOverview = YamahaStyleAssembly.getSectionOverview(parsed, 'Break');
+    expect(breakOverview).toBeDefined();
+    expect(breakOverview?.name).toBe('Break');
+    expect(breakOverview?.measureCount).toBe(1);
+    expect(breakOverview?.totalNotes).toBe(0);
+
+    // 2. 立即使用組裝精靈，將 Main A 的主鼓組 (Ch 9) 組裝拼貼至剛新增的 Break 段落！
+    const assembleResult = YamahaStyleAssembly.assemblePart({
+      destParsed: parsed,
+      destSection: 'Break',
+      destChannel: 9,
+      srcParsed: parsed,
+      srcSection: 'Main A',
+      srcChannel: 9,
+      loopMode: 'once',
+    });
+
+    expect(assembleResult.success).toBe(true);
+    expect(assembleResult.notesCopied).toBeGreaterThan(0);
+    expect(assembleResult.finalNoteCount).toBeGreaterThan(0);
+
+    // 再次檢驗 Break 段落，音符已成功寫入
+    const breakOverviewAfter = YamahaStyleAssembly.getSectionOverview(parsed, 'Break');
+    expect(breakOverviewAfter?.parts.find((p) => p.channel === 9)?.noteCount).toBeGreaterThan(0);
+
+    // 3. 匯出二進位檢驗：包含新段落且 CASM 轉調完全保持 4,025 bytes
+    const validation = YamahaWriter.validateAndWrite(parsed);
+    expect(validation.success).toBe(true);
+    expect(validation.sectionCount).toBe(initialSectionCount + 1);
+    expect(validation.hasCasm).toBe(true);
+    expect(validation.casmSize).toBe(4025);
+  });
 });
