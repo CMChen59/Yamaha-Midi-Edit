@@ -109,6 +109,7 @@
           </div>
           <div style="display: flex; align-items: center; gap: 8px;">
             <button type="button" id="btn-toggle-part-matrix" class="btn btn-primary" style="background: linear-gradient(135deg, #6366f1, #4f46e5); border: none; font-size: 0.76rem; padding: 4px 12px; font-weight: 600; display: none;" title="開啟/收合 Yamaha 段落聲部開口矩陣 (Style Creator: Part On/Off per Section)">🎛️ 段落開口矩陣</button>
+            <button type="button" id="btn-toggle-style-assembly" class="btn btn-primary" style="background: linear-gradient(135deg, #0284c7, #0369a1); border: none; font-size: 0.76rem; padding: 4px 12px; font-weight: 600; display: none;" title="開啟/收合 Yamaha 段落聲部組裝精靈 (Style Creator: Assembly - 跨段落與跨樣式聲部複製拼貼)">🧩 聲部組裝精靈</button>
             <button type="button" id="btn-open-style-remixer" class="btn btn-primary" style="background: linear-gradient(135deg, #ec4899, #be185d); border: none; font-size: 0.76rem; padding: 4px 12px; font-weight: 600; display: none;" title="開啟跨 STY 伴奏風格混搭重組精靈">🎛️ 跨 STY 混搭精靈</button>
           </div>
         </div>
@@ -192,6 +193,134 @@
             </div>
             <div style="color: #64748b;">
               <span>非破壞性設計：段落開口設定即時連動試聽與混音台，匯出時可完整保留原廠 SFF2 CASM 轉調二進位結構</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 方案 B: Yamaha 伴奏聲部組裝精靈面板 (Style Section Assembly Studio) -->
+        <div id="sty-assembly-container" class="sty-assembly-container" style="display: none; margin-bottom: 20px; background: #13151f; border: 1px solid #0284c7; border-radius: 8px; padding: 14px 16px; box-shadow: 0 4px 20px rgba(2, 132, 199, 0.12);">
+          <!-- 組裝精靈頂部工具列 -->
+          <div class="assembly-header-bar" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; border-bottom: 1px solid #1e293b; padding-bottom: 10px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 1.15rem;">🧩</span>
+              <div>
+                <h3 style="font-size: 0.95rem; font-weight: 700; color: #f8fafc; margin: 0;">Yamaha 伴奏聲部組裝精靈 (Style Section Assembly Studio)</h3>
+                <p style="font-size: 0.75rem; color: #94a3b8; margin: 2px 0 0 0;">對標 Yamaha 原廠 Style Creator -> Assembly 模式：跨段落/跨樣式聲部自由拼貼、小節循環填滿、批次一鍵複製到所有 Main/過門</p>
+              </div>
+            </div>
+            <!-- 快捷批次動作按鈕群 -->
+            <div class="assembly-header-actions" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+              <button type="button" id="btn-assembly-batch-all-mains" class="toggle-btn" style="padding: 3px 9px; font-size: 0.72rem; background: rgba(14,165,233,0.18); color: #38bdf8; border-color: rgba(14,165,233,0.4);" title="將當前選取的來源聲部，一鍵複製覆蓋至所有 Main 伴奏段落 (Main A~D)">⚡ 複製到所有 Main (A~D)</button>
+              <button type="button" id="btn-assembly-batch-all-fills" class="toggle-btn" style="padding: 3px 9px; font-size: 0.72rem; background: rgba(16,185,129,0.15); color: #34d399; border-color: rgba(16,185,129,0.4);" title="將當前選取的來源聲部，一鍵複製覆蓋至所有過門段落 (Fill In)">⚡ 複製到所有 Fill In</button>
+              <button type="button" id="btn-assembly-batch-clone-section" class="toggle-btn" style="padding: 3px 9px; font-size: 0.72rem; color: #c084fc; border-color: rgba(192,132,252,0.35);" title="整段段落全聲部克隆：將來源段落的所有聲部一次性完整拼貼至目標段落">⚡ 整段段落克隆</button>
+              <button type="button" id="btn-assembly-close" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem; margin-left: 6px;" title="收合組裝精靈">✕ 收合</button>
+            </div>
+          </div>
+
+          <!-- 核心組裝工作台：左側來源 vs 右側目標 -->
+          <div class="assembly-studio-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; margin-bottom: 12px;">
+            <!-- 左卡片：來源聲部 (Source) -->
+            <div class="assembly-card" style="background: #0d1017; border: 1px solid #1e293b; border-radius: 6px; padding: 12px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                <span style="font-size: 0.82rem; font-weight: 700; color: #38bdf8; display: flex; align-items: center; gap: 4px;">📥 來源聲部 (Source Part)</span>
+                <span id="assembly-src-measure-badge" class="badge" style="background: rgba(56,189,248,0.12); color: #38bdf8; border: 1px solid rgba(56,189,248,0.3); font-size: 0.7rem;">8 小節</span>
+              </div>
+              <div style="display: grid; grid-template-columns: 80px 1fr; gap: 8px; align-items: center; font-size: 0.76rem; margin-bottom: 6px;">
+                <label for="assembly-src-style" style="color: #94a3b8;">來源風格：</label>
+                <select id="assembly-src-style" style="background: #141824; border: 1px solid #2d3748; border-radius: 4px; color: #e2e8f0; padding: 3px 6px; font-size: 0.76rem;"></select>
+              </div>
+              <div style="display: grid; grid-template-columns: 80px 1fr; gap: 8px; align-items: center; font-size: 0.76rem; margin-bottom: 6px;">
+                <label for="assembly-src-section" style="color: #94a3b8;">來源段落：</label>
+                <select id="assembly-src-section" style="background: #141824; border: 1px solid #2d3748; border-radius: 4px; color: #e2e8f0; padding: 3px 6px; font-size: 0.76rem; font-weight: 600;"></select>
+              </div>
+              <div style="display: grid; grid-template-columns: 80px 1fr; gap: 8px; align-items: center; font-size: 0.76rem; margin-bottom: 10px;">
+                <label for="assembly-src-part" style="color: #94a3b8;">來源聲部：</label>
+                <select id="assembly-src-part" style="background: #141824; border: 1px solid #2d3748; border-radius: 4px; color: #f8fafc; padding: 3px 6px; font-size: 0.76rem; font-weight: 600;"></select>
+              </div>
+              <!-- 來源聲部即時資訊卡與試聽 -->
+              <div id="assembly-src-info-box" style="background: #131722; border: 1px dashed #243048; border-radius: 4px; padding: 8px 10px; display: flex; justify-content: space-between; align-items: center; font-size: 0.74rem;">
+                <div id="assembly-src-details-text" style="color: #cbd5e1;">音符數: 0 | 未選取</div>
+                <button type="button" id="btn-assembly-audition-src" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem; background: rgba(56,189,248,0.15); color: #38bdf8; border: 1px solid rgba(56,189,248,0.35);">🎧 試聽來源聲部</button>
+              </div>
+            </div>
+
+            <!-- 右卡片：目標聲部 (Destination) -->
+            <div class="assembly-card" style="background: #0d1017; border: 1px solid #1e293b; border-radius: 6px; padding: 12px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                <span style="font-size: 0.82rem; font-weight: 700; color: #10b981; display: flex; align-items: center; gap: 4px;">📤 目標聲部 (Destination Part)</span>
+                <span id="assembly-dest-measure-badge" class="badge" style="background: rgba(16,185,129,0.12); color: #34d399; border: 1px solid rgba(16,185,129,0.3); font-size: 0.7rem;">8 小節</span>
+              </div>
+              <div style="display: grid; grid-template-columns: 80px 1fr; gap: 8px; align-items: center; font-size: 0.76rem; margin-bottom: 6px;">
+                <label style="color: #94a3b8;">目標風格：</label>
+                <div style="color: #e2e8f0; font-weight: 600; padding: 3px 0;">當前編輯伴奏風格 (Current STY)</div>
+              </div>
+              <div style="display: grid; grid-template-columns: 80px 1fr; gap: 8px; align-items: center; font-size: 0.76rem; margin-bottom: 6px;">
+                <label for="assembly-dest-section" style="color: #94a3b8;">目標段落：</label>
+                <select id="assembly-dest-section" style="background: #141824; border: 1px solid #2d3748; border-radius: 4px; color: #10b981; padding: 3px 6px; font-size: 0.76rem; font-weight: 600;"></select>
+              </div>
+              <div style="display: grid; grid-template-columns: 80px 1fr; gap: 8px; align-items: center; font-size: 0.76rem; margin-bottom: 10px;">
+                <label for="assembly-dest-part" style="color: #94a3b8;">目標聲部：</label>
+                <select id="assembly-dest-part" style="background: #141824; border: 1px solid #2d3748; border-radius: 4px; color: #f8fafc; padding: 3px 6px; font-size: 0.76rem; font-weight: 600;"></select>
+              </div>
+              <!-- 目標聲部即時資訊卡與試聽 -->
+              <div id="assembly-dest-info-box" style="background: #131722; border: 1px dashed #243048; border-radius: 4px; padding: 8px 10px; display: flex; justify-content: space-between; align-items: center; font-size: 0.74rem;">
+                <div id="assembly-dest-details-text" style="color: #cbd5e1;">目前音符: 0 | 組裝後將更新</div>
+                <button type="button" id="btn-assembly-audition-dest" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem; background: rgba(16,185,129,0.15); color: #34d399; border: 1px solid rgba(16,185,129,0.35);">🎧 試聽目標段落</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 組裝模式與進階參數列 -->
+          <div class="assembly-settings-bar" style="background: #0f121a; border: 1px solid #1e2536; border-radius: 6px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 12px;">
+            <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 0.76rem;">
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="color: #94a3b8;">覆寫模式:</span>
+                <select id="assembly-copy-mode" style="background: #141824; border: 1px solid #2d3748; border-radius: 4px; color: #f8fafc; padding: 3px 6px; font-size: 0.75rem;">
+                  <option value="replace" selected>替換 (Replace: 清空目標聲部後填入)</option>
+                  <option value="merge">合併 (Merge: 保留現有音符並疊加)</option>
+                </select>
+              </div>
+
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="color: #94a3b8;">小節對齊:</span>
+                <select id="assembly-loop-mode" style="background: #141824; border: 1px solid #2d3748; border-radius: 4px; color: #f8fafc; padding: 3px 6px; font-size: 0.75rem;">
+                  <option value="loop" selected>自動循環填滿 (Loop to Fill: 短鋪長)</option>
+                  <option value="once">單次填入 (Once: 不循環，超出截斷)</option>
+                </select>
+              </div>
+
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="color: #94a3b8;">半音移調:</span>
+                <input type="number" id="assembly-transpose" min="-24" max="24" value="0" style="width: 46px; background: #141824; border: 1px solid #2d3748; border-radius: 4px; color: #f8fafc; padding: 2px 4px; font-size: 0.75rem; text-align: center;" />
+                <span style="color: #64748b;">半音</span>
+              </div>
+
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="color: #94a3b8;">力度縮放:</span>
+                <select id="assembly-velocity-scale" style="background: #141824; border: 1px solid #2d3748; border-radius: 4px; color: #f8fafc; padding: 3px 6px; font-size: 0.75rem;">
+                  <option value="1.0" selected>100% (原樣力度)</option>
+                  <option value="1.2">120% (強勁有力)</option>
+                  <option value="0.8">80% (柔和動態)</option>
+                  <option value="0.6">60% (背景微弱鋪底)</option>
+                </select>
+              </div>
+
+              <label style="display: inline-flex; align-items: center; gap: 4px; color: #cbd5e1; cursor: pointer;">
+                <input type="checkbox" id="assembly-sync-voice" checked style="cursor: pointer;" />
+                <span>同步音色與效果器 (Voice / Reverb / Pan)</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- 底部執行與狀態提示列 -->
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <button type="button" id="btn-assembly-execute" class="btn btn-primary" style="background: linear-gradient(135deg, #0ea5e9, #0284c7); border: none; font-size: 0.82rem; padding: 6px 18px; font-weight: 700; box-shadow: 0 2px 8px rgba(14,165,233,0.35);">🧩 立即執行聲部組裝 (Assemble Part)</button>
+              <button type="button" id="btn-assembly-undo" class="toggle-btn" style="padding: 5px 12px; font-size: 0.78rem; display: none; background: rgba(148,163,184,0.15); color: #94a3b8;" title="復原剛才的組裝操作">↩️ 復原 (Undo)</button>
+              <span id="assembly-status-badge" class="badge" style="background: rgba(16,185,129,0.15); color: #34d399; border: 1px solid rgba(16,185,129,0.35); display: none;"></span>
+            </div>
+            <div style="font-size: 0.74rem; color: #64748b;">
+              <span>對標 Yamaha 原廠規格：保持 SFF2 CASM 轉調與 SMF 0 格式結構 100% 完整相容</span>
             </div>
           </div>
         </div>

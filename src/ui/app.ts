@@ -16,6 +16,7 @@ import {
 } from '../core/writer/style-importer';
 import { YamahaStyleSynthesizer } from '../core/writer/style-synthesizer';
 import { YamahaStyleModifier } from '../core/writer/style-modifier';
+import { YamahaStyleAssembly } from '../core/writer/style-assembly';
 import {
   StyleRemixer,
   type StylePoolEntry,
@@ -5406,6 +5407,7 @@ function setupWebMidiControls() {
       audioEngine.stop();
       currentAuditionStySection = null;
       updateStySectionAuditionButtons();
+      stopAssemblyAudition();
       if (currentCanvasRedrawWithPlayhead) {
         currentCanvasRedrawWithPlayhead(null);
       }
@@ -5443,6 +5445,9 @@ function setupWebMidiControls() {
 
   // 方案 A: 初始化 Yamaha 段落聲部開口矩陣事件
   initSectionPartMatrixUI();
+
+  // 方案 B: 初始化 Yamaha 伴奏聲部組裝精靈事件
+  initStyleAssemblyUI();
 }
 
 // 處理本機檔案
@@ -5914,6 +5919,15 @@ function selectStySection(sectionName: string) {
   if (currentActiveStyPartChannel !== null) {
     showStyPartNotesDetail(currentParsed, currentActiveStySection, currentActiveStyPartChannel);
   }
+
+  const assemblyContainer = document.getElementById('sty-assembly-container');
+  if (assemblyContainer && assemblyContainer.style.display !== 'none') {
+    const destSecSelect = document.getElementById('assembly-dest-section') as HTMLSelectElement | null;
+    if (destSecSelect && destSecSelect.value !== sectionName) {
+      destSecSelect.value = sectionName;
+      updateAssemblyDestInfoBox();
+    }
+  }
 }
 
 function updateStySectionCardsSelection() {
@@ -6292,6 +6306,619 @@ function renderSectionPartMatrix(parsed: YamahaFileParsed) {
   updateMatrixSummaryBadge();
 }
 
+// ========================================================
+// 方案 B: Yamaha 伴奏聲部組裝精靈 (Style Section Assembly Studio)
+// ========================================================
+
+let isStyleAssemblyEventsBound = false;
+let lastAssemblySnapshotBytes: Uint8Array | null = null;
+let isAssemblyAuditioningSrc = false;
+
+function getAssemblySourceParsed(): YamahaFileParsed {
+  const selectSrcStyle = document.getElementById('assembly-src-style') as HTMLSelectElement | null;
+  const styleVal = selectSrcStyle?.value;
+  if (styleVal && styleVal !== 'current') {
+    const found = remixerPool.find((item) => item.id === styleVal);
+    if (found) return found.parsed;
+  }
+  return currentParsed!;
+}
+
+function refreshAssemblySrcParts() {
+  const srcParsed = getAssemblySourceParsed();
+  const selectSrcSection = document.getElementById('assembly-src-section') as HTMLSelectElement | null;
+  const selectSrcPart = document.getElementById('assembly-src-part') as HTMLSelectElement | null;
+  if (!srcParsed || !selectSrcSection || !selectSrcPart) return;
+
+  const secName = selectSrcSection.value;
+  const overview = YamahaStyleAssembly.getSectionOverview(srcParsed, secName);
+  if (!overview) return;
+
+  const prevVal = selectSrcPart.value;
+  let partOptions = '';
+  let hasSetSelected = false;
+
+  for (const part of overview.parts) {
+    const isPreferred = prevVal ? prevVal === String(part.channel) : (!hasSetSelected && part.noteCount > 0);
+    if (isPreferred) hasSetSelected = true;
+    const noteBadge = part.noteCount > 0 ? `(${part.noteCount} 音符)` : '(無音符)';
+    partOptions += `<option value="${part.channel}" ${isPreferred ? 'selected' : ''}>${part.icon} ${part.shortName} - Ch ${part.channel + 1} ${noteBadge}</option>`;
+  }
+  selectSrcPart.innerHTML = partOptions;
+}
+
+function refreshAssemblyDestParts() {
+  if (!currentParsed) return;
+  const selectDestSection = document.getElementById('assembly-dest-section') as HTMLSelectElement | null;
+  const selectDestPart = document.getElementById('assembly-dest-part') as HTMLSelectElement | null;
+  const selectSrcPart = document.getElementById('assembly-src-part') as HTMLSelectElement | null;
+  if (!selectDestSection || !selectDestPart) return;
+
+  const secName = selectDestSection.value;
+  const overview = YamahaStyleAssembly.getSectionOverview(currentParsed, secName);
+  if (!overview) return;
+
+  const preferredCh = selectSrcPart ? selectSrcPart.value : null;
+  const prevVal = selectDestPart.value || preferredCh;
+
+  let partOptions = '';
+  for (const part of overview.parts) {
+    const isSel = prevVal ? prevVal === String(part.channel) : false;
+    const noteBadge = part.noteCount > 0 ? `(目前 ${part.noteCount} 音符)` : '(目前空)';
+    partOptions += `<option value="${part.channel}" ${isSel ? 'selected' : ''}>${part.icon} ${part.shortName} - Ch ${part.channel + 1} ${noteBadge}</option>`;
+  }
+  selectDestPart.innerHTML = partOptions;
+}
+
+function updateAssemblySrcInfoBox() {
+  const srcParsed = getAssemblySourceParsed();
+  const selectSrcSection = document.getElementById('assembly-src-section') as HTMLSelectElement | null;
+  const selectSrcPart = document.getElementById('assembly-src-part') as HTMLSelectElement | null;
+  const detailsText = document.getElementById('assembly-src-details-text');
+  const measureBadge = document.getElementById('assembly-src-measure-badge');
+
+  if (!srcParsed || !selectSrcSection || !selectSrcPart || !detailsText) return;
+
+  const secName = selectSrcSection.value;
+  const channel = parseInt(selectSrcPart.value, 10);
+  const range = StyleRemixer.getSectionTickRange(srcParsed, secName);
+  const bars = range?.measureCount ?? 1;
+
+  if (measureBadge) {
+    measureBadge.textContent = `${bars} 小節`;
+  }
+
+  const noteCount = range ? StyleRemixer.countNotesInChannel(srcParsed, range.startTick, range.endTick, channel) : 0;
+  const override = range ? StyleRemixer.getSectionChannelOverride(srcParsed, range.startTick, range.endTick, channel) : {};
+  const part = srcParsed.parts.find((p) => p.channel === channel);
+
+  const pc = override.pc ?? part?.programChange ?? 0;
+  const msb = override.bankMsb ?? part?.bankMsb ?? (channel === 9 ? 127 : 0);
+  const lsb = override.bankLsb ?? part?.bankLsb ?? (channel === 9 ? 0 : 112);
+  const yVoice = findYamahaVoice(msb, lsb, pc);
+  const voiceName = yVoice ? `${yVoice.name} (${yVoice.chineseName})` : `PC ${pc} (Bank ${msb}-${lsb})`;
+
+  detailsText.innerHTML = `音符數: <strong style="color: #38bdf8;">${noteCount}</strong> | 音色: <strong style="color: #e2e8f0;">${escapeHtml(voiceName)}</strong>`;
+}
+
+function updateAssemblyDestInfoBox() {
+  if (!currentParsed) return;
+  const selectDestSection = document.getElementById('assembly-dest-section') as HTMLSelectElement | null;
+  const selectDestPart = document.getElementById('assembly-dest-part') as HTMLSelectElement | null;
+  const detailsText = document.getElementById('assembly-dest-details-text');
+  const measureBadge = document.getElementById('assembly-dest-measure-badge');
+
+  if (!selectDestSection || !selectDestPart || !detailsText) return;
+
+  const secName = selectDestSection.value;
+  const channel = parseInt(selectDestPart.value, 10);
+  const range = StyleRemixer.getSectionTickRange(currentParsed, secName);
+  const bars = range?.measureCount ?? 1;
+
+  if (measureBadge) {
+    measureBadge.textContent = `${bars} 小節`;
+  }
+
+  const noteCount = range ? StyleRemixer.countNotesInChannel(currentParsed, range.startTick, range.endTick, channel) : 0;
+  const override = range ? StyleRemixer.getSectionChannelOverride(currentParsed, range.startTick, range.endTick, channel) : {};
+  const part = currentParsed.parts.find((p) => p.channel === channel);
+
+  const pc = override.pc ?? part?.programChange ?? 0;
+  const msb = override.bankMsb ?? part?.bankMsb ?? (channel === 9 ? 127 : 0);
+  const lsb = override.bankLsb ?? part?.bankLsb ?? (channel === 9 ? 0 : 112);
+  const yVoice = findYamahaVoice(msb, lsb, pc);
+  const voiceName = yVoice ? `${yVoice.name} (${yVoice.chineseName})` : `PC ${pc} (Bank ${msb}-${lsb})`;
+
+  detailsText.innerHTML = `目前音符: <strong style="color: #34d399;">${noteCount}</strong> | 目標音色: <strong style="color: #e2e8f0;">${escapeHtml(voiceName)}</strong>`;
+}
+
+function updateStyleAssemblyUI() {
+  if (!currentParsed || currentParsed.format !== 'STY') return;
+
+  const selectSrcStyle = document.getElementById('assembly-src-style') as HTMLSelectElement | null;
+  const selectSrcSection = document.getElementById('assembly-src-section') as HTMLSelectElement | null;
+  const selectSrcPart = document.getElementById('assembly-src-part') as HTMLSelectElement | null;
+  const selectDestSection = document.getElementById('assembly-dest-section') as HTMLSelectElement | null;
+  const selectDestPart = document.getElementById('assembly-dest-part') as HTMLSelectElement | null;
+
+  if (!selectSrcStyle || !selectSrcSection || !selectSrcPart || !selectDestSection || !selectDestPart) return;
+
+  // 1. 填入來源風格選項
+  const prevSrcStyleVal = selectSrcStyle.value;
+  let styleOptions = `<option value="current" ${prevSrcStyleVal === 'current' || !prevSrcStyleVal ? 'selected' : ''}>當前伴奏風格 (Current STY)</option>`;
+  for (const item of remixerPool) {
+    const isSel = prevSrcStyleVal === item.id;
+    styleOptions += `<option value="${escapeHtml(item.id)}" ${isSel ? 'selected' : ''}>${escapeHtml(item.name)}</option>`;
+  }
+  selectSrcStyle.innerHTML = styleOptions;
+
+  // 2. 取得來源 Parsed
+  const srcParsed = getAssemblySourceParsed();
+
+  // 3. 填入來源段落
+  const prevSrcSecVal = selectSrcSection.value;
+  const srcSections = StyleRemixer.getMusicalSections(srcParsed);
+  let srcSecOptions = '';
+  for (const sec of srcSections) {
+    const range = StyleRemixer.getSectionTickRange(srcParsed, sec.name);
+    const bars = range ? range.measureCount : 1;
+    const isSel = prevSrcSecVal ? prevSrcSecVal === sec.name : (sec.name === (currentActiveStySection || 'Main A'));
+    srcSecOptions += `<option value="${escapeHtml(sec.name)}" ${isSel ? 'selected' : ''}>${escapeHtml(sec.name)} (${bars} 小節)</option>`;
+  }
+  selectSrcSection.innerHTML = srcSecOptions;
+  if (!selectSrcSection.value && srcSections[0]) {
+    selectSrcSection.value = srcSections[0].name;
+  }
+
+  // 4. 填入來源聲部
+  refreshAssemblySrcParts();
+
+  // 5. 填入目標段落
+  const prevDestSecVal = selectDestSection.value;
+  const destSections = StyleRemixer.getMusicalSections(currentParsed);
+  let destSecOptions = '';
+  for (const sec of destSections) {
+    const range = StyleRemixer.getSectionTickRange(currentParsed, sec.name);
+    const bars = range ? range.measureCount : 1;
+    const isSel = prevDestSecVal
+      ? prevDestSecVal === sec.name
+      : (sec.name === (currentActiveStySection === 'Main A' ? 'Main B' : currentActiveStySection || 'Main B'));
+    destSecOptions += `<option value="${escapeHtml(sec.name)}" ${isSel ? 'selected' : ''}>${escapeHtml(sec.name)} (${bars} 小節)</option>`;
+  }
+  selectDestSection.innerHTML = destSecOptions;
+  if (!selectDestSection.value && destSections[0]) {
+    selectDestSection.value = destSections[0].name;
+  }
+
+  // 6. 填入目標聲部
+  refreshAssemblyDestParts();
+
+  // 7. 更新卡片資訊盒
+  updateAssemblySrcInfoBox();
+  updateAssemblyDestInfoBox();
+}
+
+function handleAssemblySuccess(message: string) {
+  const statusBadge = document.getElementById('assembly-status-badge');
+  const btnUndo = document.getElementById('btn-assembly-undo');
+
+  if (statusBadge) {
+    statusBadge.textContent = `✓ ${message}`;
+    statusBadge.style.display = 'inline-block';
+  }
+  if (btnUndo) {
+    btnUndo.style.display = 'inline-block';
+  }
+
+  updateStyleAssemblyUI();
+  renderSections(currentParsed!);
+  renderSectionPartMatrix(currentParsed!);
+  updateStyPartsSectionLinkage(currentParsed!, currentActiveStySection);
+  restartCurrentStySectionAudition();
+  if (currentActiveStySection && currentActiveStyPartChannel !== null) {
+    refreshCurrentPadDetail();
+  }
+  showStatus(`🧩 ${message}`);
+}
+
+function stopAssemblyAudition() {
+  if (isAssemblyAuditioningSrc) {
+    audioEngine.stopBackingTrack();
+    isAssemblyAuditioningSrc = false;
+    const btnAudition = document.getElementById('btn-assembly-audition-src') as HTMLButtonElement | null;
+    if (btnAudition) {
+      btnAudition.textContent = '🎧 試聽來源聲部';
+      btnAudition.classList.remove('playing');
+    }
+  }
+}
+
+function playAssemblySourcePartAudition() {
+  const srcParsed = getAssemblySourceParsed();
+  const selectSrcSection = document.getElementById('assembly-src-section') as HTMLSelectElement | null;
+  const selectSrcPart = document.getElementById('assembly-src-part') as HTMLSelectElement | null;
+  const btnAudition = document.getElementById('btn-assembly-audition-src') as HTMLButtonElement | null;
+  if (!srcParsed || !selectSrcSection || !selectSrcPart) return;
+
+  const secName = selectSrcSection.value;
+  const channel = parseInt(selectSrcPart.value, 10);
+  const range = StyleRemixer.getSectionTickRange(srcParsed, secName);
+  if (!range) return;
+
+  const notes = StyleRemixer.extractSectionChannelNotes(srcParsed, range.startTick, range.endTick, channel);
+  if (notes.length === 0) {
+    showStatus(`來源段落 [${secName}] 該聲部音符數為 0，無音符可試聽`, true);
+    return;
+  }
+
+  audioEngine.stopBackingTrack();
+  audioEngine.stop();
+  currentAuditionStySection = null;
+  updateStySectionAuditionButtons();
+
+  const division = srcParsed.division || 480;
+  const totalTicks = Math.max(division * 4, range.endTick - range.startTick);
+  const override = StyleRemixer.getSectionChannelOverride(srcParsed, range.startTick, range.endTick, channel);
+  const part = srcParsed.parts.find((p) => p.channel === channel);
+
+  const msb = override.bankMsb ?? part?.bankMsb ?? (channel === 9 ? 127 : 0);
+  const lsb = override.bankLsb ?? part?.bankLsb ?? (channel === 9 ? 0 : 112);
+  const pc = override.pc ?? part?.programChange ?? 0;
+  const vol = override.volume ?? part?.volume ?? 100;
+  const pan = override.pan ?? part?.pan ?? 64;
+  const reverb = part?.reverb ?? 40;
+  const chorus = part?.chorus ?? 0;
+
+  const { instrumentId: instId, isDrum } = resolveAuditionInstrumentId(msb, lsb, pc, channel);
+
+  const backingItem: BackingTrackItem = {
+    padNum: channel + 1,
+    notes: notes.map((n) => ({
+      note: n.note,
+      velocity: n.velocity,
+      startTick: n.startTick,
+      durationTick: n.durationTick,
+    })),
+    totalTicks,
+    channelParams: {
+      volume: vol,
+      pan,
+      reverb,
+      chorus,
+      instrumentId: instId,
+      msb,
+      lsb,
+      pc,
+      channel,
+      isDrum,
+    },
+  };
+
+  const styBpmInput = document.getElementById('sty-playback-bpm') as HTMLInputElement | null;
+  const bpm = styBpmInput ? (parseInt(styBpmInput.value, 10) || srcParsed.bpm || 120) : (srcParsed.bpm || 120);
+
+  isAssemblyAuditioningSrc = true;
+  if (btnAudition) {
+    btnAudition.textContent = '⏹ 停止試聽';
+    btnAudition.classList.add('playing');
+  }
+
+  audioEngine.startBackingTrack([backingItem], {
+    bpm,
+    division,
+    beatsPerBar: srcParsed.timeSignature?.numerator || 4,
+    volumeRatio: 1.0,
+    loop: true,
+    onProgress: (state) => {
+      if (currentCanvasRedrawWithPlayhead) {
+        currentCanvasRedrawWithPlayhead(state.relTick, state.activeNoteNumbers);
+      }
+    },
+    onEnded: () => {
+      isAssemblyAuditioningSrc = false;
+      if (btnAudition) {
+        btnAudition.textContent = '🎧 試聽來源聲部';
+        btnAudition.classList.remove('playing');
+      }
+      if (currentCanvasRedrawWithPlayhead) {
+        currentCanvasRedrawWithPlayhead(null);
+      }
+    },
+  });
+}
+
+function executeSingleAssembly() {
+  if (!currentParsed || currentParsed.format !== 'STY') return;
+
+  const selectSrcSection = document.getElementById('assembly-src-section') as HTMLSelectElement | null;
+  const selectSrcPart = document.getElementById('assembly-src-part') as HTMLSelectElement | null;
+  const selectDestSection = document.getElementById('assembly-dest-section') as HTMLSelectElement | null;
+  const selectDestPart = document.getElementById('assembly-dest-part') as HTMLSelectElement | null;
+  const selectCopyMode = document.getElementById('assembly-copy-mode') as HTMLSelectElement | null;
+  const selectLoopMode = document.getElementById('assembly-loop-mode') as HTMLSelectElement | null;
+  const inputTranspose = document.getElementById('assembly-transpose') as HTMLInputElement | null;
+  const selectVelocity = document.getElementById('assembly-velocity-scale') as HTMLSelectElement | null;
+  const chkSyncVoice = document.getElementById('assembly-sync-voice') as HTMLInputElement | null;
+
+  if (!selectSrcSection || !selectSrcPart || !selectDestSection || !selectDestPart) return;
+
+  const srcParsed = getAssemblySourceParsed();
+  const srcSection = selectSrcSection.value;
+  const srcChannel = parseInt(selectSrcPart.value, 10);
+  const destSection = selectDestSection.value;
+  const destChannel = parseInt(selectDestPart.value, 10);
+
+  lastAssemblySnapshotBytes = YamahaWriter.write(currentParsed);
+
+  const res = YamahaStyleAssembly.assemblePart({
+    destParsed: currentParsed,
+    destSection,
+    destChannel,
+    srcParsed,
+    srcSection,
+    srcChannel,
+    copyMode: (selectCopyMode?.value as 'replace' | 'merge') || 'replace',
+    loopMode: (selectLoopMode?.value as 'loop' | 'once') || 'loop',
+    transposeShift: parseInt(inputTranspose?.value || '0', 10) || 0,
+    velocityScale: parseFloat(selectVelocity?.value || '1.0') || 1.0,
+    copyVoiceParams: chkSyncVoice ? chkSyncVoice.checked : true,
+  });
+
+  if (res.success) {
+    handleAssemblySuccess(res.message);
+  } else {
+    showStatus(res.message, true);
+  }
+}
+
+function executeBatchAllMains() {
+  if (!currentParsed || currentParsed.format !== 'STY') return;
+  const selectSrcSection = document.getElementById('assembly-src-section') as HTMLSelectElement | null;
+  const selectSrcPart = document.getElementById('assembly-src-part') as HTMLSelectElement | null;
+  const selectCopyMode = document.getElementById('assembly-copy-mode') as HTMLSelectElement | null;
+  const selectLoopMode = document.getElementById('assembly-loop-mode') as HTMLSelectElement | null;
+  const inputTranspose = document.getElementById('assembly-transpose') as HTMLInputElement | null;
+  const selectVelocity = document.getElementById('assembly-velocity-scale') as HTMLSelectElement | null;
+  const chkSyncVoice = document.getElementById('assembly-sync-voice') as HTMLInputElement | null;
+
+  if (!selectSrcSection || !selectSrcPart) return;
+
+  const srcParsed = getAssemblySourceParsed();
+  const srcSection = selectSrcSection.value;
+  const channel = parseInt(selectSrcPart.value, 10);
+
+  lastAssemblySnapshotBytes = YamahaWriter.write(currentParsed);
+
+  const res = YamahaStyleAssembly.copyPartToAllMains(currentParsed, srcSection, channel, srcParsed, {
+    copyMode: (selectCopyMode?.value as 'replace' | 'merge') || 'replace',
+    loopMode: (selectLoopMode?.value as 'loop' | 'once') || 'loop',
+    transposeShift: parseInt(inputTranspose?.value || '0', 10) || 0,
+    velocityScale: parseFloat(selectVelocity?.value || '1.0') || 1.0,
+    copyVoiceParams: chkSyncVoice ? chkSyncVoice.checked : true,
+  });
+
+  if (res.success) {
+    handleAssemblySuccess(res.message);
+  } else {
+    showStatus(res.message, true);
+  }
+}
+
+function executeBatchAllFills() {
+  if (!currentParsed || currentParsed.format !== 'STY') return;
+  const selectSrcSection = document.getElementById('assembly-src-section') as HTMLSelectElement | null;
+  const selectSrcPart = document.getElementById('assembly-src-part') as HTMLSelectElement | null;
+  const selectCopyMode = document.getElementById('assembly-copy-mode') as HTMLSelectElement | null;
+  const selectLoopMode = document.getElementById('assembly-loop-mode') as HTMLSelectElement | null;
+  const inputTranspose = document.getElementById('assembly-transpose') as HTMLInputElement | null;
+  const selectVelocity = document.getElementById('assembly-velocity-scale') as HTMLSelectElement | null;
+  const chkSyncVoice = document.getElementById('assembly-sync-voice') as HTMLInputElement | null;
+
+  if (!selectSrcSection || !selectSrcPart) return;
+
+  const srcParsed = getAssemblySourceParsed();
+  const srcSection = selectSrcSection.value;
+  const channel = parseInt(selectSrcPart.value, 10);
+
+  lastAssemblySnapshotBytes = YamahaWriter.write(currentParsed);
+
+  const res = YamahaStyleAssembly.copyPartToAllFills(currentParsed, srcSection, channel, srcParsed, {
+    copyMode: (selectCopyMode?.value as 'replace' | 'merge') || 'replace',
+    loopMode: (selectLoopMode?.value as 'loop' | 'once') || 'loop',
+    transposeShift: parseInt(inputTranspose?.value || '0', 10) || 0,
+    velocityScale: parseFloat(selectVelocity?.value || '1.0') || 1.0,
+    copyVoiceParams: chkSyncVoice ? chkSyncVoice.checked : true,
+  });
+
+  if (res.success) {
+    handleAssemblySuccess(res.message);
+  } else {
+    showStatus(res.message, true);
+  }
+}
+
+function executeCloneFullSection() {
+  if (!currentParsed || currentParsed.format !== 'STY') return;
+  const selectSrcSection = document.getElementById('assembly-src-section') as HTMLSelectElement | null;
+  const selectDestSection = document.getElementById('assembly-dest-section') as HTMLSelectElement | null;
+  const selectCopyMode = document.getElementById('assembly-copy-mode') as HTMLSelectElement | null;
+  const selectLoopMode = document.getElementById('assembly-loop-mode') as HTMLSelectElement | null;
+  const chkSyncVoice = document.getElementById('assembly-sync-voice') as HTMLInputElement | null;
+
+  if (!selectSrcSection || !selectDestSection) return;
+
+  const srcParsed = getAssemblySourceParsed();
+  const srcSection = selectSrcSection.value;
+  const destSection = selectDestSection.value;
+
+  if (srcParsed === currentParsed && srcSection === destSection) {
+    showStatus('來源段落與目標段落相同，請選擇不同的目標段落進行克隆', true);
+    return;
+  }
+
+  lastAssemblySnapshotBytes = YamahaWriter.write(currentParsed);
+
+  const res = YamahaStyleAssembly.cloneFullSection({
+    destParsed: currentParsed,
+    destSection,
+    srcParsed,
+    srcSection,
+    copyMode: (selectCopyMode?.value as 'replace' | 'merge') || 'replace',
+    loopMode: (selectLoopMode?.value as 'loop' | 'once') || 'loop',
+    copyVoiceParams: chkSyncVoice ? chkSyncVoice.checked : true,
+  });
+
+  if (res.success) {
+    handleAssemblySuccess(res.message);
+  } else {
+    showStatus(res.message, true);
+  }
+}
+
+function executeAssemblyUndo() {
+  if (!lastAssemblySnapshotBytes) {
+    showStatus('目前無可復原的組裝操作', true);
+    return;
+  }
+
+  currentParsed = YamahaParser.parse(lastAssemblySnapshotBytes, 'STY');
+  lastAssemblySnapshotBytes = null;
+
+  const btnUndo = document.getElementById('btn-assembly-undo');
+  const statusBadge = document.getElementById('assembly-status-badge');
+  if (btnUndo) btnUndo.style.display = 'none';
+  if (statusBadge) {
+    statusBadge.textContent = '↩️ 已復原至組裝前的狀態';
+    statusBadge.style.display = 'inline-block';
+  }
+
+  updateStyleAssemblyUI();
+  renderSections(currentParsed);
+  renderSectionPartMatrix(currentParsed);
+  updateStyPartsSectionLinkage(currentParsed, currentActiveStySection);
+  restartCurrentStySectionAudition();
+  if (currentActiveStySection && currentActiveStyPartChannel !== null) {
+    refreshCurrentPadDetail();
+  }
+  showStatus('↩️ 已成功復原上一次聲部組裝操作！');
+}
+
+function initStyleAssemblyUI() {
+  if (isStyleAssemblyEventsBound) return;
+  isStyleAssemblyEventsBound = true;
+
+  const btnToggle = document.getElementById('btn-toggle-style-assembly');
+  const container = document.getElementById('sty-assembly-container');
+  const btnClose = document.getElementById('btn-assembly-close');
+
+  const toggleAssembly = () => {
+    if (!container) return;
+    const isHidden = container.style.display === 'none';
+    container.style.display = isHidden ? 'block' : 'none';
+    if (btnToggle) {
+      btnToggle.textContent = isHidden ? '✕ 收合組裝精靈' : '🧩 聲部組裝精靈';
+      btnToggle.classList.toggle('active-rp', isHidden);
+    }
+    if (isHidden && currentParsed && currentParsed.format === 'STY') {
+      updateStyleAssemblyUI();
+      container.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  };
+
+  btnToggle?.addEventListener('click', toggleAssembly);
+  btnClose?.addEventListener('click', () => {
+    if (container) container.style.display = 'none';
+    if (btnToggle) {
+      btnToggle.textContent = '🧩 聲部組裝精靈';
+      btnToggle.classList.remove('active-rp');
+    }
+    stopAssemblyAudition();
+  });
+
+  const selectSrcStyle = document.getElementById('assembly-src-style') as HTMLSelectElement | null;
+  const selectSrcSection = document.getElementById('assembly-src-section') as HTMLSelectElement | null;
+  const selectSrcPart = document.getElementById('assembly-src-part') as HTMLSelectElement | null;
+  const selectDestSection = document.getElementById('assembly-dest-section') as HTMLSelectElement | null;
+  const selectDestPart = document.getElementById('assembly-dest-part') as HTMLSelectElement | null;
+
+  selectSrcStyle?.addEventListener('change', () => {
+    updateStyleAssemblyUI();
+  });
+
+  selectSrcSection?.addEventListener('change', () => {
+    refreshAssemblySrcParts();
+    updateAssemblySrcInfoBox();
+    if (selectSrcPart && selectDestPart) {
+      selectDestPart.value = selectSrcPart.value;
+    }
+    updateAssemblyDestInfoBox();
+  });
+
+  selectSrcPart?.addEventListener('change', () => {
+    updateAssemblySrcInfoBox();
+    if (selectSrcPart && selectDestPart) {
+      selectDestPart.value = selectSrcPart.value;
+    }
+    updateAssemblyDestInfoBox();
+  });
+
+  selectDestSection?.addEventListener('change', () => {
+    updateAssemblyDestInfoBox();
+  });
+
+  selectDestPart?.addEventListener('change', () => {
+    updateAssemblyDestInfoBox();
+  });
+
+  // 試聽來源聲部
+  const btnAuditionSrc = document.getElementById('btn-assembly-audition-src') as HTMLButtonElement | null;
+  btnAuditionSrc?.addEventListener('click', () => {
+    if (isAssemblyAuditioningSrc) {
+      stopAssemblyAudition();
+    } else {
+      playAssemblySourcePartAudition();
+    }
+  });
+
+  // 試聽目標段落合奏
+  const btnAuditionDest = document.getElementById('btn-assembly-audition-dest') as HTMLButtonElement | null;
+  btnAuditionDest?.addEventListener('click', () => {
+    if (!currentParsed || currentParsed.format !== 'STY') return;
+    const destSec = selectDestSection?.value || currentActiveStySection || 'Main A';
+    toggleStySectionAudition(destSec);
+  });
+
+  // 立即執行組裝
+  const btnExecute = document.getElementById('btn-assembly-execute') as HTMLButtonElement | null;
+  btnExecute?.addEventListener('click', () => {
+    executeSingleAssembly();
+  });
+
+  // 一鍵複製到所有 Main
+  const btnBatchAllMains = document.getElementById('btn-assembly-batch-all-mains') as HTMLButtonElement | null;
+  btnBatchAllMains?.addEventListener('click', () => {
+    executeBatchAllMains();
+  });
+
+  // 一鍵複製到所有 Fill In
+  const btnBatchAllFills = document.getElementById('btn-assembly-batch-all-fills') as HTMLButtonElement | null;
+  btnBatchAllFills?.addEventListener('click', () => {
+    executeBatchAllFills();
+  });
+
+  // 整段段落克隆
+  const btnBatchClone = document.getElementById('btn-assembly-batch-clone-section') as HTMLButtonElement | null;
+  btnBatchClone?.addEventListener('click', () => {
+    executeCloneFullSection();
+  });
+
+  // 復原
+  const btnUndo = document.getElementById('btn-assembly-undo') as HTMLButtonElement | null;
+  btnUndo?.addEventListener('click', () => {
+    executeAssemblyUndo();
+  });
+}
+
 function toggleStySectionAudition(sectionName: string, startBar?: number) {
   if (!currentParsed || currentParsed.format !== 'STY') return;
 
@@ -6494,11 +7121,23 @@ function renderSections(parsed: YamahaFileParsed) {
     btnTogglePartMatrix.style.display = isPad ? 'none' : 'inline-flex';
   }
 
+  const btnToggleStyleAssembly = document.getElementById('btn-toggle-style-assembly');
+  if (btnToggleStyleAssembly) {
+    btnToggleStyleAssembly.style.display = isPad ? 'none' : 'inline-flex';
+  }
+
   const matrixContainer = document.getElementById('sty-part-matrix-container');
   if (isPad && matrixContainer) {
     matrixContainer.style.display = 'none';
   } else if (!isPad && matrixContainer && matrixContainer.style.display !== 'none') {
     renderSectionPartMatrix(parsed);
+  }
+
+  const assemblyContainer = document.getElementById('sty-assembly-container');
+  if (isPad && assemblyContainer) {
+    assemblyContainer.style.display = 'none';
+  } else if (!isPad && assemblyContainer && assemblyContainer.style.display !== 'none') {
+    updateStyleAssemblyUI();
   }
 
   sectionCount.textContent = isPad ? '4 組打擊墊設定' : `${parsed.sections.length} 個標記段落`;

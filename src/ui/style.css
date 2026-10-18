@@ -2597,4 +2597,52 @@ body {
   border-color: #ef4444;
 }
 
+/* ========================================================
+   方案 B: Yamaha 伴奏聲部組裝精靈 (Style Section Assembly Studio)
+   ======================================================== */
+.sty-assembly-container {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  animation: fadeInAssembly 0.2s ease-out;
+}
+
+@keyframes fadeInAssembly {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.assembly-card {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.assembly-card:hover {
+  border-color: #3b82f6;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.assembly-settings-bar select,
+.assembly-settings-bar input[type="number"] {
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.assembly-settings-bar select:focus,
+.assembly-settings-bar input[type="number"]:focus {
+  border-color: #0ea5e9;
+  outline: none;
+  background: #181d2c;
+}
+
+.btn-assembly-audition.playing {
+  background: rgba(239, 68, 68, 0.25) !important;
+  color: #f87171 !important;
+  border-color: #ef4444 !important;
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.35);
+}
+
+
 
