@@ -6359,7 +6359,9 @@ function refreshAssemblyDestParts() {
   if (!overview) return;
 
   const preferredCh = selectSrcPart ? selectSrcPart.value : null;
-  const prevVal = selectDestPart.value || preferredCh;
+  // 優先跟隨來源聲部的通道 (如左邊選鼓組 Ch 10，右邊預設也對齊 Ch 10)，避免跨聲部誤貼
+  const hasPreferredInDest = preferredCh !== null && overview.parts.some((p) => String(p.channel) === preferredCh);
+  const prevVal = hasPreferredInDest ? preferredCh : (selectDestPart.value || preferredCh);
 
   let partOptions = '';
   for (const part of overview.parts) {
@@ -6933,16 +6935,17 @@ function initStyleAssemblyUI() {
     optionsHtml += `<option value="__custom__">➕ 自訂段落名稱...</option>`;
     selectNewSecName.innerHTML = optionsHtml;
 
-    // 填充初始內容 / 完整克隆來源選單
+    // 填充初始內容 / 完整克隆來源選單 (預設為空白段落，只有使用者明確主動挑選時才進行克隆複製)
     if (selectCloneSrc) {
       const existingSections = StyleRemixer.getMusicalSections(currentParsed);
-      let cloneOptions = `<option value="__empty__">空白段落 (Empty - 從零手動組裝)</option>`;
+      let cloneOptions = `<option value="__empty__" selected>空白段落 (Empty - 從零手動組裝，不複製任何內容)</option>`;
       for (const sec of existingSections) {
         const range = StyleRemixer.getSectionTickRange(currentParsed, sec.name);
         const bars = range?.measureCount ?? 1;
         cloneOptions += `<option value="${escapeHtml(sec.name)}">複製自 ${escapeHtml(sec.name)} (${bars} 小節 - 完整克隆所有聲部)</option>`;
       }
       selectCloneSrc.innerHTML = cloneOptions;
+      selectCloneSrc.value = '__empty__';
     }
 
     handleSecNameChange();
@@ -6954,26 +6957,7 @@ function initStyleAssemblyUI() {
     inputNewSecCustomName.style.display = isCustom ? 'block' : 'none';
     const val = isCustom ? (inputNewSecCustomName.value.trim() || '') : selectNewSecName.value;
 
-    // 智慧推薦初始克隆來源
-    if (selectCloneSrc && currentParsed) {
-      const existingSections = StyleRemixer.getMusicalSections(currentParsed).map((s) => s.name);
-      let recommendedSrc = '';
-      const vLower = val.toLowerCase();
-      if (vLower.includes('end')) {
-        recommendedSrc = existingSections.find((s) => s.toLowerCase().includes('end')) || existingSections.find((s) => s.startsWith('Main')) || '';
-      } else if (vLower.includes('intro')) {
-        recommendedSrc = existingSections.find((s) => s.toLowerCase().includes('intro')) || existingSections.find((s) => s.startsWith('Main')) || '';
-      } else if (vLower.includes('fill') || vLower.includes('break')) {
-        recommendedSrc = existingSections.find((s) => s.toLowerCase().includes('fill')) || existingSections.find((s) => s.startsWith('Main')) || '';
-      } else if (vLower.startsWith('main')) {
-        recommendedSrc = existingSections.find((s) => s.startsWith('Main')) || '';
-      }
-      if (recommendedSrc && existingSections.includes(recommendedSrc)) {
-        selectCloneSrc.value = recommendedSrc;
-      }
-    }
-
-    // 若有選取克隆來源，優先同步其小節長度；否則依類型推算
+    // 若使用者主動選取了克隆來源，同步其小節長度；否則依段落類型給予標準小節數
     if (selectCloneSrc && selectCloneSrc.value !== '__empty__' && currentParsed) {
       const range = StyleRemixer.getSectionTickRange(currentParsed, selectCloneSrc.value);
       if (range) {
@@ -7051,9 +7035,16 @@ function initStyleAssemblyUI() {
         }
       }
       toggleAddSectionPanel(false);
+      if (selectDestSection) {
+        selectDestSection.value = sectionName;
+      }
       handleAssemblySuccess(finalMessage);
       if (selectDestSection) {
         selectDestSection.value = sectionName;
+      }
+      refreshAssemblyDestParts();
+      if (selectSrcPart && selectDestPart) {
+        selectDestPart.value = selectSrcPart.value;
       }
       updateAssemblyDestInfoBox();
     } else {
