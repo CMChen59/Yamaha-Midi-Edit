@@ -58,7 +58,7 @@ export class YamahaStyleModifier {
         reverb: 40,
         chorus: 0,
         bankMsb: isDrum ? 127 : 0,
-        bankLsb: isDrum ? 0 : 112,
+        bankLsb: 0,
         programChange: 0,
       };
       parsed.parts.push(part);

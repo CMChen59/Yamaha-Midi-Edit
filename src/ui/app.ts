@@ -118,25 +118,25 @@ export interface InstrumentPreset {
 }
 
 export const PRESET_INSTRUMENTS: InstrumentPreset[] = [
-  { id: 'piano', label: '🎹 鋼琴 (Concert Grand)', icon: 'S801', msb: 0, lsb: 112, pc: 0 },
-  { id: 'epiano', label: '🎹 電鋼琴 (DX E.Piano)', icon: 'S802', msb: 0, lsb: 112, pc: 4 },
+  { id: 'piano', label: '🎹 鋼琴 (Concert Grand)', icon: 'S801', msb: 0, lsb: 0, pc: 0 },
+  { id: 'epiano', label: '🎹 電鋼琴 (DX E.Piano)', icon: 'S802', msb: 0, lsb: 0, pc: 4 },
   { id: 'strings', label: '🎻 弦樂 (Live! Strings)', icon: 'S805', msb: 8, lsb: 33, pc: 49 },
   { id: 'kino_strings', label: '🎻 電影弦樂 (Kino Strings)', icon: 'S805', msb: 8, lsb: 35, pc: 49 },
   { id: 'pizzicato', label: '🎻 撥弦 (Pizzicato)', icon: 'S806', msb: 0, lsb: 113, pc: 75 },
-  { id: 'steel_guitar', label: '🎸 鋼弦吉他 (Steel Guitar)', icon: 'S809', msb: 0, lsb: 112, pc: 25 },
-  { id: 'nylon_guitar', label: '🎸 尼龍吉他 (Nylon Guitar)', icon: 'S809', msb: 0, lsb: 112, pc: 24 },
-  { id: 'clean_guitar', label: '🎸 電吉他 (Clean Guitar)', icon: 'S810', msb: 0, lsb: 112, pc: 27 },
-  { id: 'bass', label: '🎸 指彈貝斯 (Finger Bass)', icon: 'S811', msb: 0, lsb: 112, pc: 33 },
-  { id: 'synth_bass', label: '🎛️ 合成貝斯 (Synth Bass)', icon: 'S812', msb: 0, lsb: 112, pc: 38 },
-  { id: 'wind_sax', label: '🎷 薩克斯風 (Breathy Sax)', icon: 'S825', msb: 0, lsb: 112, pc: 66 },
-  { id: 'flute', label: '🪈 長笛 (Sweet! Flute)', icon: 'S827', msb: 0, lsb: 112, pc: 73 },
-  { id: 'brass', label: '🎺 銅管組 (Brass Section)', icon: 'S826', msb: 0, lsb: 112, pc: 61 },
-  { id: 'accordion', label: '🪗 手風琴 (Accordion)', icon: 'S818', msb: 0, lsb: 112, pc: 21 },
-  { id: 'choir', label: '👼 人聲合唱 (Choir)', icon: 'S823', msb: 0, lsb: 112, pc: 52 },
-  { id: 'synth_lead', label: '🎛️ 合成主奏 (Square Lead)', icon: 'S820', msb: 0, lsb: 112, pc: 80 },
-  { id: 'synth_pad', label: '🌌 溫暖鋪底 (Warm Pad)', icon: 'S821', msb: 0, lsb: 112, pc: 89 },
+  { id: 'steel_guitar', label: '🎸 鋼弦吉他 (Steel Guitar)', icon: 'S809', msb: 0, lsb: 0, pc: 25 },
+  { id: 'nylon_guitar', label: '🎸 尼龍吉他 (Nylon Guitar)', icon: 'S809', msb: 0, lsb: 0, pc: 24 },
+  { id: 'clean_guitar', label: '🎸 電吉他 (Clean Guitar)', icon: 'S810', msb: 0, lsb: 0, pc: 27 },
+  { id: 'bass', label: '🎸 指彈貝斯 (Finger Bass)', icon: 'S811', msb: 0, lsb: 0, pc: 33 },
+  { id: 'synth_bass', label: '🎛️ 合成貝斯 (Synth Bass)', icon: 'S812', msb: 0, lsb: 0, pc: 38 },
+  { id: 'wind_sax', label: '🎷 薩克斯風 (Breathy Sax)', icon: 'S825', msb: 0, lsb: 0, pc: 66 },
+  { id: 'flute', label: '🪈 長笛 (Sweet! Flute)', icon: 'S827', msb: 0, lsb: 0, pc: 73 },
+  { id: 'brass', label: '🎺 銅管組 (Brass Section)', icon: 'S826', msb: 0, lsb: 0, pc: 61 },
+  { id: 'accordion', label: '🪗 手風琴 (Accordion)', icon: 'S818', msb: 0, lsb: 0, pc: 21 },
+  { id: 'choir', label: '👼 人聲合唱 (Choir)', icon: 'S823', msb: 0, lsb: 0, pc: 52 },
+  { id: 'synth_lead', label: '🎛️ 合成主奏 (Square Lead)', icon: 'S820', msb: 0, lsb: 0, pc: 80 },
+  { id: 'synth_pad', label: '🌌 溫暖鋪底 (Warm Pad)', icon: 'S821', msb: 0, lsb: 0, pc: 89 },
   { id: 'drums', label: '🥁 標準鼓組 (Standard Kit)', icon: 'S815', msb: 127, lsb: 0, pc: 0 },
-  { id: 'perc_fx', label: '🔔 打擊音效 (Perc / FX)', icon: 'S830', msb: 0, lsb: 112, pc: 115 },
+  { id: 'perc_fx', label: '🔔 打擊音效 (Perc / FX)', icon: 'S830', msb: 0, lsb: 0, pc: 115 },
 ];
 
 let currentActivePadNum: number = 1;
@@ -2122,7 +2122,7 @@ function toggleTrackAudition(trackIndex: number) {
     totalTicks: track.totalTicks,
     channelParams: {
       msb: track.bankMsb ?? 0,
-      lsb: track.bankLsb ?? 112,
+      lsb: track.bankLsb ?? 0,
       pc: track.programChange ?? 0,
       channel: track.channel,
     },
@@ -3254,7 +3254,7 @@ function toggleStyleTrackAudition(trackIndex: number) {
     totalTicks: Math.max(playTotalTicks, 1),
     channelParams: {
       msb: isDrum ? 127 : (track.bankMsb ?? 0),
-      lsb: isDrum ? 0 : (track.bankLsb ?? 112),
+      lsb: isDrum ? 0 : (track.bankLsb ?? 0),
       pc: track.programChange ?? 0,
       channel: midiChannel,
       isDrum,
@@ -3344,7 +3344,7 @@ function toggleStyleEnsembleAudition() {
       totalTicks: sliceTotalTicks,
       channelParams: {
         msb: isDrum ? 127 : (track.bankMsb ?? 0),
-        lsb: isDrum ? 0 : (track.bankLsb ?? 112),
+        lsb: isDrum ? 0 : (track.bankLsb ?? 0),
         pc: track.programChange ?? 0,
         channel: targetChannel,
         isDrum,
@@ -6554,8 +6554,8 @@ function updateAssemblySrcInfoBox() {
   const part = srcParsed.parts.find((p) => p.channel === channel);
 
   const pc = override.pc ?? part?.programChange ?? 0;
-  const msb = override.bankMsb ?? part?.bankMsb ?? (channel === 9 ? 127 : 0);
-  const lsb = override.bankLsb ?? part?.bankLsb ?? (channel === 9 ? 0 : 112);
+  const msb = override.bankMsb ?? part?.bankMsb ?? (channel === 8 || channel === 9 ? 127 : 0);
+  const lsb = override.bankLsb ?? part?.bankLsb ?? 0;
   const yVoice = findYamahaVoice(msb, lsb, pc);
   const voiceName = yVoice ? `${yVoice.name} (${yVoice.chineseName})` : `PC ${pc} (Bank ${msb}-${lsb})`;
 
@@ -6629,8 +6629,8 @@ function updateAssemblyDestInfoBox() {
   const part = currentParsed.parts.find((p) => p.channel === channel);
 
   const pc = override.pc ?? part?.programChange ?? 0;
-  const msb = override.bankMsb ?? part?.bankMsb ?? (channel === 9 ? 127 : 0);
-  const lsb = override.bankLsb ?? part?.bankLsb ?? (channel === 9 ? 0 : 112);
+  const msb = override.bankMsb ?? part?.bankMsb ?? (channel === 8 || channel === 9 ? 127 : 0);
+  const lsb = override.bankLsb ?? part?.bankLsb ?? 0;
   const yVoice = findYamahaVoice(msb, lsb, pc);
   const voiceName = yVoice ? `${yVoice.name} (${yVoice.chineseName})` : `PC ${pc} (Bank ${msb}-${lsb})`;
 
@@ -6779,8 +6779,8 @@ function playAssemblySourcePartAudition() {
   const override = StyleRemixer.getSectionChannelOverride(srcParsed, range.startTick, range.endTick, channel);
   const part = srcParsed.parts.find((p) => p.channel === channel);
 
-  const msb = override.bankMsb ?? part?.bankMsb ?? (channel === 9 ? 127 : 0);
-  const lsb = override.bankLsb ?? part?.bankLsb ?? (channel === 9 ? 0 : 112);
+  const msb = override.bankMsb ?? part?.bankMsb ?? (channel === 8 || channel === 9 ? 127 : 0);
+  const lsb = override.bankLsb ?? part?.bankLsb ?? 0;
   const pc = override.pc ?? part?.programChange ?? 0;
   const vol = override.volume ?? part?.volume ?? 100;
   const pan = override.pan ?? part?.pan ?? 64;
@@ -7516,8 +7516,8 @@ function toggleStySectionAudition(sectionName: string, startBar?: number) {
 
     // 取得該通道在此段落的音色、音量與聲相設定 (優先使用本段專屬 override)
     const override = StyleRemixer.getSectionChannelOverride(currentParsed, range.startTick, range.endTick, ch);
-    const msb = override.bankMsb ?? part.bankMsb ?? (ch === 9 ? 127 : 0);
-    const lsb = override.bankLsb ?? part.bankLsb ?? (ch === 9 ? 0 : 112);
+    const msb = override.bankMsb ?? part.bankMsb ?? (ch === 8 || ch === 9 ? 127 : 0);
+    const lsb = override.bankLsb ?? part.bankLsb ?? 0;
     const pc = override.pc ?? part.programChange ?? 0;
     const vol = override.volume ?? part.volume ?? 100;
     const pan = override.pan ?? part.pan ?? 64;
@@ -8302,8 +8302,8 @@ function showStyPartNotesDetail(parsed: YamahaFileParsed, sectionName: string, c
   // 提取音色與聲部資訊
   const part = parsed.parts.find(p => p.channel === channel);
   const override = StyleRemixer.getSectionChannelOverride(parsed, range.startTick, range.endTick, channel);
-  const msb = override.bankMsb ?? part?.bankMsb ?? (channel === 9 ? 127 : 0);
-  const lsb = override.bankLsb ?? part?.bankLsb ?? (channel === 9 ? 0 : 112);
+  const msb = override.bankMsb ?? part?.bankMsb ?? (channel === 8 || channel === 9 ? 127 : 0);
+  const lsb = override.bankLsb ?? part?.bankLsb ?? 0;
   const pc = override.pc ?? part?.programChange ?? 0;
 
   const meta = STY_PART_META[channel] || {
@@ -12325,8 +12325,8 @@ function renderParts(parsed: YamahaFileParsed) {
       const pan = part.pan ?? 64;
       const reverb = part.reverb ?? 40;
       const chorus = part.chorus ?? 0;
-      const bankMsb = part.bankMsb ?? (ch === 9 ? 127 : 0);
-      const bankLsb = part.bankLsb ?? (ch === 9 ? 0 : 112);
+      const bankMsb = part.bankMsb ?? (ch === 8 || ch === 9 ? 127 : 0);
+      const bankLsb = part.bankLsb ?? 0;
       const pc = part.programChange ?? 0;
 
       const isMuted = !!stylePartMuteState[ch];

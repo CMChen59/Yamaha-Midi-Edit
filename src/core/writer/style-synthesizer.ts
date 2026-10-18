@@ -135,65 +135,101 @@ export class YamahaStyleSynthesizer {
       },
     });
 
+    // Yamaha 原廠 Style 必要 SysEx 初始化序列 (XG Works Style Header, GM On, XG System On)
+    // 確保實體琴 (PSR-SX920/SX900/Genos) 伴奏引擎能正確識別並將音源切換至 XG 伴奏音色庫
+    absEvents.push({
+      absTick: 0,
+      priority: 6,
+      event: {
+        delta: 0,
+        type: 'sysex',
+        rawBytes: new Uint8Array([0x43, 0x76, 0x1a, 0x10, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0xf7]),
+      },
+    });
+
+    absEvents.push({
+      absTick: 0,
+      priority: 7,
+      event: {
+        delta: 0,
+        type: 'sysex',
+        rawBytes: new Uint8Array([0x7e, 0x7f, 0x09, 0x01, 0xf7]),
+      },
+    });
+
+    absEvents.push({
+      absTick: Math.max(1, Math.round(ticksPerBar * 0.1)),
+      priority: 8,
+      event: {
+        delta: 0,
+        type: 'sysex',
+        rawBytes: new Uint8Array([0x43, 0x10, 0x4c, 0x00, 0x00, 0x7e, 0x00, 0xf7]),
+      },
+    });
+
+    const setupTick = Math.max(2, Math.round(ticksPerBar * 0.2));
+
     // 為 8 個伴奏聲部 (Channel 8~15) 寫入音色切換與混音控制器初始參數
     for (const p of activeParts) {
       const ch = p.channel;
       // Bank MSB (CC 0)
       absEvents.push({
-        absTick: 0,
+        absTick: setupTick,
         priority: 10,
         event: { delta: 0, type: 'controlChange', channel: ch, controller: 0, value: p.msb },
       });
       // Bank LSB (CC 32)
       absEvents.push({
-        absTick: 0,
+        absTick: setupTick,
         priority: 11,
         event: { delta: 0, type: 'controlChange', channel: ch, controller: 32, value: p.lsb },
       });
       // Program Change
       absEvents.push({
-        absTick: 0,
+        absTick: setupTick,
         priority: 12,
         event: { delta: 0, type: 'programChange', channel: ch, program: p.pc },
       });
       // Volume (CC 7)
       absEvents.push({
-        absTick: 0,
+        absTick: setupTick,
         priority: 13,
         event: { delta: 0, type: 'controlChange', channel: ch, controller: 7, value: p.volume },
       });
       // Pan (CC 10)
       absEvents.push({
-        absTick: 0,
+        absTick: setupTick,
         priority: 14,
         event: { delta: 0, type: 'controlChange', channel: ch, controller: 10, value: p.pan },
       });
       // Expression (CC 11: 127)
       absEvents.push({
-        absTick: 0,
+        absTick: setupTick,
         priority: 15,
         event: { delta: 0, type: 'controlChange', channel: ch, controller: 11, value: 127 },
       });
       // Reverb (CC 91)
       absEvents.push({
-        absTick: 0,
+        absTick: setupTick,
         priority: 16,
         event: { delta: 0, type: 'controlChange', channel: ch, controller: 91, value: p.reverb },
       });
       // Chorus (CC 93)
       absEvents.push({
-        absTick: 0,
+        absTick: setupTick,
         priority: 17,
         event: { delta: 0, type: 'controlChange', channel: ch, controller: 93, value: p.chorus },
       });
     }
 
     // --- 排程各曲式段落與音符 ---
+    // 依據 Yamaha SFF2 規範，第 1 小節 (Tick 0 ~ ticksPerBar) 固定保留給 SInt (初始化小節)，
+    // 所有正式音樂段落 (Main A, Fill In 等) 一律自第 2 小節 (ticksPerBar) 開始排列。
     const sections: YamahaSection[] = [
       { name: 'SFF2', startTick: 0, endTick: 0, measureCount: 0 },
-      { name: 'SInt', startTick: 0, endTick: 0, measureCount: 0 },
+      { name: 'SInt', startTick: 0, endTick: ticksPerBar, measureCount: 1 },
     ];
-    let currentSectionStartTick = 0;
+    let currentSectionStartTick = ticksPerBar;
 
     for (const sec of defaultSections) {
       const secBars = Math.max(1, sec.bars);

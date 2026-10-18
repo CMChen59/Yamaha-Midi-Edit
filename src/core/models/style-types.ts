@@ -111,7 +111,7 @@ export const DEFAULT_STYLE_PARTS: Record<StylePartId, StylePartConfig> = {
     channel: 10,
     name: 'Bass',
     msb: 0,
-    lsb: 112,
+    lsb: 0,
     pc: 33, // Finger Bass
     volume: 95,
     pan: 64,
@@ -123,7 +123,7 @@ export const DEFAULT_STYLE_PARTS: Record<StylePartId, StylePartConfig> = {
     channel: 11,
     name: 'Chord 1',
     msb: 0,
-    lsb: 112,
+    lsb: 0,
     pc: 0, // Grand Piano
     volume: 90,
     pan: 52,
@@ -135,7 +135,7 @@ export const DEFAULT_STYLE_PARTS: Record<StylePartId, StylePartConfig> = {
     channel: 12,
     name: 'Chord 2',
     msb: 0,
-    lsb: 112,
+    lsb: 0,
     pc: 24, // Acoustic Guitar
     volume: 85,
     pan: 76,
@@ -147,7 +147,7 @@ export const DEFAULT_STYLE_PARTS: Record<StylePartId, StylePartConfig> = {
     channel: 13,
     name: 'Pad',
     msb: 0,
-    lsb: 112,
+    lsb: 0,
     pc: 48, // Strings
     volume: 80,
     pan: 64,
@@ -159,7 +159,7 @@ export const DEFAULT_STYLE_PARTS: Record<StylePartId, StylePartConfig> = {
     channel: 14,
     name: 'Phrase 1',
     msb: 0,
-    lsb: 112,
+    lsb: 0,
     pc: 61, // Brass Section
     volume: 85,
     pan: 44,
@@ -171,7 +171,7 @@ export const DEFAULT_STYLE_PARTS: Record<StylePartId, StylePartConfig> = {
     channel: 15,
     name: 'Phrase 2',
     msb: 0,
-    lsb: 112,
+    lsb: 0,
     pc: 11, // Vibraphone
     volume: 80,
     pan: 84,

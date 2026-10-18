@@ -862,7 +862,7 @@ export class YamahaStyleAssembly {
   private static ensureDestPartEntry(parsed: YamahaFileParsed, channel: number): void {
     if (!parsed.parts.some((p) => p.channel === channel)) {
       const meta = YamahaStyleModifier.getPartDisplayMeta(channel);
-      const isDrum = channel === 9;
+      const isDrum = channel === 8 || channel === 9;
       parsed.parts.push({
         trackIndex: 0,
         channel,
@@ -872,7 +872,7 @@ export class YamahaStyleAssembly {
         reverb: 40,
         chorus: 0,
         bankMsb: isDrum ? 127 : 0,
-        bankLsb: isDrum ? 0 : 112,
+        bankLsb: 0,
         programChange: 0,
       });
       parsed.parts.sort((a, b) => a.channel - b.channel);
