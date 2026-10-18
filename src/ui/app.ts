@@ -6407,6 +6407,7 @@ function updateAssemblyDestInfoBox() {
   const selectDestPart = document.getElementById('assembly-dest-part') as HTMLSelectElement | null;
   const detailsText = document.getElementById('assembly-dest-details-text');
   const measureBadge = document.getElementById('assembly-dest-measure-badge');
+  const btnQuickClone = document.getElementById('btn-assembly-quick-clone-dest') as HTMLButtonElement | null;
 
   if (!selectDestSection || !selectDestPart || !detailsText) return;
 
@@ -6420,6 +6421,19 @@ function updateAssemblyDestInfoBox() {
   }
 
   const noteCount = range ? StyleRemixer.countNotesInChannel(currentParsed, range.startTick, range.endTick, channel) : 0;
+
+  // 計算整段總音符數（判斷是否為全空白段落）
+  let totalSecNotes = 0;
+  if (range && currentParsed.tracks[0]) {
+    let cur = 0;
+    for (const ev of currentParsed.tracks[0].events) {
+      cur += ev.delta;
+      if (cur >= range.startTick && cur < range.endTick && ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
+        totalSecNotes++;
+      }
+    }
+  }
+
   const override = range ? StyleRemixer.getSectionChannelOverride(currentParsed, range.startTick, range.endTick, channel) : {};
   const part = currentParsed.parts.find((p) => p.channel === channel);
 
@@ -6429,7 +6443,20 @@ function updateAssemblyDestInfoBox() {
   const yVoice = findYamahaVoice(msb, lsb, pc);
   const voiceName = yVoice ? `${yVoice.name} (${yVoice.chineseName})` : `PC ${pc} (Bank ${msb}-${lsb})`;
 
-  detailsText.innerHTML = `目前音符: <strong style="color: #34d399;">${noteCount}</strong> | 目標音色: <strong style="color: #e2e8f0;">${escapeHtml(voiceName)}</strong>`;
+  if (totalSecNotes === 0) {
+    detailsText.innerHTML = `此段落目前為 <strong style="color: #f87171;">空白段落 (0 音符)</strong> | 💡 可點擊右側按鈕一鍵複製來源段落`;
+    if (btnQuickClone) {
+      btnQuickClone.style.display = 'inline-block';
+      const selectSrcSection = document.getElementById('assembly-src-section') as HTMLSelectElement | null;
+      const srcSecName = selectSrcSection?.value || '來源段落';
+      btnQuickClone.textContent = `⚡ 從 [${srcSecName}] 整段填滿`;
+    }
+  } else {
+    detailsText.innerHTML = `目前音符: <strong style="color: #34d399;">${noteCount}</strong> | 整段總音符: <strong style="color: #38bdf8;">${totalSecNotes}</strong> | 音色: <strong style="color: #e2e8f0;">${escapeHtml(voiceName)}</strong>`;
+    if (btnQuickClone) {
+      btnQuickClone.style.display = 'none';
+    }
+  }
 }
 
 function updateStyleAssemblyUI() {
@@ -6879,6 +6906,7 @@ function initStyleAssemblyUI() {
   const selectNewSecName = document.getElementById('assembly-new-sec-name-select') as HTMLSelectElement | null;
   const inputNewSecCustomName = document.getElementById('assembly-new-sec-custom-name') as HTMLInputElement | null;
   const inputNewSecBars = document.getElementById('assembly-new-sec-bars') as HTMLInputElement | null;
+  const selectCloneSrc = document.getElementById('assembly-new-sec-clone-src') as HTMLSelectElement | null;
 
   const toggleAddSectionPanel = (show?: boolean) => {
     if (!addSectionPanel) return;
@@ -6904,6 +6932,19 @@ function initStyleAssemblyUI() {
     }
     optionsHtml += `<option value="__custom__">➕ 自訂段落名稱...</option>`;
     selectNewSecName.innerHTML = optionsHtml;
+
+    // 填充初始內容 / 完整克隆來源選單
+    if (selectCloneSrc) {
+      const existingSections = StyleRemixer.getMusicalSections(currentParsed);
+      let cloneOptions = `<option value="__empty__">空白段落 (Empty - 從零手動組裝)</option>`;
+      for (const sec of existingSections) {
+        const range = StyleRemixer.getSectionTickRange(currentParsed, sec.name);
+        const bars = range?.measureCount ?? 1;
+        cloneOptions += `<option value="${escapeHtml(sec.name)}">複製自 ${escapeHtml(sec.name)} (${bars} 小節 - 完整克隆所有聲部)</option>`;
+      }
+      selectCloneSrc.innerHTML = cloneOptions;
+    }
+
     handleSecNameChange();
   };
 
@@ -6911,10 +6952,37 @@ function initStyleAssemblyUI() {
     if (!selectNewSecName || !inputNewSecCustomName || !inputNewSecBars) return;
     const isCustom = selectNewSecName.value === '__custom__';
     inputNewSecCustomName.style.display = isCustom ? 'block' : 'none';
-    if (isCustom) {
-      inputNewSecCustomName.focus();
-    } else {
-      const val = selectNewSecName.value;
+    const val = isCustom ? (inputNewSecCustomName.value.trim() || '') : selectNewSecName.value;
+
+    // 智慧推薦初始克隆來源
+    if (selectCloneSrc && currentParsed) {
+      const existingSections = StyleRemixer.getMusicalSections(currentParsed).map((s) => s.name);
+      let recommendedSrc = '';
+      const vLower = val.toLowerCase();
+      if (vLower.includes('end')) {
+        recommendedSrc = existingSections.find((s) => s.toLowerCase().includes('end')) || existingSections.find((s) => s.startsWith('Main')) || '';
+      } else if (vLower.includes('intro')) {
+        recommendedSrc = existingSections.find((s) => s.toLowerCase().includes('intro')) || existingSections.find((s) => s.startsWith('Main')) || '';
+      } else if (vLower.includes('fill') || vLower.includes('break')) {
+        recommendedSrc = existingSections.find((s) => s.toLowerCase().includes('fill')) || existingSections.find((s) => s.startsWith('Main')) || '';
+      } else if (vLower.startsWith('main')) {
+        recommendedSrc = existingSections.find((s) => s.startsWith('Main')) || '';
+      }
+      if (recommendedSrc && existingSections.includes(recommendedSrc)) {
+        selectCloneSrc.value = recommendedSrc;
+      }
+    }
+
+    // 若有選取克隆來源，優先同步其小節長度；否則依類型推算
+    if (selectCloneSrc && selectCloneSrc.value !== '__empty__' && currentParsed) {
+      const range = StyleRemixer.getSectionTickRange(currentParsed, selectCloneSrc.value);
+      if (range) {
+        inputNewSecBars.value = String(range.measureCount);
+        return;
+      }
+    }
+
+    if (!isCustom) {
       if (val.startsWith('Fill') || val === 'Break') {
         inputNewSecBars.value = '1';
       } else if (val.startsWith('Intro') || val.startsWith('Ending')) {
@@ -6926,6 +6994,17 @@ function initStyleAssemblyUI() {
   };
 
   selectNewSecName?.addEventListener('change', handleSecNameChange);
+  inputNewSecCustomName?.addEventListener('input', handleSecNameChange);
+
+  selectCloneSrc?.addEventListener('change', () => {
+    if (!selectCloneSrc || !inputNewSecBars || !currentParsed) return;
+    if (selectCloneSrc.value !== '__empty__') {
+      const range = StyleRemixer.getSectionTickRange(currentParsed, selectCloneSrc.value);
+      if (range) {
+        inputNewSecBars.value = String(range.measureCount);
+      }
+    }
+  });
 
   document.querySelectorAll<HTMLButtonElement>('.btn-new-sec-bar-preset').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -6955,8 +7034,24 @@ function initStyleAssemblyUI() {
 
     const res = YamahaStyleAssembly.addNewSection(currentParsed, { sectionName, bars });
     if (res.success) {
+      let finalMessage = res.message;
+      if (selectCloneSrc && selectCloneSrc.value && selectCloneSrc.value !== '__empty__') {
+        const cloneSrc = selectCloneSrc.value;
+        const cloneRes = YamahaStyleAssembly.cloneFullSection({
+          destParsed: currentParsed,
+          destSection: sectionName,
+          srcParsed: currentParsed,
+          srcSection: cloneSrc,
+          copyMode: 'replace',
+          loopMode: 'loop',
+          copyVoiceParams: true,
+        });
+        if (cloneRes.success) {
+          finalMessage = `成功建立段落 [${sectionName}]，並已完整複製 [${cloneSrc}] 之所有聲部 (${cloneRes.channelsCloned.length} 軌、${cloneRes.totalNotesCopied} 音符)！`;
+        }
+      }
       toggleAddSectionPanel(false);
-      handleAssemblySuccess(res.message);
+      handleAssemblySuccess(finalMessage);
       if (selectDestSection) {
         selectDestSection.value = sectionName;
       }
@@ -6964,6 +7059,12 @@ function initStyleAssemblyUI() {
     } else {
       showStatus(res.message, true);
     }
+  });
+
+  // 目標段落空白時的一鍵整段填滿
+  const btnQuickCloneDest = document.getElementById('btn-assembly-quick-clone-dest') as HTMLButtonElement | null;
+  btnQuickCloneDest?.addEventListener('click', () => {
+    executeCloneFullSection();
   });
 
   // 試聽來源聲部

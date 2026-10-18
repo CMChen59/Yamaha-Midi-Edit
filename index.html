@@ -288,6 +288,10 @@
                     </div>
                   </div>
                 </div>
+                <div style="display: grid; grid-template-columns: 80px 1fr; gap: 6px; align-items: center; font-size: 0.74rem; margin-bottom: 8px;">
+                  <label for="assembly-new-sec-clone-src" style="color: #cbd5e1;">初始內容：</label>
+                  <select id="assembly-new-sec-clone-src" style="background: #0f131d; border: 1px solid #334155; border-radius: 4px; color: #34d399; padding: 2px 4px; font-size: 0.74rem; font-weight: 600;"></select>
+                </div>
                 <div style="display: flex; justify-content: flex-end; gap: 6px;">
                   <button type="button" id="btn-assembly-cancel-add-sec" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem;">取消</button>
                   <button type="button" id="btn-assembly-confirm-add-sec" class="btn btn-primary" style="background: linear-gradient(135deg, #10b981, #059669); border: none; padding: 2px 10px; font-size: 0.72rem; font-weight: 700;">✓ 建立段落</button>
@@ -299,9 +303,12 @@
                 <select id="assembly-dest-part" style="background: #141824; border: 1px solid #2d3748; border-radius: 4px; color: #f8fafc; padding: 3px 6px; font-size: 0.76rem; font-weight: 600;"></select>
               </div>
               <!-- 目標聲部即時資訊卡與試聽 -->
-              <div id="assembly-dest-info-box" style="background: #131722; border: 1px dashed #243048; border-radius: 4px; padding: 8px 10px; display: flex; justify-content: space-between; align-items: center; font-size: 0.74rem;">
+              <div id="assembly-dest-info-box" style="background: #131722; border: 1px dashed #243048; border-radius: 4px; padding: 8px 10px; display: flex; justify-content: space-between; align-items: center; font-size: 0.74rem; flex-wrap: wrap; gap: 6px;">
                 <div id="assembly-dest-details-text" style="color: #cbd5e1;">目前音符: 0 | 組裝後將更新</div>
-                <button type="button" id="btn-assembly-audition-dest" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem; background: rgba(16,185,129,0.15); color: #34d399; border: 1px solid rgba(16,185,129,0.35);">🎧 試聽目標段落</button>
+                <div style="display: flex; gap: 6px; align-items: center;">
+                  <button type="button" id="btn-assembly-quick-clone-dest" class="toggle-btn" style="display: none; padding: 2px 8px; font-size: 0.72rem; background: rgba(192,132,252,0.18); color: #c084fc; border: 1px solid rgba(192,132,252,0.4); font-weight: 600;" title="一鍵將來源段落的所有聲部完整克隆複製至此段落">⚡ 從來源整段填滿</button>
+                  <button type="button" id="btn-assembly-audition-dest" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem; background: rgba(16,185,129,0.15); color: #34d399; border: 1px solid rgba(16,185,129,0.35);">🎧 試聽目標段落</button>
+                </div>
               </div>
             </div>
           </div>
