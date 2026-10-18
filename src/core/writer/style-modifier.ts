@@ -7,7 +7,7 @@
 import { YamahaPadModifier } from './pad-modifier';
 import { StyleRemixer } from './style-remixer';
 import { PadRecorder, type QuantizeGrid } from './pad-recorder';
-import { DEFAULT_STYLE_PARTS } from '../models/style-types';
+import { DEFAULT_STYLE_PARTS, type SectionPartMuteMap, type SectionPartMatrixCell, type SectionPartMatrixRow, type StylePartId } from '../models/style-types';
 import type {
   YamahaFileParsed,
   MidiTrack,
@@ -1204,6 +1204,416 @@ export class YamahaStyleModifier {
     YamahaPadModifier.rebuildTrackRawChunk(track0);
     return deletedCount;
   }
+
+  // ========================================================
+  // 段落聲部開口矩陣 (Section Part On/Off Matrix) 核心管理
+  // ========================================================
+
+  public static readonly PART_DISPLAY_META: Record<number, { id: StylePartId; name: string; shortName: string; icon: string }> = {
+    // SFF1 通道 (0~7, 對應 MIDI Ch 1~8)
+    0: { id: 'Rhythm1', name: 'Sub Rhythm (Rhythm 1)', shortName: 'Rhythm 1', icon: '🥁' },
+    1: { id: 'Bass', name: 'Bass', shortName: 'Bass', icon: '🎸' },
+    2: { id: 'Chord1', name: 'Chord 1', shortName: 'Chord 1', icon: '🎹' },
+    3: { id: 'Chord2', name: 'Chord 2', shortName: 'Chord 2', icon: '🎸' },
+    4: { id: 'Pad', name: 'Pad', shortName: 'Pad', icon: '🎻' },
+    5: { id: 'Phrase1', name: 'Phrase 1', shortName: 'Phrase 1', icon: '🎺' },
+    6: { id: 'Phrase2', name: 'Phrase 2', shortName: 'Phrase 2', icon: '🎷' },
+    7: { id: 'Phrase2', name: 'Extra Part', shortName: 'Extra', icon: '🎶' },
+
+    // SFF2 / 標準 Yamaha 伴奏通道 (8~15, 對應 Yamaha Ch 9~16)
+    8: { id: 'Rhythm1', name: 'Sub Rhythm (Rhythm 1)', shortName: 'Rhythm 1', icon: '🥁' },
+    9: { id: 'Rhythm2', name: 'Main Rhythm (Rhythm 2)', shortName: 'Rhythm 2', icon: '🥁' },
+    10: { id: 'Bass', name: 'Bass', shortName: 'Bass', icon: '🎸' },
+    11: { id: 'Chord1', name: 'Chord 1', shortName: 'Chord 1', icon: '🎹' },
+    12: { id: 'Chord2', name: 'Chord 2', shortName: 'Chord 2', icon: '🎸' },
+    13: { id: 'Pad', name: 'Pad', shortName: 'Pad', icon: '🎻' },
+    14: { id: 'Phrase1', name: 'Phrase 1', shortName: 'Phrase 1', icon: '🎺' },
+    15: { id: 'Phrase2', name: 'Phrase 2', shortName: 'Phrase 2', icon: '🎷' },
+  };
+
+  /**
+   * 取得指定通道的親切顯示名稱與圖示
+   */
+  public static getPartDisplayMeta(channel: number, fallbackName?: string): { id: StylePartId; name: string; shortName: string; icon: string } {
+    const meta = this.PART_DISPLAY_META[channel];
+    if (meta) return meta;
+    return {
+      id: 'Phrase2',
+      name: fallbackName || `Part (Ch ${channel + 1})`,
+      shortName: `Ch ${channel + 1}`,
+      icon: '🎵',
+    };
+  }
+
+  /**
+   * 判斷聲部是否為節奏/鼓組通道
+   */
+  public static isRhythmChannel(channel: number, partName?: string): boolean {
+    if (channel === 9 || channel === 8 || channel === 0) return true;
+    const lower = (partName || '').toLowerCase();
+    return lower.includes('rhythm') || lower.includes('drum');
+  }
+
+  /**
+   * 判斷聲部是否為貝斯通道
+   */
+  public static isBassChannel(channel: number, partName?: string): boolean {
+    if (channel === 10 || channel === 1) return true;
+    const lower = (partName || '').toLowerCase();
+    return lower.includes('bass');
+  }
+
+  /**
+   * 取得全曲段落聲部開口矩陣統計資料
+   */
+  public static getSectionPartMatrix(
+    parsed: YamahaFileParsed,
+    muteState: SectionPartMuteMap = {}
+  ): SectionPartMatrixRow[] {
+    if (!parsed || parsed.format !== 'STY') return [];
+
+    const musicalSections = StyleRemixer.getMusicalSections(parsed);
+    const sectionsToRender = musicalSections.length > 0 ? musicalSections : parsed.sections;
+
+    // 取得所有伴奏聲部，若無則預設為 channels 8~15
+    let parts = (parsed.parts || []).slice().sort((a, b) => a.channel - b.channel);
+    if (parts.length === 0) {
+      parts = [8, 9, 10, 11, 12, 13, 14, 15].map(ch => ({
+        trackIndex: 0,
+        channel: ch,
+        partName: this.getPartDisplayMeta(ch).name,
+      }));
+    }
+
+    const rows: SectionPartMatrixRow[] = [];
+
+    for (const sec of sectionsToRender) {
+      const range = StyleRemixer.getSectionTickRange(parsed, sec.name);
+      if (!range) continue;
+
+      const cells: SectionPartMatrixCell[] = [];
+
+      for (const p of parts) {
+        const noteCount = StyleRemixer.countNotesInChannel(parsed, range.startTick, range.endTick, p.channel);
+        const isMuted = !!(muteState[sec.name]?.[p.channel]);
+        const meta = this.getPartDisplayMeta(p.channel, p.partName);
+
+        cells.push({
+          sectionName: sec.name,
+          channel: p.channel,
+          partId: meta.id,
+          partName: meta.name,
+          shortName: meta.shortName,
+          icon: meta.icon,
+          noteCount,
+          isMuted,
+          canToggle: noteCount > 0,
+        });
+      }
+
+      const mutedCount = cells.filter(c => c.noteCount > 0 && c.isMuted).length;
+      const activeCount = cells.filter(c => c.noteCount > 0 && !c.isMuted).length;
+      const totalNotes = cells.reduce((sum, c) => sum + c.noteCount, 0);
+
+      rows.push({
+        sectionName: sec.name,
+        measureCount: range.measureCount,
+        startTick: range.startTick,
+        endTick: range.endTick,
+        cells,
+        mutedCount,
+        activeCount,
+        totalNotes,
+      });
+    }
+
+    return rows;
+  }
+
+  /**
+   * 切換單一單元格的靜音狀態 (Toggle Mute)
+   */
+  public static toggleSectionPartMute(
+    muteState: SectionPartMuteMap,
+    sectionName: string,
+    channel: number
+  ): boolean {
+    if (!muteState[sectionName]) {
+      muteState[sectionName] = {};
+    }
+    const nextMuted = !muteState[sectionName][channel];
+    if (nextMuted) {
+      muteState[sectionName][channel] = true;
+    } else {
+      delete muteState[sectionName][channel];
+      if (Object.keys(muteState[sectionName]).length === 0) {
+        delete muteState[sectionName];
+      }
+    }
+    return nextMuted;
+  }
+
+  /**
+   * 整段批次設定：全開或全靜音
+   */
+  public static setSectionAllMute(
+    parsed: YamahaFileParsed,
+    muteState: SectionPartMuteMap,
+    sectionName: string,
+    mute: boolean
+  ): void {
+    if (!mute) {
+      delete muteState[sectionName];
+      return;
+    }
+
+    const range = StyleRemixer.getSectionTickRange(parsed, sectionName);
+    if (!range) return;
+
+    if (!muteState[sectionName]) {
+      muteState[sectionName] = {};
+    }
+
+    const parts = parsed.parts && parsed.parts.length > 0
+      ? parsed.parts
+      : [8, 9, 10, 11, 12, 13, 14, 15].map(ch => ({ channel: ch, partName: '' }));
+
+    for (const p of parts) {
+      const count = StyleRemixer.countNotesInChannel(parsed, range.startTick, range.endTick, p.channel);
+      if (count > 0) {
+        muteState[sectionName][p.channel] = true;
+      }
+    }
+  }
+
+  /**
+   * 整段批次：僅保留節奏鼓組發聲 (Rhythm Only)
+   */
+  public static setSectionRhythmOnly(
+    parsed: YamahaFileParsed,
+    muteState: SectionPartMuteMap,
+    sectionName: string
+  ): void {
+    const range = StyleRemixer.getSectionTickRange(parsed, sectionName);
+    if (!range) return;
+
+    if (!muteState[sectionName]) {
+      muteState[sectionName] = {};
+    }
+
+    const parts = parsed.parts && parsed.parts.length > 0
+      ? parsed.parts
+      : [8, 9, 10, 11, 12, 13, 14, 15].map(ch => ({ channel: ch, partName: '' }));
+
+    for (const p of parts) {
+      const isDrum = this.isRhythmChannel(p.channel, p.partName);
+      const count = StyleRemixer.countNotesInChannel(parsed, range.startTick, range.endTick, p.channel);
+
+      if (isDrum) {
+        delete muteState[sectionName][p.channel];
+      } else if (count > 0) {
+        muteState[sectionName][p.channel] = true;
+      }
+    }
+
+    if (Object.keys(muteState[sectionName]).length === 0) {
+      delete muteState[sectionName];
+    }
+  }
+
+  /**
+   * 整段批次：無打擊樂器，保留旋律低音與和弦 (Non-Drum Only)
+   */
+  public static setSectionNonDrumOnly(
+    parsed: YamahaFileParsed,
+    muteState: SectionPartMuteMap,
+    sectionName: string
+  ): void {
+    const range = StyleRemixer.getSectionTickRange(parsed, sectionName);
+    if (!range) return;
+
+    if (!muteState[sectionName]) {
+      muteState[sectionName] = {};
+    }
+
+    const parts = parsed.parts && parsed.parts.length > 0
+      ? parsed.parts
+      : [8, 9, 10, 11, 12, 13, 14, 15].map(ch => ({ channel: ch, partName: '' }));
+
+    for (const p of parts) {
+      const isDrum = this.isRhythmChannel(p.channel, p.partName);
+      const count = StyleRemixer.countNotesInChannel(parsed, range.startTick, range.endTick, p.channel);
+
+      if (isDrum && count > 0) {
+        muteState[sectionName][p.channel] = true;
+      } else {
+        delete muteState[sectionName][p.channel];
+      }
+    }
+
+    if (Object.keys(muteState[sectionName]).length === 0) {
+      delete muteState[sectionName];
+    }
+  }
+
+  /**
+   * 整段批次：僅保留節奏與低音貝斯 (Rhythm & Bass Only)
+   */
+  public static setSectionRhythmAndBassOnly(
+    parsed: YamahaFileParsed,
+    muteState: SectionPartMuteMap,
+    sectionName: string
+  ): void {
+    const range = StyleRemixer.getSectionTickRange(parsed, sectionName);
+    if (!range) return;
+
+    if (!muteState[sectionName]) {
+      muteState[sectionName] = {};
+    }
+
+    const parts = parsed.parts && parsed.parts.length > 0
+      ? parsed.parts
+      : [8, 9, 10, 11, 12, 13, 14, 15].map(ch => ({ channel: ch, partName: '' }));
+
+    for (const p of parts) {
+      const isDrumOrBass = this.isRhythmChannel(p.channel, p.partName) || this.isBassChannel(p.channel, p.partName);
+      const count = StyleRemixer.countNotesInChannel(parsed, range.startTick, range.endTick, p.channel);
+
+      if (isDrumOrBass) {
+        delete muteState[sectionName][p.channel];
+      } else if (count > 0) {
+        muteState[sectionName][p.channel] = true;
+      }
+    }
+
+    if (Object.keys(muteState[sectionName]).length === 0) {
+      delete muteState[sectionName];
+    }
+  }
+
+  /**
+   * 配器樣板 A: Yamaha 經典漸進式配器 (Progressive A~D Orchestration)
+   * Main A: 鼓組+貝斯 (稀疏基底)
+   * Main B: 鼓組+貝斯+和弦1 (鋪展堆疊)
+   * Main C: 鼓組+貝斯+和弦1+和弦2+Pad (副歌開闊)
+   * Main D: 全 8 聲部全開 (高潮合奏)
+   */
+  public static applyProgressiveOrchestrationPreset(
+    parsed: YamahaFileParsed,
+    muteState: SectionPartMuteMap
+  ): void {
+    const sections = StyleRemixer.getMusicalSections(parsed);
+
+    for (const sec of sections) {
+      const name = sec.name.trim();
+      const lower = name.toLowerCase();
+
+      if (lower.startsWith('main a')) {
+        // Main A: 僅節奏與低音
+        this.setSectionRhythmAndBassOnly(parsed, muteState, name);
+      } else if (lower.startsWith('main b')) {
+        // Main B: 節奏+低音+Chord 1
+        const range = StyleRemixer.getSectionTickRange(parsed, name);
+        if (!range) continue;
+        if (!muteState[name]) muteState[name] = {};
+        for (const p of parsed.parts) {
+          const isRhy = this.isRhythmChannel(p.channel, p.partName);
+          const isBass = this.isBassChannel(p.channel, p.partName);
+          const isChord1 = p.channel === 11 || p.channel === 2 || p.partName.toLowerCase().includes('chord 1');
+          const count = StyleRemixer.countNotesInChannel(parsed, range.startTick, range.endTick, p.channel);
+
+          if (isRhy || isBass || isChord1) {
+            delete muteState[name][p.channel];
+          } else if (count > 0) {
+            muteState[name][p.channel] = true;
+          }
+        }
+      } else if (lower.startsWith('main c')) {
+        // Main C: 節奏+低音+Chord 1+Chord 2+Pad (靜音 Phrase 1/2)
+        const range = StyleRemixer.getSectionTickRange(parsed, name);
+        if (!range) continue;
+        if (!muteState[name]) muteState[name] = {};
+        for (const p of parsed.parts) {
+          const isPhrase = p.channel === 14 || p.channel === 15 || p.channel === 5 || p.channel === 6 || p.partName.toLowerCase().includes('phrase');
+          const count = StyleRemixer.countNotesInChannel(parsed, range.startTick, range.endTick, p.channel);
+
+          if (isPhrase && count > 0) {
+            muteState[name][p.channel] = true;
+          } else {
+            delete muteState[name][p.channel];
+          }
+        }
+      } else if (lower.startsWith('main d')) {
+        // Main D: 全部發聲
+        delete muteState[name];
+      }
+    }
+  }
+
+  /**
+   * 配器樣板 B: 純節奏與低音律動 (Rhythm & Bass Groove)
+   * 所有 Main 與 Fill 僅發聲鼓組與貝斯
+   */
+  public static applyRhythmGroovePreset(
+    parsed: YamahaFileParsed,
+    muteState: SectionPartMuteMap
+  ): void {
+    const sections = StyleRemixer.getMusicalSections(parsed);
+    for (const sec of sections) {
+      const lower = sec.name.toLowerCase();
+      if (lower.includes('main') || lower.includes('fill')) {
+        this.setSectionRhythmAndBassOnly(parsed, muteState, sec.name);
+      }
+    }
+  }
+
+  /**
+   * 配器樣板 C: 原聲不插電風格 (Acoustic Unplugged)
+   * 所有 Main 段落靜音爵士鼓組，凸顯原聲吉他、低音與提琴鋪底
+   */
+  public static applyAcousticPreset(
+    parsed: YamahaFileParsed,
+    muteState: SectionPartMuteMap
+  ): void {
+    const sections = StyleRemixer.getMusicalSections(parsed);
+    for (const sec of sections) {
+      const lower = sec.name.toLowerCase();
+      if (lower.includes('main')) {
+        this.setSectionNonDrumOnly(parsed, muteState, sec.name);
+      }
+    }
+  }
+
+  /**
+   * 清除全曲所有段落專屬靜音，恢復 100% 原始開口狀態
+   */
+  public static resetAllSectionMutes(muteState: SectionPartMuteMap): void {
+    for (const key of Object.keys(muteState)) {
+      delete muteState[key];
+    }
+  }
+
+  /**
+   * (進階匯出) 將目前記憶體中的段落開口靜音狀態實體寫入音軌 (Bake Mutes)
+   * 移除各段落中被設為靜音通道的演奏音符，並維持 CASM 與 Track 0 標記 100% 原樣完整
+   * 回傳被清除的音符總數
+   */
+  public static bakeSectionPartMutes(
+    parsed: YamahaFileParsed,
+    muteState: SectionPartMuteMap
+  ): number {
+    let totalDeleted = 0;
+    for (const [secName, chMap] of Object.entries(muteState)) {
+      for (const [chStr, isMuted] of Object.entries(chMap)) {
+        if (isMuted) {
+          const ch = parseInt(chStr, 10);
+          totalDeleted += this.clearSectionNotes(parsed, secName, ch);
+        }
+      }
+    }
+    return totalDeleted;
+  }
 }
+
 
 

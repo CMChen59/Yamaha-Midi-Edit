@@ -108,6 +108,7 @@
             <span class="badge" id="section-count">0 個段落</span>
           </div>
           <div style="display: flex; align-items: center; gap: 8px;">
+            <button type="button" id="btn-toggle-part-matrix" class="btn btn-primary" style="background: linear-gradient(135deg, #6366f1, #4f46e5); border: none; font-size: 0.76rem; padding: 4px 12px; font-weight: 600; display: none;" title="開啟/收合 Yamaha 段落聲部開口矩陣 (Style Creator: Part On/Off per Section)">🎛️ 段落開口矩陣</button>
             <button type="button" id="btn-open-style-remixer" class="btn btn-primary" style="background: linear-gradient(135deg, #ec4899, #be185d); border: none; font-size: 0.76rem; padding: 4px 12px; font-weight: 600; display: none;" title="開啟跨 STY 伴奏風格混搭重組精靈">🎛️ 跨 STY 混搭精靈</button>
           </div>
         </div>
@@ -143,6 +144,55 @@
               <span style="color: #64748b;">BPM</span>
             </div>
             <button type="button" id="btn-sty-stop-all" class="toggle-btn" style="padding: 4px 12px; font-size: 0.78rem; background: rgba(239, 68, 68, 0.15); color: #f87171; border-color: rgba(239, 68, 68, 0.3); font-weight: 600;" title="停止目前正在試聽的段落">⏹ 停止試聽</button>
+          </div>
+        </div>
+
+        <!-- 方案 A: Yamaha 段落聲部開口矩陣面板 (Section Part On/Off Matrix Panel) -->
+        <div id="sty-part-matrix-container" class="sty-part-matrix-container" style="display: none; margin-bottom: 20px; background: #13151f; border: 1px solid #2d354b; border-radius: 8px; padding: 14px 16px;">
+          <!-- 矩陣頂部工具列 -->
+          <div class="matrix-header-bar" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; border-bottom: 1px solid #23293c; padding-bottom: 10px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 1.15rem;">🎛️</span>
+              <div>
+                <h3 style="font-size: 0.95rem; font-weight: 700; color: #f8fafc; margin: 0;">Yamaha 段落聲部開口矩陣 (Section Part On/Off Matrix)</h3>
+                <p style="font-size: 0.75rem; color: #94a3b8; margin: 2px 0 0 0;">對標 Yamaha 原廠 Style Creator 配器矩陣：自由掌控各段落 8 大伴奏聲部的開口發聲與靜音狀態</p>
+              </div>
+            </div>
+
+            <!-- 配器樣板與動作列 -->
+            <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+              <span style="font-size: 0.75rem; color: #94a3b8; font-weight: 600;">⚡ 配器風格樣板:</span>
+              <button type="button" id="btn-matrix-preset-progressive" class="toggle-btn" style="padding: 3px 8px; font-size: 0.72rem; background: rgba(99,102,241,0.18); color: #a5b4fc; border-color: rgba(99,102,241,0.4);" title="漸進式配器：Main A(稀疏律動) ➔ Main B(鋪展) ➔ Main C(開闊) ➔ Main D(全開高潮)">⚡ 漸進式配器 (A~D)</button>
+              <button type="button" id="btn-matrix-preset-rhythm-bass" class="toggle-btn" style="padding: 3px 8px; font-size: 0.72rem;" title="純節奏與低音：全曲僅保留鼓組與貝斯，和弦全靜音">⚡ 僅節奏與低音</button>
+              <button type="button" id="btn-matrix-preset-acoustic" class="toggle-btn" style="padding: 3px 8px; font-size: 0.72rem;" title="原聲不插電：靜音爵士鼓組，保留原聲吉他、低音與提琴鋪底">⚡ 原聲不插電</button>
+              <button type="button" id="btn-matrix-preset-reset" class="toggle-btn" style="padding: 3px 8px; font-size: 0.72rem; color: #38bdf8; border-color: rgba(56,189,248,0.35);" title="清除所有自訂靜音，恢復全曲所有聲部 100% 開口發聲">🔄 全部恢復全開</button>
+              <button type="button" id="btn-matrix-close" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem; margin-left: 6px;" title="收合開口矩陣">✕ 收合</button>
+            </div>
+          </div>
+
+          <!-- 矩陣主表格捲軸容器 -->
+          <div class="matrix-table-wrapper" style="overflow-x: auto; max-height: 480px; overflow-y: auto; border: 1px solid #23293c; border-radius: 6px; background: #0c0e14;">
+            <table class="sty-part-matrix-table" style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.76rem;">
+              <thead style="position: sticky; top: 0; background: #161925; z-index: 2; border-bottom: 2px solid #2d354b;">
+                <tr id="matrix-thead-row">
+                  <!-- 動態產生表頭：段落、長度、8 大伴奏聲部、批次控制 -->
+                </tr>
+              </thead>
+              <tbody id="matrix-tbody">
+                <!-- 動態產生各段落矩陣列 -->
+              </tbody>
+            </table>
+          </div>
+
+          <!-- 矩陣底部統計與說明列 -->
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; font-size: 0.74rem; color: #94a3b8;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <span id="matrix-mutes-summary-badge" class="badge" style="background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.35);">🔇 0 個聲部已設為靜音</span>
+              <span>💡 提示：點擊單元格可立即切換開口發聲/靜音；雙擊該格可直接展開鋼琴卷軸檢視該聲部音符</span>
+            </div>
+            <div style="color: #64748b;">
+              <span>非破壞性設計：段落開口設定即時連動試聽與混音台，匯出時可完整保留原廠 SFF2 CASM 轉調二進位結構</span>
+            </div>
           </div>
         </div>
 

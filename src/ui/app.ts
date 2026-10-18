@@ -26,6 +26,7 @@ import {
   DEFAULT_STYLE_PARTS,
   type StylePartId,
   type StyleSectionType,
+  type SectionPartMuteMap,
 } from '../core/models/style-types';
 import { audioEngine, ticksToSeconds } from '../core/audio/audio-engine';
 import { midiManager, MidiDeviceInfo } from '../core/audio/midi-manager';
@@ -219,7 +220,7 @@ let stylePartMuteState: Record<number, boolean> = {};
 let stylePartSoloChannel: number | null = null;
 // 模組二 (步驟 2.2): 段落專屬伴奏聲部發聲/靜音狀態字典
 // 結構: styleSectionPartMuteState[sectionName][channel] = true (表示在該段落中靜音)
-let styleSectionPartMuteState: Record<string, Record<number, boolean>> = {};
+let styleSectionPartMuteState: SectionPartMuteMap = {};
 
 function getStylePartDisplayName(channel: number): string {
   const meta = STY_PART_META[channel];
@@ -4686,7 +4687,7 @@ function openExportModal() {
   const modal = document.getElementById('modal-export');
   if (!modal) return;
 
-  const inspection = YamahaWriter.inspectPreExport(currentParsed);
+  const inspection = YamahaWriter.inspectPreExport(currentParsed, styleSectionPartMuteState);
 
   // 1. 預設匯出檔名
   const inputFilename = document.getElementById('export-filename-input') as HTMLInputElement | null;
@@ -4767,6 +4768,13 @@ function openExportModal() {
     okDiv.style.cssText = 'background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); padding: 8px 12px; border-radius: 6px; font-size: 0.78rem; color: #34d399; display: flex; align-items: center; gap: 6px;';
     okDiv.innerHTML = `<span>🛡️</span><span><strong>二進位防呆驗證預備完成</strong>：所有 MTrk 音軌與 Yamaha 自訂區塊將執行 Round-trip 雙重驗證，保證 100% 可於 PSR-SX920 琴端無死機載入。</span>`;
     alertsContainer.appendChild(okDiv);
+
+    if (inspection.customMuteSectionsCount && inspection.customMuteSectionsCount > 0) {
+      const muteNoticeDiv = document.createElement('div');
+      muteNoticeDiv.style.cssText = 'background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.35); padding: 8px 12px; border-radius: 6px; font-size: 0.78rem; color: #c7d2fe; display: flex; align-items: center; gap: 6px;';
+      muteNoticeDiv.innerHTML = `<span>🎛️</span><span><strong>段落開口矩陣配置</strong>：已偵測到 <strong>${inspection.customMuteSectionsCount}</strong> 個段落自訂了聲部開口（共 ${inspection.customMutePartsCount} 個聲部靜音）。系統將以<strong>非破壞性模式</strong>保留所有音符與 CASM 轉調區塊二進位結構。</span>`;
+      alertsContainer.appendChild(muteNoticeDiv);
+    }
   }
 
   modal.style.display = 'flex';
@@ -5432,6 +5440,9 @@ function setupWebMidiControls() {
       }
     }).catch(() => {});
   }
+
+  // 方案 A: 初始化 Yamaha 段落聲部開口矩陣事件
+  initSectionPartMatrixUI();
 }
 
 // 處理本機檔案
@@ -5941,6 +5952,344 @@ function updateStySectionCardsSelection() {
       muteBadge.remove();
     }
   });
+
+  updateSectionPartMatrixUI();
+}
+
+let isSectionPartMatrixEventsBound = false;
+
+function initSectionPartMatrixUI() {
+  if (isSectionPartMatrixEventsBound) return;
+  isSectionPartMatrixEventsBound = true;
+
+  const btnToggle = document.getElementById('btn-toggle-part-matrix');
+  const matrixContainer = document.getElementById('sty-part-matrix-container');
+  const btnClose = document.getElementById('btn-matrix-close');
+
+  const toggleMatrix = () => {
+    if (!matrixContainer) return;
+    const isHidden = matrixContainer.style.display === 'none';
+    matrixContainer.style.display = isHidden ? 'block' : 'none';
+    if (btnToggle) {
+      btnToggle.textContent = isHidden ? '✕ 收合開口矩陣' : '🎛️ 段落開口矩陣';
+      btnToggle.classList.toggle('active-rp', isHidden);
+    }
+    if (isHidden && currentParsed && currentParsed.format === 'STY') {
+      renderSectionPartMatrix(currentParsed);
+      matrixContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  };
+
+  btnToggle?.addEventListener('click', toggleMatrix);
+  btnClose?.addEventListener('click', () => {
+    if (matrixContainer) matrixContainer.style.display = 'none';
+    if (btnToggle) {
+      btnToggle.textContent = '🎛️ 段落開口矩陣';
+      btnToggle.classList.remove('active-rp');
+    }
+  });
+
+  // 配器風格樣板按鈕事件
+  const btnPresetProgressive = document.getElementById('btn-matrix-preset-progressive');
+  btnPresetProgressive?.addEventListener('click', () => {
+    if (!currentParsed || currentParsed.format !== 'STY') return;
+    YamahaStyleModifier.applyProgressiveOrchestrationPreset(currentParsed, styleSectionPartMuteState);
+    updateSectionPartMatrixUI();
+    updateStySectionCardsSelection();
+    updateStyPartsSectionLinkage(currentParsed, currentActiveStySection);
+    restartCurrentStySectionAudition();
+    showStatus('⚡ 已套用 Yamaha 經典漸進式配器樣板 (Main A:稀疏 ➔ B:鋪展 ➔ C:開闊 ➔ D:全開)！');
+  });
+
+  const btnPresetRhythmBass = document.getElementById('btn-matrix-preset-rhythm-bass');
+  btnPresetRhythmBass?.addEventListener('click', () => {
+    if (!currentParsed || currentParsed.format !== 'STY') return;
+    YamahaStyleModifier.applyRhythmGroovePreset(currentParsed, styleSectionPartMuteState);
+    updateSectionPartMatrixUI();
+    updateStySectionCardsSelection();
+    updateStyPartsSectionLinkage(currentParsed, currentActiveStySection);
+    restartCurrentStySectionAudition();
+    showStatus('⚡ 已套用純節奏與低音律動樣板！');
+  });
+
+  const btnPresetAcoustic = document.getElementById('btn-matrix-preset-acoustic');
+  btnPresetAcoustic?.addEventListener('click', () => {
+    if (!currentParsed || currentParsed.format !== 'STY') return;
+    YamahaStyleModifier.applyAcousticPreset(currentParsed, styleSectionPartMuteState);
+    updateSectionPartMatrixUI();
+    updateStySectionCardsSelection();
+    updateStyPartsSectionLinkage(currentParsed, currentActiveStySection);
+    restartCurrentStySectionAudition();
+    showStatus('⚡ 已套用原聲不插電風格樣板 (靜音爵士鼓組)！');
+  });
+
+  const btnPresetReset = document.getElementById('btn-matrix-preset-reset');
+  btnPresetReset?.addEventListener('click', () => {
+    if (!currentParsed || currentParsed.format !== 'STY') return;
+    YamahaStyleModifier.resetAllSectionMutes(styleSectionPartMuteState);
+    updateSectionPartMatrixUI();
+    updateStySectionCardsSelection();
+    updateStyPartsSectionLinkage(currentParsed, currentActiveStySection);
+    restartCurrentStySectionAudition();
+    showStatus('🔄 已重設全曲段落開口，所有聲部恢復 100% 發聲！');
+  });
+}
+
+function updateMatrixSummaryBadge() {
+  const summaryBadge = document.getElementById('matrix-mutes-summary-badge');
+  if (!summaryBadge) return;
+
+  let totalMutedParts = 0;
+  let mutedSecCount = 0;
+  for (const chMap of Object.values(styleSectionPartMuteState)) {
+    const count = Object.values(chMap).filter(Boolean).length;
+    if (count > 0) {
+      mutedSecCount++;
+      totalMutedParts += count;
+    }
+  }
+
+  if (totalMutedParts > 0) {
+    summaryBadge.textContent = `🔇 共 ${mutedSecCount} 個段落、${totalMutedParts} 個聲部已設為靜音`;
+    summaryBadge.style.background = 'rgba(239, 68, 68, 0.15)';
+    summaryBadge.style.color = '#f87171';
+    summaryBadge.style.borderColor = 'rgba(239, 68, 68, 0.35)';
+  } else {
+    summaryBadge.textContent = '🟢 全曲伴奏聲部 100% 開口發聲中';
+    summaryBadge.style.background = 'rgba(16, 185, 129, 0.15)';
+    summaryBadge.style.color = '#34d399';
+    summaryBadge.style.borderColor = 'rgba(16, 185, 129, 0.35)';
+  }
+}
+
+function updateSectionPartMatrixUI() {
+  if (!currentParsed || currentParsed.format !== 'STY') return;
+  const matrixContainer = document.getElementById('sty-part-matrix-container');
+  if (!matrixContainer || matrixContainer.style.display === 'none') {
+    updateMatrixSummaryBadge();
+    return;
+  }
+
+  // 更新所有按鈕狀態
+  document.querySelectorAll<HTMLButtonElement>('.sty-part-matrix-table .matrix-chip[data-sec][data-ch]').forEach(btn => {
+    const secName = btn.dataset.sec;
+    const ch = parseInt(btn.dataset.ch || '0', 10);
+    if (!secName) return;
+
+    const isMuted = !!(styleSectionPartMuteState[secName]?.[ch]);
+    btn.classList.toggle('muted', isMuted);
+    btn.classList.toggle('active', !isMuted);
+
+    const range = StyleRemixer.getSectionTickRange(currentParsed!, secName);
+    const noteCount = range ? StyleRemixer.countNotesInChannel(currentParsed!, range.startTick, range.endTick, ch) : 0;
+
+    btn.textContent = isMuted ? `🔴 靜音 (${noteCount})` : `🟢 ♪ ${noteCount}`;
+    btn.title = `目前在 ${escapeHtml(secName)} ${isMuted ? '已靜音，點擊切換為開口發聲' : '開口發聲，點擊切換為靜音'} (雙擊至鋼琴卷軸檢視)`;
+  });
+
+  // 更新各列標記與靜音統計
+  document.querySelectorAll<HTMLTableRowElement>('.sty-part-matrix-table tr.matrix-row').forEach(tr => {
+    const secName = tr.dataset.secName;
+    if (!secName) return;
+
+    const isSelected = currentActiveStySection !== null && currentActiveStySection === secName;
+    tr.classList.toggle('matrix-row-selected', isSelected);
+
+    const isPlaying = currentAuditionStySection !== null && currentAuditionStySection === secName;
+    tr.classList.toggle('matrix-row-playing', isPlaying);
+
+    const auditionBtn = tr.querySelector<HTMLButtonElement>('.btn-audition-matrix');
+    if (auditionBtn) {
+      auditionBtn.textContent = isPlaying ? '⏹' : '▶';
+      auditionBtn.classList.toggle('playing', isPlaying);
+    }
+
+    const mutedBadge = tr.querySelector<HTMLElement>('.badge-sec-matrix-mutes');
+    if (mutedBadge) {
+      const mutedCount = styleSectionPartMuteState[secName]
+        ? Object.values(styleSectionPartMuteState[secName]).filter(Boolean).length
+        : 0;
+      mutedBadge.style.display = mutedCount > 0 ? 'inline-block' : 'none';
+      mutedBadge.textContent = `🔇 ${mutedCount}`;
+    }
+  });
+
+  updateMatrixSummaryBadge();
+}
+
+function renderSectionPartMatrix(parsed: YamahaFileParsed) {
+  if (!parsed || parsed.format !== 'STY') return;
+
+  const theadRow = document.getElementById('matrix-thead-row');
+  const tbody = document.getElementById('matrix-tbody');
+  if (!theadRow || !tbody) return;
+
+  // 1. 取得伴奏聲部清單 (channels 8..15 or 0..7)
+  let parts = (parsed.parts || []).slice().sort((a, b) => a.channel - b.channel);
+  if (parts.length === 0) {
+    parts = [8, 9, 10, 11, 12, 13, 14, 15].map(ch => ({
+      trackIndex: 0,
+      channel: ch,
+      partName: YamahaStyleModifier.getPartDisplayMeta(ch).name,
+    }));
+  }
+
+  // 2. 渲染表頭 (Thead)
+  let theadHtml = `
+    <th style="min-width: 120px;">段落 (Section)</th>
+    <th style="min-width: 60px; text-align: center;">小節數</th>
+  `;
+
+  for (const p of parts) {
+    const meta = STY_PART_META[p.channel] || YamahaStyleModifier.getPartDisplayMeta(p.channel, p.partName);
+    theadHtml += `
+      <th style="min-width: 90px; text-align: center; border-bottom: 2px solid ${meta.color || '#3b82f6'};">
+        <div style="display: flex; flex-direction: column; align-items: center; gap: 2px;">
+          <span style="color: ${meta.color || '#cbd5e1'}; font-weight: 700; font-size: 0.76rem;">
+            ${meta.icon} ${meta.shortName || meta.name}
+          </span>
+          <span style="font-size: 0.68rem; color: #64748b; font-family: monospace;">Ch ${p.channel + 1}</span>
+        </div>
+      </th>
+    `;
+  }
+
+  theadHtml += `
+    <th style="min-width: 250px; text-align: center;">段落快捷動作 (Batch Actions)</th>
+  `;
+
+  theadRow.innerHTML = theadHtml;
+
+  // 3. 取得各段落資料並渲染 Tbody
+  const rows = YamahaStyleModifier.getSectionPartMatrix(parsed, styleSectionPartMuteState);
+  tbody.innerHTML = '';
+
+  for (const row of rows) {
+    const tr = document.createElement('tr');
+    tr.className = `matrix-row ${currentActiveStySection === row.sectionName ? 'matrix-row-selected' : ''} ${currentAuditionStySection === row.sectionName ? 'matrix-row-playing' : ''}`;
+    tr.dataset.secName = row.sectionName;
+
+    // A. 段落名稱
+    let rowHtml = `
+      <td>
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <strong style="color: #f8fafc; font-size: 0.82rem;">${escapeHtml(row.sectionName)}</strong>
+          <span class="badge-sec-matrix-mutes" style="display: ${row.mutedCount > 0 ? 'inline-block' : 'none'}; font-size: 0.65rem; padding: 1px 5px; background: rgba(239,68,68,0.2); color: #f87171; border-radius: 3px;">🔇 ${row.mutedCount}</span>
+        </div>
+      </td>
+      <td style="text-align: center; color: #a5b4fc; font-weight: 600;">${row.measureCount} 節</td>
+    `;
+
+    // B. 各聲部單元格
+    for (const cell of row.cells) {
+      if (cell.noteCount === 0) {
+        rowHtml += `<td style="text-align: center;"><span class="matrix-chip empty" title="此聲部在此段落無音符演奏">―</span></td>`;
+      } else {
+        const isMuted = cell.isMuted;
+        rowHtml += `
+          <td style="text-align: center;">
+            <button type="button" class="matrix-chip ${isMuted ? 'muted' : 'active'}" data-sec="${escapeHtml(row.sectionName)}" data-ch="${cell.channel}" title="目前在 ${escapeHtml(row.sectionName)} ${isMuted ? '已靜音，點擊切換為開口發聲' : '開口發聲，點擊切換為靜音'} (雙擊至鋼琴卷軸檢視)">
+              ${isMuted ? `🔴 靜音 (${cell.noteCount})` : `🟢 ♪ ${cell.noteCount}`}
+            </button>
+          </td>
+        `;
+      }
+    }
+
+    // C. 段落快捷動作列
+    const isPlaying = currentAuditionStySection === row.sectionName;
+    rowHtml += `
+      <td style="text-align: center;">
+        <div class="matrix-row-actions">
+          <button type="button" class="btn-matrix-action" data-action="all-on" data-sec="${escapeHtml(row.sectionName)}" title="恢復此段落所有聲部開口發聲">全開</button>
+          <button type="button" class="btn-matrix-action" data-action="all-off" data-sec="${escapeHtml(row.sectionName)}" title="將此段落所有聲部設為靜音">全關</button>
+          <button type="button" class="btn-matrix-action" data-action="rhythm-only" data-sec="${escapeHtml(row.sectionName)}" title="僅保留節奏鼓組發聲，其餘和弦與貝斯靜音">僅節奏</button>
+          <button type="button" class="btn-matrix-action" data-action="non-drum" data-sec="${escapeHtml(row.sectionName)}" title="靜音鼓組，保留旋律低音與和弦">無打擊</button>
+          <button type="button" class="btn-matrix-action" data-action="rhythm-bass" data-sec="${escapeHtml(row.sectionName)}" title="僅保留節奏與低音，和弦靜音">節奏+貝斯</button>
+          <button type="button" class="btn-matrix-action btn-audition-matrix ${isPlaying ? 'playing' : ''}" data-action="audition" data-sec="${escapeHtml(row.sectionName)}" title="試聽此段落伴奏合奏">${isPlaying ? '⏹' : '▶'}</button>
+        </div>
+      </td>
+    `;
+
+    tr.innerHTML = rowHtml;
+
+    // 點擊該列聚焦選取該段落
+    tr.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('button')) return;
+      selectStySection(row.sectionName);
+    });
+
+    tbody.appendChild(tr);
+  }
+
+  // 4. 綁定單元格點擊與雙擊事件
+  tbody.querySelectorAll<HTMLButtonElement>('.matrix-chip[data-sec][data-ch]').forEach(btn => {
+    const secName = btn.dataset.sec;
+    const ch = parseInt(btn.dataset.ch || '0', 10);
+    if (!secName) return;
+
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const nextMuted = YamahaStyleModifier.toggleSectionPartMute(styleSectionPartMuteState, secName, ch);
+      updateSectionPartMatrixUI();
+      updateStySectionCardsSelection();
+      updateStyPartsSectionLinkage(parsed, currentActiveStySection);
+      restartCurrentStySectionAudition();
+
+      if (currentActiveStySection === secName && currentActiveStyPartChannel === ch) {
+        showStyPartNotesDetail(parsed, secName, ch);
+      }
+
+      const meta = STY_PART_META[ch] || YamahaStyleModifier.getPartDisplayMeta(ch);
+      showStatus(`伴奏段落 [${secName}]：${meta.name} 已切換為 ${nextMuted ? '🔴 本段靜音' : '🟢 本段發聲'}`);
+    });
+
+    btn.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      selectStySection(secName);
+      currentActiveStyPartChannel = ch;
+      showStyPartNotesDetail(parsed, secName, ch);
+    });
+  });
+
+  // 5. 綁定快捷動作按鈕事件
+  tbody.querySelectorAll<HTMLButtonElement>('.btn-matrix-action[data-action]').forEach(btn => {
+    const action = btn.dataset.action;
+    const secName = btn.dataset.sec;
+    if (!action || !secName) return;
+
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (action === 'all-on') {
+        YamahaStyleModifier.setSectionAllMute(parsed, styleSectionPartMuteState, secName, false);
+        showStatus(`已恢復伴奏段落 [${secName}] 所有聲部開口發聲！`);
+      } else if (action === 'all-off') {
+        YamahaStyleModifier.setSectionAllMute(parsed, styleSectionPartMuteState, secName, true);
+        showStatus(`已將伴奏段落 [${secName}] 所有聲部設為靜音！`);
+      } else if (action === 'rhythm-only') {
+        YamahaStyleModifier.setSectionRhythmOnly(parsed, styleSectionPartMuteState, secName);
+        showStatus(`伴奏段落 [${secName}]：已套用「僅節奏鼓組」發聲！`);
+      } else if (action === 'non-drum') {
+        YamahaStyleModifier.setSectionNonDrumOnly(parsed, styleSectionPartMuteState, secName);
+        showStatus(`伴奏段落 [${secName}]：已套用「無打擊樂」發聲！`);
+      } else if (action === 'rhythm-bass') {
+        YamahaStyleModifier.setSectionRhythmAndBassOnly(parsed, styleSectionPartMuteState, secName);
+        showStatus(`伴奏段落 [${secName}]：已套用「節奏與低音貝斯」發聲！`);
+      } else if (action === 'audition') {
+        selectStySection(secName);
+        toggleStySectionAudition(secName);
+        return;
+      }
+
+      updateSectionPartMatrixUI();
+      updateStySectionCardsSelection();
+      updateStyPartsSectionLinkage(parsed, currentActiveStySection);
+      restartCurrentStySectionAudition();
+    });
+  });
+
+  updateMatrixSummaryBadge();
 }
 
 function toggleStySectionAudition(sectionName: string, startBar?: number) {
@@ -6086,6 +6435,24 @@ function updateStySectionAuditionButtons() {
     }
   });
 
+  // 更新矩陣列中的試聽按鈕與發聲高亮態
+  document.querySelectorAll<HTMLButtonElement>('.btn-audition-matrix').forEach(btn => {
+    const secName = btn.dataset.sec;
+    const isPlaying = currentAuditionStySection !== null && currentAuditionStySection === secName;
+    if (isPlaying) {
+      btn.textContent = '⏹';
+      btn.classList.add('playing');
+    } else {
+      btn.textContent = '▶';
+      btn.classList.remove('playing');
+    }
+  });
+  document.querySelectorAll<HTMLTableRowElement>('.sty-part-matrix-table tr.matrix-row').forEach(tr => {
+    const secName = tr.dataset.secName;
+    const isPlaying = currentAuditionStySection !== null && currentAuditionStySection === secName;
+    tr.classList.toggle('matrix-row-playing', isPlaying);
+  });
+
   if (currentAuditionStySection === null && currentCanvasRedrawWithPlayhead) {
     currentCanvasRedrawWithPlayhead(null);
   }
@@ -6120,6 +6487,18 @@ function renderSections(parsed: YamahaFileParsed) {
   const btnOpenRemixer = document.getElementById('btn-open-style-remixer');
   if (btnOpenRemixer) {
     btnOpenRemixer.style.display = isPad ? 'none' : 'inline-flex';
+  }
+
+  const btnTogglePartMatrix = document.getElementById('btn-toggle-part-matrix');
+  if (btnTogglePartMatrix) {
+    btnTogglePartMatrix.style.display = isPad ? 'none' : 'inline-flex';
+  }
+
+  const matrixContainer = document.getElementById('sty-part-matrix-container');
+  if (isPad && matrixContainer) {
+    matrixContainer.style.display = 'none';
+  } else if (!isPad && matrixContainer && matrixContainer.style.display !== 'none') {
+    renderSectionPartMatrix(parsed);
   }
 
   sectionCount.textContent = isPad ? '4 組打擊墊設定' : `${parsed.sections.length} 個標記段落`;
@@ -6553,6 +6932,9 @@ function showPadNotesDetail(parsed: YamahaFileParsed, sec: YamahaSection | null 
   mountPianoRollContainer('PAD');
   container.style.display = 'block';
 
+  const padMuteBadgeEl = document.getElementById('sty-part-detail-mute-badge');
+  if (padMuteBadgeEl) padMuteBadgeEl.style.display = 'none';
+
   // 保持使用者的視野模式 (4 小節標準視野或全景自適應)，切換 Pad 或編輯音符時不強制重設
   if (currentCanvasPadNum !== padNum) {
     selectedRulerBar = null;
@@ -6794,6 +7176,39 @@ function showStyPartNotesDetail(parsed: YamahaFileParsed, sectionName: string, c
     }
     badgeEl.textContent = `⏱️ 音符範圍: 第 ${firstNoteBar} ~ ${lastNoteBar} 小節 (段落共 ${actualBars} 小節)`;
     summaryEl.innerHTML = `<span style="display: inline-block; padding: 2px 8px; border-radius: 4px; background: ${meta.bg}; color: ${meta.color}; border: 1px solid ${meta.border}; font-weight: 600; margin-right: 8px;">演奏音色: ${voiceName}</span> <span>共 ${notes.length} 顆音符 (第 ${firstNoteBar} 小節開始演奏)</span> | <span>音域: ${midiNoteToName(minNote)} (${minNote}) ~ ${midiNoteToName(maxNote)} (${maxNote})</span> | <span>平均力度: ${avgVel}</span>`;
+  }
+
+  // 方案 A: 若此聲部在當前段落已被設為靜音，於卷軸標籤群中突顯警示，並支援一鍵切換發聲
+  const isMutedInThisSec = !!(styleSectionPartMuteState[sectionName]?.[channel]);
+  let muteBadgeEl = document.getElementById('sty-part-detail-mute-badge');
+  if (isMutedInThisSec) {
+    if (!muteBadgeEl) {
+      muteBadgeEl = document.createElement('span');
+      muteBadgeEl.id = 'sty-part-detail-mute-badge';
+      muteBadgeEl.className = 'badge';
+      muteBadgeEl.style.cursor = 'pointer';
+      muteBadgeEl.style.background = 'rgba(239, 68, 68, 0.2)';
+      muteBadgeEl.style.color = '#f87171';
+      muteBadgeEl.style.border = '1px solid rgba(239, 68, 68, 0.4)';
+      muteBadgeEl.style.fontWeight = '700';
+      const badgesGroup = document.getElementById('pad-detail-badges-group');
+      if (badgesGroup) {
+        badgesGroup.insertBefore(muteBadgeEl, badgesGroup.lastElementChild);
+      }
+    }
+    muteBadgeEl.style.display = 'inline-block';
+    muteBadgeEl.textContent = '🔴 本段已設為靜音 (點擊切換發聲)';
+    muteBadgeEl.title = `點擊解除 [${sectionName}] 該聲部的靜音狀態`;
+    muteBadgeEl.onclick = () => {
+      YamahaStyleModifier.toggleSectionPartMute(styleSectionPartMuteState, sectionName, channel);
+      updateStySectionCardsSelection();
+      updateStyPartsSectionLinkage(parsed, sectionName);
+      updateSectionPartMatrixUI();
+      restartCurrentStySectionAudition();
+      showStyPartNotesDetail(parsed, sectionName, channel);
+    };
+  } else if (muteBadgeEl) {
+    muteBadgeEl.style.display = 'none';
   }
 
   drawNoteRoll(canvas, notes, channel + 1, ticksPerBeat, beatsPerBar, explicitBars);
@@ -11066,6 +11481,7 @@ function updateStyPartsSectionLinkage(parsed: YamahaFileParsed, sectionName: str
         delete styleSectionPartMuteState[sectionName];
         updateStySectionCardsSelection();
         updateStyPartsSectionLinkage(parsed, sectionName);
+        updateSectionPartMatrixUI();
         restartCurrentStySectionAudition();
         showStatus(`已恢復伴奏段落 [${sectionName}] 所有聲部發聲！`);
       });
@@ -11126,6 +11542,7 @@ function updateStyPartsSectionLinkage(parsed: YamahaFileParsed, sectionName: str
 
               updateStySectionCardsSelection();
               updateStyPartsSectionLinkage(parsed, sectionName);
+              updateSectionPartMatrixUI();
               restartCurrentStySectionAudition();
 
               const meta = STY_PART_META[ch];

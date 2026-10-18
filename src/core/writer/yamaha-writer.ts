@@ -32,13 +32,18 @@ export interface PreExportInspection {
   customChunks: Array<{ id: string; size: number }>;
   warnings: string[];
   emptySections: string[];
+  customMuteSectionsCount?: number;
+  customMutePartsCount?: number;
 }
 
 export class YamahaWriter {
   /**
    * 匯出前全域結構巡檢與統計分析 (Pre-export Inspection)
    */
-  public static inspectPreExport(parsed: YamahaFileParsed): PreExportInspection {
+  public static inspectPreExport(
+    parsed: YamahaFileParsed,
+    muteState?: Record<string, Record<number, boolean>>
+  ): PreExportInspection {
     const format = parsed.format;
     const warnings: string[] = [];
     const emptySections: string[] = [];
@@ -96,6 +101,18 @@ export class YamahaWriter {
       }
     }
 
+    let customMuteSectionsCount = 0;
+    let customMutePartsCount = 0;
+    if (muteState) {
+      for (const chMap of Object.values(muteState)) {
+        const count = Object.values(chMap).filter(Boolean).length;
+        if (count > 0) {
+          customMuteSectionsCount++;
+          customMutePartsCount += count;
+        }
+      }
+    }
+
     const casmChunk = parsed.customChunks.find(c => c.id.trim() === 'CASM');
     const customChunks = parsed.customChunks.map(c => ({ id: c.id.trim(), size: c.data.length }));
 
@@ -112,6 +129,8 @@ export class YamahaWriter {
       customChunks,
       warnings,
       emptySections,
+      customMuteSectionsCount,
+      customMutePartsCount,
     };
   }
 

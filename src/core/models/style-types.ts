@@ -179,3 +179,39 @@ export const DEFAULT_STYLE_PARTS: Record<StylePartId, StylePartConfig> = {
     chorus: 15,
   },
 };
+
+/**
+ * 段落專屬伴奏聲部開關/靜音狀態對照表
+ * 結構: muteMap[sectionName][channel] = true 表示在該段落中此通道靜音 (Muted)
+ */
+export type SectionPartMuteMap = Record<string, Record<number, boolean>>;
+
+/**
+ * 段落聲部開口矩陣單元格結構
+ */
+export interface SectionPartMatrixCell {
+  sectionName: string;
+  channel: number;
+  partId?: StylePartId;
+  partName: string;
+  shortName: string;
+  icon: string;
+  noteCount: number;
+  isMuted: boolean;
+  canToggle: boolean;
+}
+
+/**
+ * 段落聲部開口矩陣單列 (一個段落) 結構
+ */
+export interface SectionPartMatrixRow {
+  sectionName: string;
+  measureCount: number;
+  startTick: number;
+  endTick: number;
+  cells: SectionPartMatrixCell[];
+  mutedCount: number;
+  activeCount: number;
+  totalNotes: number;
+}
+

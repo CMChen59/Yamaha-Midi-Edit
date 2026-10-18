@@ -2468,3 +2468,133 @@ body {
   box-shadow: 0 0 8px rgba(56, 189, 248, 0.4);
 }
 
+/* ========================================================
+   Phase 3.4 方案 A: 段落聲部開口矩陣 (Section Part Matrix)
+   ======================================================== */
+.sty-part-matrix-container {
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  animation: fadeIn 0.2s ease-in-out;
+}
+
+.sty-part-matrix-table th,
+.sty-part-matrix-table td {
+  padding: 8px 10px;
+  border: 1px solid #1f2535;
+  white-space: nowrap;
+}
+
+.sty-part-matrix-table th {
+  font-weight: 600;
+  color: #cbd5e1;
+  background: #161925;
+}
+
+.sty-part-matrix-table tr.matrix-row {
+  transition: background-color 0.15s ease;
+}
+
+.sty-part-matrix-table tr.matrix-row:hover {
+  background-color: rgba(56, 189, 248, 0.05);
+}
+
+.sty-part-matrix-table tr.matrix-row-selected {
+  background-color: rgba(99, 102, 241, 0.12) !important;
+}
+
+.sty-part-matrix-table tr.matrix-row-playing {
+  background-color: rgba(239, 68, 68, 0.12) !important;
+}
+
+/* 矩陣單元格開關晶片 (Matrix Toggle Chips) */
+.matrix-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+  min-width: 74px;
+}
+
+.matrix-chip.active {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+.matrix-chip.active:hover {
+  background: rgba(16, 185, 129, 0.28);
+  border-color: #34d399;
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.35);
+  transform: translateY(-1px);
+}
+
+.matrix-chip.muted {
+  background: rgba(239, 68, 68, 0.18);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.45);
+  text-decoration: line-through;
+  opacity: 0.85;
+}
+
+.matrix-chip.muted:hover {
+  background: rgba(239, 68, 68, 0.3);
+  border-color: #f87171;
+  box-shadow: 0 0 8px rgba(248, 113, 113, 0.35);
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
+.matrix-chip.empty {
+  background: transparent;
+  color: #475569;
+  border-color: transparent;
+  cursor: default;
+  min-width: 50px;
+}
+
+/* 矩陣單列快捷動作按鈕 (Row Action Buttons) */
+.matrix-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn-matrix-action {
+  padding: 2px 6px;
+  font-size: 0.7rem;
+  background: #1e2538;
+  border: 1px solid #334155;
+  color: #cbd5e1;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-matrix-action:hover {
+  background: #2d3748;
+  border-color: #38bdf8;
+  color: #38bdf8;
+}
+
+.btn-matrix-action.btn-audition-matrix {
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.35);
+  font-weight: 600;
+}
+
+.btn-matrix-action.btn-audition-matrix.playing {
+  background: rgba(239, 68, 68, 0.25);
+  color: #f87171;
+  border-color: #ef4444;
+}
+
+
