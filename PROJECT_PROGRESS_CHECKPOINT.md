@@ -9,8 +9,9 @@
 > 5. 🎉 **Phase 2.5 PSR-SX920 實體琴端對端全功能實機驗收 100% 通過！**（包含 Web MIDI 直連、模式 A/B 錄音、音色嗅探綁定、畫布直刻、隨身碟載入、和弦轉調與原廠 DSP 效果驗證無誤）  
 > 6. 🎉 **Phase 3.0 (Module 3) 純 STY 伴奏視覺化工作台 100% 完工！**（雙視野時間軸、Track 0 音符編輯、小節動態剪裁、琴鍵試聽、雷射紅走帶遊標、SFF2 CASM 完整保留與匯出防呆驗證）  
 > 7. 🎉 **Style Section Assembly Studio 伴奏聲部組裝精靈 100% 完工！**（聲部開口矩陣、跨段落/跨風格自由拼貼、小節循環填滿、移調力度縮放、新增自訂段落、多聲部自由勾選與批次組裝）  
-> 8. 📌 **正式將【6 大後續進階計畫 (STY伴奏琴端即時跟彈錄音 / CASM轉調規則 / 樣式庫批次載入 / 外部MIDI匯入 / OTS編輯 / WebMIDI琴端直連)】納入待執行庫！詳細請見：[`PENDING_EXECUTION_PLANS.md`](file:///d:/Vibe%20Coding/MIDI/Yamaha-Midi-Edit/PENDING_EXECUTION_PLANS.md)**  
-> **代碼倉庫**：`https://github.com/CMChen59/Yamaha-Midi-Edit.git`（分支: `main`）  
+> 8. 🎉 **Phase 3.6 實體琴 Style 伴奏音色退化 (Fallback to Piano) 重大問題攻堅 100% 完工！**（突破 Yamaha 伴奏引擎三大硬體相容限制：Bank LSB 112 違法無效修正為 XG Capital 0、SInt 初始化第 1 小節獨立隔離防止段落撞車、注入原廠 Style Header 與 XG On SysEx，已完成 PSR-SX920 實機驗收）  
+> 9. 📌 **正式將【6 大後續進階計畫 (STY伴奏琴端即時跟彈錄音 / CASM轉調規則 / 樣式庫批次載入 / 外部MIDI匯入 / OTS編輯 / WebMIDI琴端直連)】納入待執行庫！詳細請見：[`PENDING_EXECUTION_PLANS.md`](file:///d:/Vibe%20Coding/MIDI/Yamaha-Midi-Edit/PENDING_EXECUTION_PLANS.md)**  
+> **代碼倉庫**：`https://github.com/CMChen59/Yamaha-Midi-Edit.git`（分支: `main`，已同步推播遠端備份）  
 > **測試狀態**：153 / 153 項單元測試全數通過（通過率 100%），26 個測試套件全數綠燈通過，TypeScript 編譯 0 錯誤，Vite 生產打包無誤。
 
 ---
