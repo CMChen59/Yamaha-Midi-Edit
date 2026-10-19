@@ -114,6 +114,7 @@
             <button type="button" id="btn-open-style-remixer" class="btn btn-primary" style="background: linear-gradient(135deg, #ec4899, #be185d); border: none; font-size: 0.76rem; padding: 4px 12px; font-weight: 600; display: none;" title="開啟跨 STY 伴奏風格混搭重組精靈">🎛️ 跨 STY 混搭精靈</button>
             <button type="button" id="btn-open-midi-sampler-for-sty" class="btn btn-secondary" style="background: #1e1b4b; color: #a5b4fc; border: 1px solid #6366f1; font-size: 0.76rem; padding: 4px 10px; font-weight: 600; display: none;" title="載入外部 MIDI 歌曲並採集精華樂句注入當前伴奏 (整合包 2)">📥 採集外部 MIDI 樂句</button>
             <button type="button" id="btn-open-style-pool-panel" class="btn btn-secondary" style="background: #312e81; color: #c7d2fe; border: 1px solid #4f46e5; font-size: 0.76rem; padding: 4px 10px; font-weight: 600; display: none;" title="開啟伴奏樣式庫抽屜 (Style Pool Drawer)">📂 樣式庫抽屜 (<span id="panel-pool-count-badge">0</span>)</button>
+            <button type="button" id="btn-toggle-casm-editor" class="btn btn-secondary" style="background: #1e1b4b; color: #c7d2fe; border: 1px solid #4338ca; font-size: 0.76rem; padding: 4px 10px; font-weight: 600; display: none;" title="開啟/收合 Yamaha SFF2 CASM 轉調規則微調編輯器 (NTR / NTT / Limits)">⚙️ CASM 轉調微調</button>
           </div>
         </div>
 
@@ -246,6 +247,50 @@
             <div style="color: #64748b;">
               <span>非破壞性設計：段落開口設定即時連動試聽與混音台，匯出時可完整保留原廠 SFF2 CASM 轉調二進位結構</span>
             </div>
+          </div>
+        </div>
+
+        <!-- 方案 C: Yamaha SFF2 CASM 轉調規則微調編輯器面板 (CASM NTR/NTT Editor Panel) -->
+        <div id="sty-casm-editor-container" class="sty-casm-editor-container" style="display: none; margin-bottom: 20px; background: #11131f; border: 1px solid #6366f1; border-radius: 8px; padding: 14px 16px; box-shadow: 0 4px 20px rgba(99, 102, 241, 0.12);">
+          <!-- 頂部工具列 -->
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; border-bottom: 1px solid #1e2338; padding-bottom: 10px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 1.15rem;">⚙️</span>
+              <div>
+                <h3 style="font-size: 0.95rem; font-weight: 700; color: #f8fafc; margin: 0;">Yamaha SFF2 CASM 轉調規則微調 (Chord Audio Style Mapping)</h3>
+                <p style="font-size: 0.75rem; color: #94a3b8; margin: 2px 0 0 0;">深度掌控 8 大伴奏聲部的跟隨轉調模式 (NTR)、和弦變形演算法 (NTT)、高低音域極限與換和弦觸發規則</p>
+              </div>
+            </div>
+            <!-- 快速範本與動作 -->
+            <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+              <span style="font-size: 0.75rem; color: #94a3b8; font-weight: 600;">⚡ 推薦範本:</span>
+              <button type="button" id="btn-casm-preset-standard" class="toggle-btn" style="padding: 3px 8px; font-size: 0.72rem; background: rgba(99,102,241,0.18); color: #a5b4fc; border-color: rgba(99,102,241,0.4);" title="原廠標準推薦：鼓組固定、貝斯跟隨根音、和弦聲部和弦變形">⚡ 原廠標準 (Pop)</button>
+              <button type="button" id="btn-casm-preset-jazz" class="toggle-btn" style="padding: 3px 8px; font-size: 0.72rem;" title="爵士豐富和弦：放寬貝斯與和弦音域極限">⚡ 爵士和弦 (Jazz)</button>
+              <button type="button" id="btn-casm-preset-fixed-all" class="toggle-btn" style="padding: 3px 8px; font-size: 0.72rem;" title="嚴格固定原音：旋律裝飾音固定音高防走音">⚡ 裝飾音防走音</button>
+              <button type="button" id="btn-casm-save-apply" class="toggle-btn" style="padding: 3px 12px; font-size: 0.74rem; background: #4f46e5; color: #ffffff; border-color: #6366f1; font-weight: 700; margin-left: 6px;" title="將微調後的轉調規則寫入 SFF2 CASM 二進位區塊">💾 套用並更新 CASM</button>
+              <button type="button" id="btn-casm-editor-close" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem; margin-left: 4px;" title="收合 CASM 編輯器">✕ 收合</button>
+            </div>
+          </div>
+
+          <!-- CASM 聲部轉調規則表格 -->
+          <div style="overflow-x: auto; border: 1px solid #1e2338; border-radius: 6px; background: #0b0d14;">
+            <table id="sty-casm-rules-table" style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.76rem;">
+              <thead style="background: #141724; border-bottom: 2px solid #282e44; color: #cbd5e1;">
+                <tr>
+                  <th style="padding: 8px 12px;">伴奏聲部 (Part)</th>
+                  <th style="padding: 8px 10px;">MIDI 通道</th>
+                  <th style="padding: 8px 10px;">轉調規則 (NTR)</th>
+                  <th style="padding: 8px 10px;">和弦變形表 (NTT)</th>
+                  <th style="padding: 8px 10px;">最低音 (Low)</th>
+                  <th style="padding: 8px 10px;">最高音 (High)</th>
+                  <th style="padding: 8px 10px;">換和弦行為 (RTR)</th>
+                  <th style="padding: 8px 10px;">狀態標籤</th>
+                </tr>
+              </thead>
+              <tbody id="sty-casm-rules-tbody">
+                <!-- 程式動態渲染 8 伴奏聲部 -->
+              </tbody>
+            </table>
           </div>
         </div>
 

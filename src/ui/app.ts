@@ -35,6 +35,14 @@ import {
   type ChordType,
 } from '../core/writer/chord-transposer';
 import {
+  CasmModifier,
+  CASM_STANDARD_PRESETS,
+  type CasmPartRule,
+  type NtrRule,
+  type NttRule,
+  type RetriggerRule,
+} from '../core/writer/casm-modifier';
+import {
   DEFAULT_STYLE_PARTS,
   type StylePartId,
   type StyleSectionType,
@@ -9189,6 +9197,168 @@ function initVirtualChordAuditionBar() {
   renderVirtualChordAuditionUI();
 }
 
+// ==========================================
+// Phase 3.4 Step 2: Yamaha SFF2 CASM 轉調規則微調編輯器
+// ==========================================
+
+let isCasmEditorOpen: boolean = false;
+let currentCasmPartRules: CasmPartRule[] = [];
+
+function renderCasmEditorTable() {
+  const tbody = document.getElementById('sty-casm-rules-tbody');
+  if (!tbody || !currentParsed) return;
+
+  if (currentCasmPartRules.length === 0) {
+    currentCasmPartRules = CasmModifier.extractPartRules(currentParsed);
+  }
+
+  tbody.innerHTML = '';
+
+  currentCasmPartRules.forEach((rule, idx) => {
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid #1a1e2e';
+
+    const partCfg = REMIXER_PARTS_CONFIG.find(p => p.id === rule.partId);
+    const partTitle = partCfg?.title || rule.partId;
+    const partColor = partCfg?.color || '#38bdf8';
+    const partIcon = partCfg?.icon || (rule.isDrum ? '🥁' : '🎹');
+
+    tr.innerHTML = `
+      <td style="padding: 8px 12px; display: flex; align-items: center; gap: 6px;">
+        <span style="font-size: 0.95rem;">${partIcon}</span>
+        <span style="font-weight: 700; color: ${partColor};">${partTitle}</span>
+      </td>
+      <td style="padding: 8px 10px; color: #94a3b8; font-weight: 600;">
+        MIDI Ch ${rule.channel + 1}
+      </td>
+      <td style="padding: 8px 10px;">
+        <select class="casm-ntr-select" data-idx="${idx}" style="background: #0f1320; color: ${rule.ntr === 'Root Fixed' ? '#f59e0b' : '#38bdf8'}; border: 1px solid #2d354b; border-radius: 4px; padding: 2px 6px; font-size: 0.74rem;">
+          <option value="Root Transpose" ${rule.ntr === 'Root Transpose' ? 'selected' : ''}>Root Transpose (跟隨根音)</option>
+          <option value="Root Fixed" ${rule.ntr === 'Root Fixed' ? 'selected' : ''}>Root Fixed (固定音高)</option>
+        </select>
+      </td>
+      <td style="padding: 8px 10px;">
+        <select class="casm-ntt-select" data-idx="${idx}" style="background: #0f1320; color: #f8fafc; border: 1px solid #2d354b; border-radius: 4px; padding: 2px 6px; font-size: 0.74rem;">
+          <option value="Bypass" ${rule.ntt === 'Bypass' ? 'selected' : ''}>Bypass (原音直通)</option>
+          <option value="Chord" ${rule.ntt === 'Chord' ? 'selected' : ''}>Chord (和弦變形)</option>
+          <option value="Bass" ${rule.ntt === 'Bass' ? 'selected' : ''}>Bass (低音專屬)</option>
+          <option value="Melody" ${rule.ntt === 'Melody' ? 'selected' : ''}>Melody (旋律變形)</option>
+        </select>
+      </td>
+      <td style="padding: 8px 10px;">
+        <input type="number" class="casm-low-limit-input" data-idx="${idx}" min="0" max="127" value="${rule.noteLowLimit}" style="width: 46px; background: #0f1320; color: #fff; border: 1px solid #2d354b; border-radius: 4px; text-align: center; font-size: 0.74rem; padding: 2px;" />
+      </td>
+      <td style="padding: 8px 10px;">
+        <input type="number" class="casm-high-limit-input" data-idx="${idx}" min="0" max="127" value="${rule.noteHighLimit}" style="width: 46px; background: #0f1320; color: #fff; border: 1px solid #2d354b; border-radius: 4px; text-align: center; font-size: 0.74rem; padding: 2px;" />
+      </td>
+      <td style="padding: 8px 10px;">
+        <select class="casm-rtr-select" data-idx="${idx}" style="background: #0f1320; color: #94a3b8; border: 1px solid #2d354b; border-radius: 4px; padding: 2px 6px; font-size: 0.74rem;">
+          <option value="Retrigger" ${rule.retriggerRule === 'Retrigger' ? 'selected' : ''}>Retrigger (重奏)</option>
+          <option value="Pitch Shift" ${rule.retriggerRule === 'Pitch Shift' ? 'selected' : ''}>Pitch Shift (滑音)</option>
+          <option value="Stop" ${rule.retriggerRule === 'Stop' ? 'selected' : ''}>Stop (靜音)</option>
+        </select>
+      </td>
+      <td style="padding: 8px 10px;">
+        <span class="badge" style="font-size: 0.68rem; background: ${rule.ntr === 'Root Fixed' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(56, 189, 248, 0.15)'}; color: ${rule.ntr === 'Root Fixed' ? '#fbbf24' : '#38bdf8'}; border: 1px solid ${rule.ntr === 'Root Fixed' ? 'rgba(245, 158, 11, 0.3)' : 'rgba(56, 189, 248, 0.3)'};">
+          ${rule.ntr === 'Root Fixed' ? '固定音高' : rule.ntt === 'Bass' ? '低音跟隨' : rule.ntt === 'Melody' ? '旋律跟隨' : '和弦跟隨'}
+        </span>
+      </td>
+    `;
+
+    // 監聽變更
+    tr.querySelector('.casm-ntr-select')?.addEventListener('change', (e) => {
+      rule.ntr = (e.target as HTMLSelectElement).value as NtrRule;
+      renderCasmEditorTable();
+    });
+    tr.querySelector('.casm-ntt-select')?.addEventListener('change', (e) => {
+      rule.ntt = (e.target as HTMLSelectElement).value as NttRule;
+      renderCasmEditorTable();
+    });
+    tr.querySelector('.casm-low-limit-input')?.addEventListener('change', (e) => {
+      rule.noteLowLimit = parseInt((e.target as HTMLInputElement).value || '0', 10);
+    });
+    tr.querySelector('.casm-high-limit-input')?.addEventListener('change', (e) => {
+      rule.noteHighLimit = parseInt((e.target as HTMLInputElement).value || '127', 10);
+    });
+    tr.querySelector('.casm-rtr-select')?.addEventListener('change', (e) => {
+      rule.retriggerRule = (e.target as HTMLSelectElement).value as RetriggerRule;
+    });
+
+    tbody.appendChild(tr);
+  });
+}
+
+function initCasmEditor() {
+  const btnToggle = document.getElementById('btn-toggle-casm-editor');
+  const container = document.getElementById('sty-casm-editor-container');
+  const btnClose = document.getElementById('btn-casm-editor-close');
+  const btnSave = document.getElementById('btn-casm-save-apply');
+
+  btnToggle?.addEventListener('click', () => {
+    if (!container) return;
+    isCasmEditorOpen = !isCasmEditorOpen;
+    container.style.display = isCasmEditorOpen ? 'block' : 'none';
+    btnToggle.classList.toggle('active-rp', isCasmEditorOpen);
+    if (isCasmEditorOpen) {
+      renderCasmEditorTable();
+    }
+  });
+
+  btnClose?.addEventListener('click', () => {
+    if (!container) return;
+    isCasmEditorOpen = false;
+    container.style.display = 'none';
+    btnToggle?.classList.remove('active-rp');
+  });
+
+  // 範本切換
+  document.getElementById('btn-casm-preset-standard')?.addEventListener('click', () => {
+    const std = CASM_STANDARD_PRESETS.standard.rules;
+    currentCasmPartRules.forEach((r) => {
+      const p = std[r.partId];
+      if (p) Object.assign(r, p);
+    });
+    renderCasmEditorTable();
+    showStatus('⚡ 已載入原廠標準 (Pop) CASM 轉調規則範本！請點擊【💾 套用並更新 CASM】生效。');
+  });
+
+  document.getElementById('btn-casm-preset-jazz')?.addEventListener('click', () => {
+    const jazz = CASM_STANDARD_PRESETS.jazz.rules;
+    currentCasmPartRules.forEach((r) => {
+      const p = jazz[r.partId];
+      if (p) Object.assign(r, p);
+    });
+    renderCasmEditorTable();
+    showStatus('⚡ 已載入爵士豐富和弦 (Jazz) CASM 轉調規則範本！請點擊【💾 套用並更新 CASM】生效。');
+  });
+
+  document.getElementById('btn-casm-preset-fixed-all')?.addEventListener('click', () => {
+    const fixed = CASM_STANDARD_PRESETS.fixed_all.rules;
+    currentCasmPartRules.forEach((r) => {
+      const p = fixed[r.partId];
+      if (p) Object.assign(r, p);
+    });
+    renderCasmEditorTable();
+    showStatus('⚡ 已載入裝飾音防走音 (Safe Fixed) CASM 轉調規則範本！請點擊【💾 套用並更新 CASM】生效。');
+  });
+
+  // 儲存套用
+  btnSave?.addEventListener('click', () => {
+    if (!currentParsed) return;
+    const res = CasmModifier.updateParsedCasm(currentParsed, currentCasmPartRules);
+    if (!res.success) {
+      alert(res.message);
+      return;
+    }
+    markModified('已更新 Yamaha SFF2 CASM 轉調規則');
+    showStatus(`✅ ${res.message}，匯出 .sty 檔琴端立即生效！`);
+    if (elCasm) {
+      const casmChunk = currentParsed.customChunks.find(c => c.id === 'CASM');
+      elCasm.innerHTML = `<span style="color: #10b981;">✓ 正常 (${casmChunk?.data.length} Bytes, 已自訂)</span>`;
+    }
+  });
+}
+
 function toggleStySectionAudition(sectionName: string, startBar?: number) {
   if (!currentParsed || currentParsed.format !== 'STY') return;
 
@@ -9422,6 +9592,22 @@ function renderSections(parsed: YamahaFileParsed) {
   const btnOpenMidiSampler = document.getElementById('btn-open-midi-sampler-for-sty');
   if (btnOpenMidiSampler) {
     btnOpenMidiSampler.style.display = isPad ? 'none' : 'inline-flex';
+  }
+
+  const btnToggleCasm = document.getElementById('btn-toggle-casm-editor');
+  if (btnToggleCasm) {
+    btnToggleCasm.style.display = isPad ? 'none' : 'inline-flex';
+  }
+
+  const casmContainer = document.getElementById('sty-casm-editor-container');
+  if (isPad && casmContainer) {
+    casmContainer.style.display = 'none';
+  } else if (!isPad) {
+    currentCasmPartRules = [];
+    initCasmEditor();
+    if (casmContainer && casmContainer.style.display !== 'none') {
+      renderCasmEditorTable();
+    }
   }
 
   const matrixContainer = document.getElementById('sty-part-matrix-container');
