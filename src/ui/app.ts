@@ -29,6 +29,12 @@ import {
   type StyleCompatibilityReport,
 } from '../core/writer/style-compatibility';
 import {
+  ChordTransposer,
+  POPULAR_AUDITION_CHORDS,
+  type ChordDefinition,
+  type ChordType,
+} from '../core/writer/chord-transposer';
+import {
   DEFAULT_STYLE_PARTS,
   type StylePartId,
   type StyleSectionType,
@@ -9041,6 +9047,115 @@ function initStyleAssemblyUI() {
   });
 }
 
+// ==========================================
+// Phase 3.4: 虛擬左手和弦即時測試條 (Virtual Chord Audition Bar)
+// ==========================================
+
+let currentAuditionChord: ChordDefinition = POPULAR_AUDITION_CHORDS[0]; // 預設 C (原調)
+let currentAuditionStyPlaybackTick: number = 0;
+let isVirtualChordUIInitialized: boolean = false;
+
+function renderVirtualChordAuditionUI() {
+  const badge = document.getElementById('sty-audition-current-chord-badge');
+  const hint = document.getElementById('sty-audition-chord-hint');
+  const container = document.getElementById('sty-quick-chords-container');
+  if (!badge) return;
+
+  const isOriginal = currentAuditionChord.displayName === 'C (原調)' || (currentAuditionChord.root === 'C' && currentAuditionChord.type === 'maj');
+  badge.textContent = currentAuditionChord.displayName;
+  badge.style.background = isOriginal ? 'rgba(16, 185, 129, 0.2)' : 'rgba(56, 189, 248, 0.25)';
+  badge.style.borderColor = isOriginal ? '#10b981' : '#38bdf8';
+  badge.style.color = isOriginal ? '#34d399' : '#38bdf8';
+
+  if (hint) {
+    if (isOriginal) {
+      hint.textContent = '(伴奏播放時點擊下方和弦，即時模擬 Yamaha CASM 轉調發聲)';
+    } else {
+      const shiftStr = currentAuditionChord.semitonesFromC >= 0 ? `+${currentAuditionChord.semitonesFromC}` : `${currentAuditionChord.semitonesFromC}`;
+      hint.textContent = `(CASM 轉調生效中: 根音位移 ${shiftStr} 半音，三度音與音階變形)`;
+    }
+  }
+
+  // 刷新快速和弦按鈕高亮態
+  container?.querySelectorAll<HTMLButtonElement>('.btn-quick-chord').forEach((btn) => {
+    const chordName = btn.dataset.chordName;
+    if (chordName === currentAuditionChord.displayName) {
+      btn.style.background = '#0284c7';
+      btn.style.borderColor = '#38bdf8';
+      btn.style.color = '#ffffff';
+      btn.style.fontWeight = '700';
+    } else {
+      btn.style.background = 'rgba(30, 41, 59, 0.7)';
+      btn.style.borderColor = '#334155';
+      btn.style.color = '#cbd5e1';
+      btn.style.fontWeight = '500';
+    }
+  });
+}
+
+function switchAuditionChord(newChord: ChordDefinition) {
+  currentAuditionChord = newChord;
+  renderVirtualChordAuditionUI();
+
+  if (currentAuditionStySection) {
+    const sec = currentAuditionStySection;
+    const division = currentParsed?.division || 480;
+    const timeSig = currentParsed?.timeSignature || { numerator: 4, denominator: 4 };
+    const ticksPerBar = Math.round(division * timeSig.numerator * (4 / timeSig.denominator));
+    const curBar = Math.floor(currentAuditionStyPlaybackTick / ticksPerBar) + 1;
+    toggleStySectionAudition(sec, curBar);
+    showStatus(`🎹 左手和弦切換為 [${newChord.displayName}]，伴奏即時轉調接續播放！`);
+  } else {
+    showStatus(`🎹 已設定左手模擬和弦為 [${newChord.displayName}]，點擊任一段落試聽即可聆聽轉調效果！`);
+  }
+}
+
+function initVirtualChordAuditionBar() {
+  const container = document.getElementById('sty-quick-chords-container');
+  if (!container) return;
+
+  if (!isVirtualChordUIInitialized) {
+    isVirtualChordUIInitialized = true;
+    container.innerHTML = '';
+
+    POPULAR_AUDITION_CHORDS.forEach((c) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'toggle-btn btn-quick-chord';
+      btn.dataset.chordName = c.displayName;
+      btn.textContent = c.displayName;
+      btn.style.padding = '2px 8px';
+      btn.style.fontSize = '0.72rem';
+      btn.style.borderRadius = '4px';
+      btn.style.cursor = 'pointer';
+      btn.title = `切換為 ${c.displayName}`;
+      btn.addEventListener('click', () => {
+        switchAuditionChord(c);
+      });
+      container.appendChild(btn);
+    });
+
+    // 綁定自訂和弦套用
+    const btnApplyCustom = document.getElementById('btn-sty-chord-apply-custom');
+    btnApplyCustom?.addEventListener('click', () => {
+      const rootSel = document.getElementById('sty-custom-chord-root') as HTMLSelectElement | null;
+      const typeSel = document.getElementById('sty-custom-chord-type') as HTMLSelectElement | null;
+      const root = rootSel?.value || 'C';
+      const type = (typeSel?.value || 'maj') as ChordType;
+      const customChord = ChordTransposer.buildChord(root, type);
+      switchAuditionChord(customChord);
+    });
+
+    // 綁定重設 C 原調按鈕
+    const btnResetC = document.getElementById('btn-sty-chord-reset-c');
+    btnResetC?.addEventListener('click', () => {
+      switchAuditionChord(POPULAR_AUDITION_CHORDS[0]);
+    });
+  }
+
+  renderVirtualChordAuditionUI();
+}
+
 function toggleStySectionAudition(sectionName: string, startBar?: number) {
   if (!currentParsed || currentParsed.format !== 'STY') return;
 
@@ -9102,14 +9217,24 @@ function toggleStySectionAudition(sectionName: string, startBar?: number) {
     // 智慧判定樂器聲音物理/諧波合成模型與打擊樂器屬性
     const { instrumentId: instId, isDrum } = resolveAuditionInstrumentId(msb, lsb, pc, ch);
 
+    const rawNotes = notes.map(n => ({
+      note: n.note,
+      velocity: n.velocity,
+      startTick: n.startTick,
+      durationTick: n.durationTick,
+    }));
+
+    // Phase 3.4: 套用虛擬左手和弦 CASM 即時轉調 (打擊樂維持原音，非打擊樂聲部根音位移與音階變形)
+    const transposedNotes = ChordTransposer.transposeNotes(
+      rawNotes,
+      currentAuditionChord,
+      ch,
+      isDrum
+    );
+
     backingItems.push({
       padNum: ch + 1,
-      notes: notes.map(n => ({
-        note: n.note,
-        velocity: n.velocity,
-        startTick: n.startTick,
-        durationTick: n.durationTick,
-      })),
+      notes: transposedNotes,
       totalTicks,
       channelParams: {
         volume: vol,
@@ -9149,6 +9274,7 @@ function toggleStySectionAudition(sectionName: string, startBar?: number) {
     loop: true,
     startOffsetTick,
     onProgress: (state) => {
+      currentAuditionStyPlaybackTick = state.relTick;
       if (currentCanvasRedrawWithPlayhead) {
         currentCanvasRedrawWithPlayhead(state.relTick, state.activeNoteNumbers);
       }
@@ -9162,8 +9288,9 @@ function toggleStySectionAudition(sectionName: string, startBar?: number) {
     },
   });
 
+  const chordTag = currentAuditionChord.displayName !== 'C (原調)' ? ` [左手和弦: ${currentAuditionChord.displayName}]` : '';
   const startMsg = startBar && startBar > 1 ? ` (自第 ${startBar} 小節起奏)` : '';
-  showStatus(`▶ 正在試聽 STY 伴奏段落: [${sectionName}]${startMsg} (${range.measureCount} 小節，共 ${backingItems.length} 個發聲聲部)...`);
+  showStatus(`▶ 正在試聽 STY 伴奏段落: [${sectionName}]${chordTag}${startMsg} (${range.measureCount} 小節，共 ${backingItems.length} 個發聲聲部)...`);
 }
 
 function updateStySectionAuditionButtons() {
@@ -9231,6 +9358,14 @@ function renderSections(parsed: YamahaFileParsed) {
   const styAuditionBar = document.getElementById('sty-audition-bar');
   if (styAuditionBar) {
     styAuditionBar.style.display = isPad ? 'none' : 'flex';
+  }
+
+  const styVirtualChordBar = document.getElementById('sty-virtual-chord-audition-bar');
+  if (styVirtualChordBar) {
+    styVirtualChordBar.style.display = isPad ? 'none' : 'flex';
+    if (!isPad) {
+      initVirtualChordAuditionBar();
+    }
   }
 
   const btnOpenRemixer = document.getElementById('btn-open-style-remixer');

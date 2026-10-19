@@ -151,6 +151,55 @@
           </div>
         </div>
 
+        <!-- 🎹 虛擬左手和弦即時測試條 (Virtual Chord Audition Bar) -->
+        <div id="sty-virtual-chord-audition-bar" style="margin: -6px 0 16px 0; background: linear-gradient(135deg, rgba(20, 24, 38, 0.95), rgba(15, 23, 42, 0.98)); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; padding: 8px 16px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+          <!-- 左側：標題與目前和弦指示燈 -->
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="font-size: 1.05rem;">🎹</span>
+              <span style="font-size: 0.82rem; font-weight: 700; color: #38bdf8;">左手和弦模擬:</span>
+              <span id="sty-audition-current-chord-badge" class="badge" style="background: rgba(16, 185, 129, 0.2); border: 1px solid #10b981; color: #34d399; font-size: 0.82rem; font-weight: 800; padding: 2px 8px; letter-spacing: 0.5px;">C (原調)</span>
+            </div>
+            <span id="sty-audition-chord-hint" style="font-size: 0.72rem; color: #94a3b8;">
+              (伴奏播放時點擊下方和弦，即時模擬 Yamaha CASM 轉調發聲)
+            </span>
+          </div>
+
+          <!-- 中間：常用流行和弦快速切換按鈕膠囊 -->
+          <div id="sty-quick-chords-container" style="display: flex; align-items: center; gap: 5px; flex-wrap: wrap;">
+            <!-- 程式動態渲染常用和弦按鈕 -->
+          </div>
+
+          <!-- 右側：自訂和弦選單與還原 -->
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <select id="sty-custom-chord-root" style="background: #0f172a; color: #f8fafc; border: 1px solid #334155; border-radius: 4px; font-size: 0.75rem; padding: 3px 6px;">
+              <option value="C" selected>C</option>
+              <option value="C#">C# / Db</option>
+              <option value="D">D</option>
+              <option value="Eb">Eb / D#</option>
+              <option value="E">E</option>
+              <option value="F">F</option>
+              <option value="F#">F# / Gb</option>
+              <option value="G">G</option>
+              <option value="Ab">Ab / G#</option>
+              <option value="A">A</option>
+              <option value="Bb">Bb / A#</option>
+              <option value="B">B</option>
+            </select>
+            <select id="sty-custom-chord-type" style="background: #0f172a; color: #f8fafc; border: 1px solid #334155; border-radius: 4px; font-size: 0.75rem; padding: 3px 6px;">
+              <option value="maj" selected>Major (大三)</option>
+              <option value="m">Minor (小三)</option>
+              <option value="7">7th (屬七)</option>
+              <option value="maj7">Maj7 (大七)</option>
+              <option value="m7">m7 (小七)</option>
+              <option value="sus4">Sus4 (掛四)</option>
+              <option value="dim">Dim (減三)</option>
+            </select>
+            <button type="button" id="btn-sty-chord-apply-custom" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem; background: rgba(56, 189, 248, 0.2); color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="套用自訂和弦">套用</button>
+            <button type="button" id="btn-sty-chord-reset-c" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem; color: #94a3b8;" title="還原至 C 基準原音">重設 C</button>
+          </div>
+        </div>
+
         <!-- 方案 A: Yamaha 段落聲部開口矩陣面板 (Section Part On/Off Matrix Panel) -->
         <div id="sty-part-matrix-container" class="sty-part-matrix-container" style="display: none; margin-bottom: 20px; background: #13151f; border: 1px solid #2d354b; border-radius: 8px; padding: 14px 16px;">
           <!-- 矩陣頂部工具列 -->
