@@ -67,6 +67,7 @@ export interface BackingTrackOptions {
   loop?: boolean;
   beatsPerBar?: number;
   startOffsetTick?: number; // 支援自指定 Tick / 小節起跳播放
+  enableActiveNotesDetection?: boolean; // 預設 true；全曲長篇播放可設為 false 避免高頻暴力掃描
   onProgress?: (state: PlaybackState) => void;
   onEnded?: () => void;
 }
@@ -476,13 +477,104 @@ export class AudioEngine {
       }
     }
 
-    // 排程第 0 週期的伴奏音符
-    this.scheduleBackingPass(0, loopDurationSec, sessionId, validTracks, bpm, division, maxTotalTicks);
+    // 將各音軌音符依 startTick 預先排序，確保排程指針能單向推進
+    const sortedTracks = validTracks.map((t) => ({
+      ...t,
+      notes: [...t.notes].sort((a, b) => a.startTick - b.startTick),
+    }));
 
-    // 啟動伴奏循環監視器
-    let lastScheduledCycle = 0;
+    // Lookahead 排程窗口大小 (1.0 秒前瞻，兼顧極致效能與防爆音)
+    const LOOKAHEAD_SEC = 1.0;
+    const lookaheadTicks = Math.max(ticksPerBar, secondsToTicks(LOOKAHEAD_SEC, bpm, division));
+
     const isLoop = options.loop !== false; // 預設循環
+    let lastScheduledCycle = 0;
+    let scheduledUntilTick = startOffsetTick;
 
+    // 各軌音符排程指針
+    const trackNotePointers = new Array(sortedTracks.length).fill(0);
+
+    // 若有 startOffsetTick，先推進指針至起點附近
+    if (startOffsetTick > 0) {
+      for (let i = 0; i < sortedTracks.length; i++) {
+        const notes = sortedTracks[i].notes;
+        while (trackNotePointers[i] < notes.length) {
+          const n = notes[trackNotePointers[i]];
+          if (n.startTick + n.durationTick <= startOffsetTick) {
+            trackNotePointers[i]++;
+          } else {
+            break;
+          }
+        }
+      }
+    }
+
+    // Lookahead 窗口排程核心：僅排程從 fromTick 到 toTick 區間內的音符
+    const scheduleWindow = (fromTick: number, toTick: number, cycle: number) => {
+      if (!this.ctx || this.backingPlaybackSessionId !== sessionId || !this.isBackingPlaying) return;
+
+      const passStartTime = this.backingStartTime + cycle * loopDurationSec;
+      const now = this.ctx.currentTime;
+
+      for (let i = 0; i < sortedTracks.length; i++) {
+        const track = sortedTracks[i];
+        const notes = track.notes;
+        const params = track.channelParams || {};
+        const midiCh = params.channel ?? (track.padNum - 1);
+        let ptr = trackNotePointers[i];
+
+        while (ptr < notes.length) {
+          const n = notes[ptr];
+          if (n.startTick >= toTick) {
+            break; // 超過本次排程窗口，等待下一幀
+          }
+
+          if (n.startTick >= fromTick && n.startTick < maxTotalTicks) {
+            const noteOffsetSec = ticksToSeconds(n.startTick, bpm, division);
+            const noteDurSec = Math.max(ticksToSeconds(n.durationTick, bpm, division), 0.05);
+            const noteStartTime = passStartTime + noteOffsetSec;
+            const noteStopTime = noteStartTime + noteDurSec;
+
+            if (noteStopTime > now) {
+              const effectiveStartTime = Math.max(now, noteStartTime);
+              const effectiveDurSec = Math.max(0.02, noteStopTime - effectiveStartTime);
+
+              // Web Audio 觸發 (走專屬 backingGain)
+              if (midiManager.isAudioActive()) {
+                this.triggerVoice(n.note, n.velocity, effectiveStartTime, effectiveDurSec, params, this.backingGain);
+              }
+
+              // Web MIDI 實體琴轉發
+              if (midiManager.isMidiActive()) {
+                const delayMs = Math.max(0, (effectiveStartTime - now) * 1000);
+                const stopDelayMs = Math.max(0, (noteStopTime - now) * 1000);
+
+                const onTimer = setTimeout(() => {
+                  if (this.backingPlaybackSessionId !== sessionId || !this.isBackingPlaying) return;
+                  midiManager.sendNoteOn(midiCh, n.note, n.velocity);
+                }, delayMs);
+                this.backingTimerIds.push(onTimer);
+
+                const offTimer = setTimeout(() => {
+                  if (this.backingPlaybackSessionId !== sessionId) return;
+                  midiManager.sendNoteOff(midiCh, n.note);
+                }, stopDelayMs);
+                this.backingTimerIds.push(offTimer);
+              }
+            }
+          }
+          ptr++;
+        }
+        trackNotePointers[i] = ptr;
+      }
+    };
+
+    // 立即排程起播瞬間的第一個 Lookahead 窗口 (極速起播，絕不卡頓)
+    const initialTargetTick = Math.min(maxTotalTicks, startOffsetTick + lookaheadTicks);
+    scheduleWindow(startOffsetTick, initialTargetTick, 0);
+    scheduledUntilTick = initialTargetTick;
+
+    // 啟動伴奏走帶監視器 (每幀平滑前進，持續 Lookahead 排程未來音符)
     const updateBackingLoop = () => {
       if (this.backingPlaybackSessionId !== sessionId || !this.isBackingPlaying || !this.ctx) return;
 
@@ -495,9 +587,11 @@ export class AudioEngine {
         return;
       }
 
+      // 伴奏循環重置：換週時重設指針與窗口
       if (isLoop && currentCycle > lastScheduledCycle) {
         lastScheduledCycle = currentCycle;
-        this.scheduleBackingPass(currentCycle, loopDurationSec, sessionId, validTracks, bpm, division, maxTotalTicks);
+        trackNotePointers.fill(0);
+        scheduledUntilTick = 0;
       }
 
       const cycleElapsedSec = elapsedSec % loopDurationSec;
@@ -507,14 +601,25 @@ export class AudioEngine {
       const currentBeat = Math.floor(tickInBar / division) + 1;
       const progress = Math.max(0, Math.min(1, relTick / maxTotalTicks));
 
-      // 步驟 3.4: 即時偵測當前發聲中的音符號碼清單，供鋼琴卷軸與琴鍵同步發光
-      const activeNotes = new Set<number>();
-      for (const track of validTracks) {
-        for (const n of track.notes) {
-          if (relTick >= n.startTick && relTick < (n.startTick + n.durationTick)) {
-            activeNotes.add(n.note);
+      // 持續推進 Lookahead 排程窗口
+      const targetTick = Math.min(maxTotalTicks, relTick + lookaheadTicks);
+      if (targetTick > scheduledUntilTick) {
+        scheduleWindow(scheduledUntilTick, targetTick, currentCycle);
+        scheduledUntilTick = targetTick;
+      }
+
+      // 步驟 3.4: 即時偵測當前發聲中的音符 (僅在啟用時計算，長篇整曲試聽可設 false 省下 60fps 暴力全表掃描)
+      let activeNotesArr: number[] = [];
+      if (options.enableActiveNotesDetection !== false) {
+        const activeNotes = new Set<number>();
+        for (const track of sortedTracks) {
+          for (const n of track.notes) {
+            if (relTick >= n.startTick && relTick < (n.startTick + n.durationTick)) {
+              activeNotes.add(n.note);
+            }
           }
         }
+        activeNotesArr = Array.from(activeNotes);
       }
 
       if (options.onProgress) {
@@ -524,7 +629,7 @@ export class AudioEngine {
           currentBar,
           currentBeat,
           progress,
-          activeNoteNumbers: Array.from(activeNotes),
+          activeNoteNumbers: activeNotesArr,
         });
       }
 
@@ -535,69 +640,6 @@ export class AudioEngine {
 
     if (typeof requestAnimationFrame !== 'undefined') {
       this.backingAnimFrameId = requestAnimationFrame(updateBackingLoop);
-    }
-  }
-
-  /**
-   * 排程一個循環週期的所有伴奏音軌
-   */
-  private scheduleBackingPass(
-    cycleIndex: number,
-    loopDurationSec: number,
-    sessionId: number,
-    tracks: BackingTrackItem[],
-    bpm: number,
-    division: number,
-    totalTicks: number
-  ) {
-    if (!this.ctx || this.backingPlaybackSessionId !== sessionId || !this.isBackingPlaying) return;
-
-    const passStartTime = this.backingStartTime + cycleIndex * loopDurationSec;
-
-    for (const track of tracks) {
-      const params = track.channelParams || {};
-      const midiCh = params.channel ?? (track.padNum - 1);
-
-      for (const n of track.notes) {
-        if (this.backingPlaybackSessionId !== sessionId || !this.isBackingPlaying) return;
-        if (n.startTick >= totalTicks) continue;
-
-        const noteOffsetSec = ticksToSeconds(n.startTick, bpm, division);
-        const noteDurSec = Math.max(ticksToSeconds(n.durationTick, bpm, division), 0.05);
-        const noteStartTime = passStartTime + noteOffsetSec;
-        const noteStopTime = noteStartTime + noteDurSec;
-
-        const now = this.ctx.currentTime;
-        if (noteStopTime <= now) {
-          continue; // 此音符在起點前已結束
-        }
-
-        const effectiveStartTime = Math.max(now, noteStartTime);
-        const effectiveDurSec = Math.max(0.02, noteStopTime - effectiveStartTime);
-
-        // Web Audio 觸發 (走專屬 backingGain)
-        if (midiManager.isAudioActive()) {
-          this.triggerVoice(n.note, n.velocity, effectiveStartTime, effectiveDurSec, params, this.backingGain);
-        }
-
-        // Web MIDI 實體琴轉發
-        if (midiManager.isMidiActive()) {
-          const delayMs = Math.max(0, (effectiveStartTime - now) * 1000);
-          const stopDelayMs = Math.max(0, (noteStopTime - now) * 1000);
-
-          const onTimer = setTimeout(() => {
-            if (this.backingPlaybackSessionId !== sessionId || !this.isBackingPlaying) return;
-            midiManager.sendNoteOn(midiCh, n.note, n.velocity);
-          }, delayMs);
-          this.backingTimerIds.push(onTimer);
-
-          const offTimer = setTimeout(() => {
-            if (this.backingPlaybackSessionId !== sessionId) return;
-            midiManager.sendNoteOff(midiCh, n.note);
-          }, stopDelayMs);
-          this.backingTimerIds.push(offTimer);
-        }
-      }
     }
   }
 

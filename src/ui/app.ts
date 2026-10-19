@@ -2705,6 +2705,7 @@ function playFullMidi(startFromBar: number = 1) {
     loop: false,
     volumeRatio: 0.85,
     startOffsetTick: startOffsetTick,
+    enableActiveNotesDetection: false,
     onProgress: (state: PlaybackState) => {
       if (!isStyleFullMidiPlaying) return;
       const curTick = state.currentTick;
@@ -3304,6 +3305,7 @@ function toggleStyleEnsembleAudition() {
     beatsPerBar: timeSig.numerator,
     loop: true,
     volumeRatio: 0.8,
+    enableActiveNotesDetection: false,
     onEnded: () => {
       isStyleEnsemblePlaying = false;
       updateAuditionAllButtonText();
