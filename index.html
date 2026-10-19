@@ -43,6 +43,7 @@
         <button id="btn-new-style" class="btn btn-primary" style="background: linear-gradient(135deg, #0284c7, #0369a1); border: none; font-weight: 600;" title="建立全新標準 Yamaha 8 聲部伴奏風格 (.STY)">➕ 新建空白 STY</button>
         <button id="btn-import-midi" class="btn btn-secondary" style="background: linear-gradient(135deg, #6366f1, #4f46e5); color: #fff; border: none; font-weight: 600;">📂 匯入 MIDI 切片</button>
         <button type="button" id="btn-header-style-remixer" class="btn btn-secondary" style="background: linear-gradient(135deg, #ec4899, #be185d); color: #fff; border: none; font-weight: 600;" title="跨 STY 伴奏風格混搭重組精靈 (提取各風格鼓組、低音與和弦自由拼裝)">🎛️ 跨 STY 混搭精靈</button>
+        <button type="button" id="btn-header-style-pool" class="btn btn-secondary" style="background: linear-gradient(135deg, #4f46e5, #4338ca); color: #fff; border: none; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;" title="開啟伴奏樣式庫抽屜 (Style Pool Drawer：一次載入 5~10 個 STY 風格、跨風格預覽試聽與混血拼貼)">📂 樣式庫抽屜 <span id="header-pool-count-badge" class="badge" style="background: rgba(255,255,255,0.25); color: #fff; font-size: 0.7rem; padding: 1px 6px; border-radius: 10px;">0</span></button>
         <button id="btn-load-sample-mid" class="btn btn-secondary">載入範例 MIDI</button>
         <button id="btn-load-sample-sty" class="btn btn-secondary">載入範例 STY</button>
         <button id="btn-load-sample-pad" class="btn btn-secondary">載入範例 PAD</button>
@@ -111,6 +112,7 @@
             <button type="button" id="btn-toggle-part-matrix" class="btn btn-primary" style="background: linear-gradient(135deg, #6366f1, #4f46e5); border: none; font-size: 0.76rem; padding: 4px 12px; font-weight: 600; display: none;" title="開啟/收合 Yamaha 段落聲部開口矩陣 (Style Creator: Part On/Off per Section)">🎛️ 段落開口矩陣</button>
             <button type="button" id="btn-toggle-style-assembly" class="btn btn-primary" style="background: linear-gradient(135deg, #0284c7, #0369a1); border: none; font-size: 0.76rem; padding: 4px 12px; font-weight: 600; display: none;" title="開啟/收合 Yamaha 段落聲部組裝精靈 (Style Creator: Assembly - 跨段落與跨樣式聲部複製拼貼)">🧩 聲部組裝精靈</button>
             <button type="button" id="btn-open-style-remixer" class="btn btn-primary" style="background: linear-gradient(135deg, #ec4899, #be185d); border: none; font-size: 0.76rem; padding: 4px 12px; font-weight: 600; display: none;" title="開啟跨 STY 伴奏風格混搭重組精靈">🎛️ 跨 STY 混搭精靈</button>
+            <button type="button" id="btn-open-style-pool-panel" class="btn btn-secondary" style="background: #312e81; color: #c7d2fe; border: 1px solid #4f46e5; font-size: 0.76rem; padding: 4px 10px; font-weight: 600; display: none;" title="開啟伴奏樣式庫抽屜 (Style Pool Drawer)">📂 樣式庫抽屜 (<span id="panel-pool-count-badge">0</span>)</button>
           </div>
         </div>
 
@@ -217,6 +219,9 @@
             </div>
           </div>
 
+          <!-- 跨風格相容性檢測警示列 (Compatibility Advisory Banner) -->
+          <div id="assembly-compatibility-banner" style="display: none; margin-bottom: 12px; padding: 8px 14px; border-radius: 6px; font-size: 0.76rem; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;"></div>
+
           <!-- 核心組裝工作台：左側來源 vs 右側目標 -->
           <div class="assembly-studio-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; margin-bottom: 12px;">
             <!-- 左卡片：來源聲部 (Source) -->
@@ -227,7 +232,10 @@
               </div>
               <div style="display: grid; grid-template-columns: 80px 1fr; gap: 8px; align-items: center; font-size: 0.76rem; margin-bottom: 6px;">
                 <label for="assembly-src-style" style="color: #94a3b8;">來源風格：</label>
-                <select id="assembly-src-style" style="background: #141824; border: 1px solid #2d3748; border-radius: 4px; color: #e2e8f0; padding: 3px 6px; font-size: 0.76rem;"></select>
+                <div style="display: flex; gap: 6px; align-items: center;">
+                  <select id="assembly-src-style" style="flex: 1; background: #141824; border: 1px solid #2d3748; border-radius: 4px; color: #e2e8f0; padding: 3px 6px; font-size: 0.76rem;"></select>
+                  <button type="button" id="btn-assembly-open-pool" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem; background: #4338ca; color: #fff; border: 1px solid #6366f1; white-space: nowrap;" title="開啟樣式庫抽屜以載入或管理更多 STY 伴奏檔">📂 樣式庫 (<span id="assembly-pool-count-badge">0</span>)</button>
+                </div>
               </div>
               <div style="display: grid; grid-template-columns: 80px 1fr; gap: 8px; align-items: center; font-size: 0.76rem; margin-bottom: 6px;">
                 <label for="assembly-src-section" style="color: #94a3b8;">來源段落：</label>
@@ -238,9 +246,12 @@
                 <select id="assembly-src-part" style="background: #141824; border: 1px solid #2d3748; border-radius: 4px; color: #f8fafc; padding: 3px 6px; font-size: 0.76rem; font-weight: 600;"></select>
               </div>
               <!-- 來源聲部即時資訊卡與試聽 -->
-              <div id="assembly-src-info-box" style="background: #131722; border: 1px dashed #243048; border-radius: 4px; padding: 8px 10px; display: flex; justify-content: space-between; align-items: center; font-size: 0.74rem;">
+              <div id="assembly-src-info-box" style="background: #131722; border: 1px dashed #243048; border-radius: 4px; padding: 8px 10px; display: flex; justify-content: space-between; align-items: center; font-size: 0.74rem; flex-wrap: wrap; gap: 6px;">
                 <div id="assembly-src-details-text" style="color: #cbd5e1;">音符數: 0 | 未選取</div>
-                <button type="button" id="btn-assembly-audition-src" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem; background: rgba(56,189,248,0.15); color: #38bdf8; border: 1px solid rgba(56,189,248,0.35);">🎧 試聽來源聲部</button>
+                <div style="display: flex; gap: 6px; align-items: center;">
+                  <button type="button" id="btn-assembly-audition-src" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem; background: rgba(56,189,248,0.15); color: #38bdf8; border: 1px solid rgba(56,189,248,0.35);">🎧 試聽來源聲部</button>
+                  <button type="button" id="btn-assembly-audition-all-src" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem; background: rgba(99,102,241,0.18); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.4); display: none;" title="合奏試聽來源段落中所有已勾選的聲部組合">🎧 試聽所選合奏</button>
+                </div>
               </div>
             </div>
 
@@ -383,6 +394,7 @@
           <!-- 底部執行與狀態提示列 -->
           <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
             <div style="display: flex; align-items: center; gap: 10px;">
+              <button type="button" id="btn-assembly-preview-hybrid" class="toggle-btn" style="background: linear-gradient(135deg, rgba(236,72,153,0.18), rgba(190,24,93,0.28)); color: #f472b6; border: 1px solid #ec4899; font-size: 0.8rem; padding: 6px 14px; font-weight: 700; border-radius: 4px;" title="模擬播放目標段落，並即時替換所選來源聲部，讓您在寫入檔案前直接聽見跨風格混血後的最終合奏效果！">🎛️ 跨風格拼裝預覽試聽</button>
               <button type="button" id="btn-assembly-execute" class="btn btn-primary" style="background: linear-gradient(135deg, #0ea5e9, #0284c7); border: none; font-size: 0.82rem; padding: 6px 18px; font-weight: 700; box-shadow: 0 2px 8px rgba(14,165,233,0.35);">🧩 立即執行聲部組裝 (Assemble Part)</button>
               <button type="button" id="btn-assembly-undo" class="toggle-btn" style="padding: 5px 12px; font-size: 0.78rem; display: none; background: rgba(148,163,184,0.15); color: #94a3b8;" title="復原剛才的組裝操作">↩️ 復原 (Undo)</button>
               <span id="assembly-status-badge" class="badge" style="background: rgba(16,185,129,0.15); color: #34d399; border: 1px solid rgba(16,185,129,0.35); display: none;"></span>
@@ -1287,6 +1299,56 @@
         <div style="display: flex; gap: 10px;">
           <button type="button" id="btn-cancel-style-remixer" class="btn btn-secondary" style="padding: 6px 16px; font-size: 0.85rem;">取消</button>
           <button type="button" id="btn-confirm-style-remixer" class="btn btn-primary" style="background: linear-gradient(135deg, #ec4899, #be185d); border: none; padding: 6px 20px; font-size: 0.85rem; font-weight: 600;">🚀 合成並建立混搭 Style</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 伴奏樣式庫抽屜視窗 (Phase 3.4 Style Pool Drawer) -->
+  <div id="style-pool-drawer-overlay" class="modal-overlay" style="display: none; justify-content: flex-end; align-items: stretch; background: rgba(0, 0, 0, 0.65); backdrop-filter: blur(3px); z-index: 1050;">
+    <div id="style-pool-drawer" class="style-pool-drawer-slide" style="width: 540px; max-width: 95vw; height: 100vh; background: #11141f; border-left: 1px solid #28324a; box-shadow: -10px 0 35px rgba(0, 0, 0, 0.7); display: flex; flex-direction: column; overflow: hidden;">
+      <!-- 抽屜頂部 -->
+      <div style="padding: 16px 20px; border-bottom: 1px solid #242b3d; display: flex; justify-content: space-between; align-items: center; background: #161a29;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 1.4rem;">📂</span>
+          <div>
+            <h3 style="margin: 0; font-size: 1.05rem; font-weight: 700; color: #f8fafc; display: flex; align-items: center; gap: 8px;">
+              伴奏樣式庫抽屜 (Style Pool Drawer)
+              <span id="drawer-pool-count-badge" class="badge" style="background: #4f46e5; color: #fff; font-size: 0.72rem; padding: 2px 7px;">0 個風格</span>
+            </h3>
+            <p style="margin: 2px 0 0 0; font-size: 0.74rem; color: #94a3b8;">載入多個 STY 伴奏檔 (5~10 個風格)，跨風格即時試聽、快速提取聲部拼貼</p>
+          </div>
+        </div>
+        <button type="button" id="btn-close-style-pool-drawer" class="modal-close-btn" title="關閉抽屜">&times;</button>
+      </div>
+
+      <!-- 拖曳與批次載入操作區 -->
+      <div style="padding: 14px 20px; border-bottom: 1px solid #1e2433; background: #131724; display: flex; flex-direction: column; gap: 10px;">
+        <div id="drawer-style-dropzone" style="border: 2px dashed #4f46e5; border-radius: 8px; padding: 16px 12px; text-align: center; background: rgba(79, 70, 229, 0.08); cursor: pointer; transition: all 0.2s ease;">
+          <div style="font-size: 1.6rem; line-height: 1; margin-bottom: 6px;">📥</div>
+          <div style="font-size: 0.84rem; font-weight: 700; color: #c7d2fe;">拖曳多個 .sty 檔案至此處，或點擊選取</div>
+          <div style="font-size: 0.72rem; color: #94a3b8; margin-top: 3px;">支援一次選取 5~10 個 STY 伴奏檔載入記憶體庫</div>
+          <input type="file" id="drawer-style-file-input" multiple accept=".sty,.STY" style="display: none;" />
+        </div>
+
+        <div style="display: flex; gap: 6px; flex-wrap: wrap; align-items: center;">
+          <button type="button" id="btn-drawer-load-sample" class="toggle-btn" style="padding: 3px 9px; font-size: 0.74rem; background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3);">⚡ 載入示範 4006_SX900.sty</button>
+          <button type="button" id="btn-drawer-add-current" class="toggle-btn" style="padding: 3px 9px; font-size: 0.74rem; background: rgba(16, 185, 129, 0.12); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">➕ 載入當前工作區 STY</button>
+          <button type="button" id="btn-drawer-clear-all" class="toggle-btn" style="padding: 3px 9px; font-size: 0.74rem; color: #f87171; border: 1px solid rgba(248, 113, 113, 0.3); margin-left: auto;">🗑️ 清空伴奏庫</button>
+        </div>
+      </div>
+
+      <!-- 已載入風格卡片清單 (Scrollable) -->
+      <div id="drawer-style-cards-container" style="flex: 1; overflow-y: auto; padding: 14px 20px; display: flex; flex-direction: column; gap: 12px;">
+        <!-- 動態渲染各風格卡片 -->
+      </div>
+
+      <!-- 抽屜底部工具條 -->
+      <div style="padding: 12px 20px; border-top: 1px solid #242b3d; background: #161a29; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+        <span style="font-size: 0.74rem; color: #94a3b8;">💡 伴奏庫中的風格可於「聲部組裝精靈」與「跨 STY 混搭精靈」共用</span>
+        <div style="display: flex; gap: 8px;">
+          <button type="button" id="btn-drawer-goto-assembly" class="btn btn-secondary" style="font-size: 0.78rem; padding: 4px 10px; background: rgba(14, 165, 233, 0.2); color: #38bdf8; border: 1px solid #0284c7;">🧩 前往組裝精靈</button>
+          <button type="button" id="btn-drawer-goto-remixer" class="btn btn-secondary" style="font-size: 0.78rem; padding: 4px 10px; background: rgba(236, 72, 153, 0.2); color: #f472b6; border: 1px solid #db2777;">🎛️ 前往混搭精靈</button>
         </div>
       </div>
     </div>

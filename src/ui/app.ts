@@ -24,6 +24,10 @@ import {
   type StyleRemixSectionSpec,
 } from '../core/writer/style-remixer';
 import {
+  StyleCompatibilityChecker,
+  type StyleCompatibilityReport,
+} from '../core/writer/style-compatibility';
+import {
   DEFAULT_STYLE_PARTS,
   type StylePartId,
   type StyleSectionType,
@@ -3796,6 +3800,494 @@ function closeStyleRemixerModal() {
   modal.style.display = 'none';
 }
 
+// ==========================================
+// Phase 3.4: 伴奏樣式庫抽屜與多樣式池管理 (Style Pool Drawer)
+// ==========================================
+
+let currentDrawerAuditioningId: string | null = null;
+
+function syncAllStylePoolUIs() {
+  const count = remixerPool.length;
+
+  const headerBadge = document.getElementById('header-pool-count-badge');
+  if (headerBadge) headerBadge.textContent = String(count);
+
+  const panelBadge = document.getElementById('panel-pool-count-badge');
+  if (panelBadge) panelBadge.textContent = String(count);
+
+  const assemblyBadge = document.getElementById('assembly-pool-count-badge');
+  if (assemblyBadge) assemblyBadge.textContent = String(count);
+
+  const drawerBadge = document.getElementById('drawer-pool-count-badge');
+  if (drawerBadge) drawerBadge.textContent = `${count} 個風格`;
+
+  const remixerBadge = document.getElementById('remixer-pool-count-badge');
+  if (remixerBadge) remixerBadge.textContent = `${count} 個來源`;
+
+  renderRemixerPoolUI();
+  renderStylePoolDrawerUI();
+  if (currentParsed && currentParsed.format === 'STY') {
+    updateStyleAssemblyUI();
+  }
+}
+
+function openStylePoolDrawer() {
+  const overlay = document.getElementById('style-pool-drawer-overlay');
+  if (!overlay) return;
+
+  // 若當前工作區中有開啟的 STY，且伴奏庫尚為空，自動載入當前 STY
+  if (remixerPool.length === 0 && currentParsed && currentParsed.format === 'STY') {
+    remixerPool.push({
+      id: `pool-curr-${Date.now()}`,
+      name: currentFileName || 'Workspace.sty',
+      parsed: currentParsed,
+    });
+  }
+
+  autoInitRemixerAssignmentsIfEmpty();
+  overlay.style.display = 'flex';
+  syncAllStylePoolUIs();
+}
+
+function closeStylePoolDrawer() {
+  const overlay = document.getElementById('style-pool-drawer-overlay');
+  if (!overlay) return;
+
+  if (currentDrawerAuditioningId) {
+    audioEngine.stopBackingTrack();
+    audioEngine.stop();
+    currentDrawerAuditioningId = null;
+  }
+
+  overlay.style.display = 'none';
+}
+
+function playStylePoolCardAudition(entry: StylePoolEntry) {
+  if (currentDrawerAuditioningId === entry.id) {
+    audioEngine.stopBackingTrack();
+    audioEngine.stop();
+    currentDrawerAuditioningId = null;
+    renderStylePoolDrawerUI();
+    showStatus('已停止伴奏試聽');
+    return;
+  }
+
+  audioEngine.stopBackingTrack();
+  audioEngine.stop();
+
+  const musicalSecs = StyleRemixer.getMusicalSections(entry.parsed);
+  const targetSec = musicalSecs.find((s) => s.name === 'Main A') || musicalSecs[0];
+  if (!targetSec) {
+    showStatus('該伴奏檔中無有效音樂段落可供試聽', true);
+    return;
+  }
+
+  const range = StyleRemixer.getSectionTickRange(entry.parsed, targetSec.name);
+  if (!range) return;
+
+  const backingItems: BackingTrackItem[] = [];
+  const division = entry.parsed.division || 480;
+  const totalTicks = Math.max(division * 4, range.endTick - range.startTick);
+
+  for (const part of entry.parsed.parts || []) {
+    const ch = part.channel;
+    const notes = StyleRemixer.extractSectionChannelNotes(entry.parsed, range.startTick, range.endTick, ch);
+    if (notes.length === 0) continue;
+
+    const override = StyleRemixer.getSectionChannelOverride(entry.parsed, range.startTick, range.endTick, ch);
+    const msb = override.bankMsb ?? part.bankMsb ?? (ch === 8 || ch === 9 ? 127 : 0);
+    const lsb = override.bankLsb ?? part.bankLsb ?? 0;
+    const pc = override.pc ?? part.programChange ?? 0;
+    const vol = override.volume ?? part.volume ?? 100;
+    const pan = override.pan ?? part.pan ?? 64;
+    const reverb = part.reverb ?? 40;
+    const chorus = part.chorus ?? 0;
+
+    const { instrumentId: instId, isDrum } = resolveAuditionInstrumentId(msb, lsb, pc, ch);
+
+    backingItems.push({
+      padNum: ch + 1,
+      notes: notes.map((n) => ({
+        note: n.note,
+        velocity: n.velocity,
+        startTick: n.startTick,
+        durationTick: n.durationTick,
+      })),
+      totalTicks,
+      channelParams: {
+        volume: vol,
+        pan,
+        reverb,
+        chorus,
+        instrumentId: instId,
+        msb,
+        lsb,
+        pc,
+        channel: ch,
+        isDrum,
+      },
+    });
+  }
+
+  if (backingItems.length === 0) {
+    showStatus(`風格 [${entry.name}] 的段落 [${targetSec.name}] 無音符可試聽`, true);
+    return;
+  }
+
+  currentDrawerAuditioningId = entry.id;
+  renderStylePoolDrawerUI();
+
+  const bpm = entry.parsed.bpm || 120;
+  audioEngine.startBackingTrack(backingItems, {
+    bpm,
+    division,
+    beatsPerBar: entry.parsed.timeSignature?.numerator || 4,
+    volumeRatio: 1.0,
+    loop: true,
+    onEnded: () => {
+      currentDrawerAuditioningId = null;
+      renderStylePoolDrawerUI();
+    },
+  });
+
+  showStatus(`▶ 正在試聽伴奏風格: [${entry.name}] (${targetSec.name} 合奏)...`);
+}
+
+function setPoolItemAsAssemblySource(poolId: string) {
+  closeStylePoolDrawer();
+
+  const assemblyContainer = document.getElementById('sty-assembly-container');
+  const btnToggleAssembly = document.getElementById('btn-toggle-style-assembly');
+  if (assemblyContainer && assemblyContainer.style.display === 'none') {
+    assemblyContainer.style.display = 'block';
+    if (btnToggleAssembly) {
+      btnToggleAssembly.textContent = '✕ 收合組裝精靈';
+      btnToggleAssembly.classList.add('active-rp');
+    }
+  }
+
+  const selectSrcStyle = document.getElementById('assembly-src-style') as HTMLSelectElement | null;
+  if (selectSrcStyle) {
+    selectSrcStyle.value = poolId;
+  }
+
+  updateStyleAssemblyUI();
+  assemblyContainer?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  const found = remixerPool.find((p) => p.id === poolId);
+  showStatus(`📥 已將伴奏風格 [${found?.name || poolId}] 設為聲部拼貼來源！`);
+}
+
+function removePoolItem(poolId: string) {
+  const found = remixerPool.find((p) => p.id === poolId);
+  remixerPool = remixerPool.filter((p) => p.id !== poolId);
+
+  for (const sec of Object.keys(remixerSectionAssignments)) {
+    for (const pId of Object.keys(remixerSectionAssignments[sec])) {
+      if (remixerSectionAssignments[sec][pId as StylePartId]?.sourceStyleId === poolId) {
+        remixerSectionAssignments[sec][pId as StylePartId].sourceStyleId = '';
+      }
+    }
+  }
+
+  if (currentDrawerAuditioningId === poolId) {
+    audioEngine.stopBackingTrack();
+    currentDrawerAuditioningId = null;
+  }
+
+  syncAllStylePoolUIs();
+  renderRemixerPartsMatrixUI();
+  showStatus(`已從伴奏庫移除: ${found?.name || poolId}`);
+}
+
+async function loadFilesIntoStylePool(files: File[]): Promise<number> {
+  const styFiles = files.filter((f) => f.name.toLowerCase().endsWith('.sty'));
+  if (styFiles.length === 0) {
+    showStatus('選取的檔案中沒有副檔名為 .sty 的伴奏檔案', true);
+    return 0;
+  }
+
+  let successCount = 0;
+  for (const file of styFiles) {
+    try {
+      const buf = await file.arrayBuffer();
+      const parsed = YamahaParser.parse(new Uint8Array(buf), 'STY');
+      const uniqueId = `pool-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+      remixerPool.push({
+        id: uniqueId,
+        name: file.name,
+        parsed,
+      });
+      successCount++;
+    } catch (err: any) {
+      console.error(`解析檔案 ${file.name} 失敗:`, err);
+      showStatus(`檔案 ${file.name} 不是有效的 Yamaha STY 伴奏檔: ${err.message}`, true);
+    }
+  }
+
+  if (successCount > 0) {
+    autoInitRemixerAssignmentsIfEmpty();
+    syncAllStylePoolUIs();
+    renderRemixerSectionTabsUI();
+    renderRemixerPartsMatrixUI();
+    showStatus(`📂 成功匯入 ${successCount} 個 STY 伴奏檔至伴奏樣式庫！`);
+  }
+
+  return successCount;
+}
+
+function renderStylePoolDrawerUI() {
+  const container = document.getElementById('drawer-style-cards-container');
+  if (!container) return;
+
+  if (remixerPool.length === 0) {
+    container.innerHTML = `
+      <div style="text-align: center; color: #64748b; padding: 48px 16px; font-size: 0.84rem; display: flex; flex-direction: column; align-items: center; gap: 8px;">
+        <span style="font-size: 2.2rem; opacity: 0.5;">📂</span>
+        <div style="font-weight: 600; color: #94a3b8;">伴奏樣式庫目前為空</div>
+        <div style="font-size: 0.76rem; max-width: 280px; line-height: 1.4;">可將 5~10 個 .sty 檔案拖曳至上方拖曳區，或點擊上方「載入示範」開始探索跨風格混血！</div>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = '';
+
+  for (const entry of remixerPool) {
+    const isCurrent = currentParsed && entry.parsed === currentParsed;
+    const isPlaying = currentDrawerAuditioningId === entry.id;
+
+    const musicalSecs = StyleRemixer.getMusicalSections(entry.parsed);
+    const bpm = Math.round(entry.parsed.bpm || 120);
+    const timeSigStr = StyleCompatibilityChecker.formatTimeSignature(entry.parsed.timeSignature);
+
+    let compReport: StyleCompatibilityReport | null = null;
+    if (currentParsed && currentParsed.format === 'STY') {
+      compReport = StyleCompatibilityChecker.checkCompatibility(entry.parsed, currentParsed);
+    }
+
+    const card = document.createElement('div');
+    card.className = `style-pool-card ${isCurrent ? 'current-active' : ''}`;
+    card.style.cssText = `background: #141724; border: 1px solid ${isPlaying ? '#ec4899' : (isCurrent ? '#0284c7' : '#252d40')}; border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; transition: all 0.15s ease;`;
+
+    const secPillsHtml = musicalSecs.slice(0, 5).map((s) => {
+      return `<span style="background: #1c2233; color: #94a3b8; font-size: 0.66rem; padding: 1px 6px; border-radius: 3px;">${escapeHtml(s.name)}</span>`;
+    }).join('') + (musicalSecs.length > 5 ? `<span style="color: #64748b; font-size: 0.66rem;">+${musicalSecs.length - 5}</span>` : '');
+
+    let compBadgeHtml = '';
+    if (compReport) {
+      if (isCurrent) {
+        compBadgeHtml = `<span style="background: rgba(2,132,199,0.2); color: #38bdf8; font-size: 0.66rem; padding: 2px 6px; border-radius: 4px; font-weight: 600;">當前編輯伴奏</span>`;
+      } else if (!compReport.isTimeSignatureCompatible) {
+        compBadgeHtml = `<span style="background: rgba(239,68,68,0.2); color: #f87171; border: 1px solid rgba(239,68,68,0.4); font-size: 0.66rem; padding: 2px 6px; border-radius: 4px; font-weight: 600;" title="${escapeHtml(compReport.warnings[0])}">⚠️ 拍號 ${compReport.srcTimeSig} (目標 ${compReport.destTimeSig})</span>`;
+      } else if (compReport.bpmDiff > 15) {
+        compBadgeHtml = `<span style="background: rgba(245,158,11,0.2); color: #fbbf24; border: 1px solid rgba(245,158,11,0.4); font-size: 0.66rem; padding: 2px 6px; border-radius: 4px; font-weight: 600;" title="與目標伴奏相差 ${compReport.bpmDiff} BPM">⏱️ 差 ${compReport.bpmDiff} BPM</span>`;
+      } else {
+        compBadgeHtml = `<span style="background: rgba(16,185,129,0.18); color: #34d399; font-size: 0.66rem; padding: 2px 6px; border-radius: 4px; font-weight: 600;">✅ 相容 (${timeSigStr})</span>`;
+      }
+    }
+
+    card.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
+        <div style="flex: 1; min-width: 0;">
+          <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 2px;">
+            <span style="font-size: 0.86rem; font-weight: 700; color: #f8fafc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+              🎵 ${escapeHtml(entry.name)}
+            </span>
+          </div>
+          <div style="font-size: 0.72rem; color: #94a3b8; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <span>⏱️ <strong>${bpm}</strong> BPM</span>
+            <span>🎼 <strong>${timeSigStr}</strong> 拍</span>
+            <span>📑 <strong>${musicalSecs.length}</strong> 個段落</span>
+          </div>
+        </div>
+        <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
+          ${compBadgeHtml}
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 4px; flex-wrap: wrap; align-items: center;">
+        ${secPillsHtml}
+      </div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; pt: 4px; border-top: 1px solid #1a2030; margin-top: 2px;">
+        <button type="button" class="btn-drawer-card-audition toggle-btn" data-id="${entry.id}" style="padding: 2px 10px; font-size: 0.72rem; ${isPlaying ? 'background: #dc2626; color: #fff; border-color: #ef4444;' : 'background: rgba(56,189,248,0.15); color: #38bdf8; border-color: rgba(56,189,248,0.35);'}">
+          ${isPlaying ? '⏹ 停止' : '🎧 試聽主段落'}
+        </button>
+        <div style="display: flex; gap: 6px;">
+          <button type="button" class="btn-drawer-card-set-src toggle-btn" data-id="${entry.id}" style="padding: 2px 9px; font-size: 0.72rem; background: rgba(99,102,241,0.18); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.35);" title="設為拼貼來源並前往組裝精靈">
+            🧩 設為拼貼來源
+          </button>
+          <button type="button" class="btn-drawer-card-remove toggle-btn" data-id="${entry.id}" style="padding: 2px 7px; font-size: 0.72rem; color: #f87171; border-color: rgba(248,113,113,0.3);" title="從伴奏庫移除">
+            🗑️ 移除
+          </button>
+        </div>
+      </div>
+    `;
+
+    card.querySelector('.btn-drawer-card-audition')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      playStylePoolCardAudition(entry);
+    });
+
+    card.querySelector('.btn-drawer-card-set-src')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setPoolItemAsAssemblySource(entry.id);
+    });
+
+    card.querySelector('.btn-drawer-card-remove')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      removePoolItem(entry.id);
+    });
+
+    container.appendChild(card);
+  }
+}
+
+function initStylePoolDrawer() {
+  const overlay = document.getElementById('style-pool-drawer-overlay');
+  if (!overlay) return;
+
+  const btnClose = document.getElementById('btn-close-style-pool-drawer');
+  const btnHeaderPool = document.getElementById('btn-header-style-pool');
+  const btnPanelPool = document.getElementById('btn-open-style-pool-panel');
+  const btnAssemblyPool = document.getElementById('btn-assembly-open-pool');
+
+  const dropzone = document.getElementById('drawer-style-dropzone');
+  const fileInput = document.getElementById('drawer-style-file-input') as HTMLInputElement | null;
+  const btnLoadSample = document.getElementById('btn-drawer-load-sample');
+  const btnAddCurrent = document.getElementById('btn-drawer-add-current');
+  const btnClearAll = document.getElementById('btn-drawer-clear-all');
+  const btnGotoAssembly = document.getElementById('btn-drawer-goto-assembly');
+  const btnGotoRemixer = document.getElementById('btn-drawer-goto-remixer');
+
+  btnClose?.addEventListener('click', closeStylePoolDrawer);
+  btnHeaderPool?.addEventListener('click', openStylePoolDrawer);
+  btnPanelPool?.addEventListener('click', openStylePoolDrawer);
+  btnAssemblyPool?.addEventListener('click', openStylePoolDrawer);
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) {
+      closeStylePoolDrawer();
+    }
+  });
+
+  const drawer = document.getElementById('style-pool-drawer');
+  if (drawer) {
+    drawer.addEventListener('click', (e) => e.stopPropagation());
+    drawer.addEventListener('mousedown', (e) => e.stopPropagation());
+  }
+
+  dropzone?.addEventListener('click', () => {
+    fileInput?.click();
+  });
+
+  dropzone?.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropzone.style.borderColor = '#38bdf8';
+    dropzone.style.background = 'rgba(56, 189, 248, 0.15)';
+  });
+
+  dropzone?.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    dropzone.style.borderColor = '#4f46e5';
+    dropzone.style.background = 'rgba(79, 70, 229, 0.08)';
+  });
+
+  dropzone?.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    dropzone.style.borderColor = '#4f46e5';
+    dropzone.style.background = 'rgba(79, 70, 229, 0.08)';
+    if (e.dataTransfer && e.dataTransfer.files.length > 0) {
+      await loadFilesIntoStylePool(Array.from(e.dataTransfer.files));
+    }
+  });
+
+  fileInput?.addEventListener('change', async (e) => {
+    const files = Array.from((e.target as HTMLInputElement).files || []);
+    if (files.length > 0) {
+      await loadFilesIntoStylePool(files);
+      fileInput.value = '';
+    }
+  });
+
+  btnLoadSample?.addEventListener('click', async () => {
+    try {
+      const resp = await fetch('./samples/4006_SX900.T547.sty');
+      if (resp.ok) {
+        const buf = await resp.arrayBuffer();
+        const parsed = YamahaParser.parse(new Uint8Array(buf), 'STY');
+        if (!remixerPool.some((p) => p.name === '4006_SX900.T547.sty')) {
+          remixerPool.push({
+            id: `pool-sample-${Date.now()}`,
+            name: '4006_SX900.T547.sty',
+            parsed,
+          });
+          autoInitRemixerAssignmentsIfEmpty();
+          syncAllStylePoolUIs();
+          showStatus('🎵 已成功載入原廠示範伴奏 4006_SX900.sty 至伴奏庫！');
+        } else {
+          showStatus('伴奏庫中已有該示範伴奏檔。');
+        }
+      }
+    } catch (e) {
+      showStatus('載入示範伴奏檔失敗', true);
+    }
+  });
+
+  btnAddCurrent?.addEventListener('click', () => {
+    if (!currentParsed || currentParsed.format !== 'STY') {
+      showStatus('當前工作區尚未開啟任何 STY 伴奏檔', true);
+      return;
+    }
+    const curName = currentFileName || 'Workspace.sty';
+    if (!remixerPool.some((p) => p.name === curName)) {
+      remixerPool.push({
+        id: `pool-curr-${Date.now()}`,
+        name: curName,
+        parsed: currentParsed,
+      });
+      autoInitRemixerAssignmentsIfEmpty();
+      syncAllStylePoolUIs();
+      showStatus(`🎵 已將當前工作區伴奏 [${curName}] 載入至伴奏庫！`);
+    } else {
+      showStatus('伴奏庫中已存在該工作區伴奏檔。');
+    }
+  });
+
+  btnClearAll?.addEventListener('click', () => {
+    if (remixerPool.length === 0) return;
+    if (window.confirm('確定要清空伴奏庫中所有載入的風格嗎？')) {
+      if (currentDrawerAuditioningId) {
+        audioEngine.stopBackingTrack();
+        currentDrawerAuditioningId = null;
+      }
+      remixerPool = [];
+      syncAllStylePoolUIs();
+      showStatus('已清空伴奏庫。');
+    }
+  });
+
+  btnGotoAssembly?.addEventListener('click', () => {
+    closeStylePoolDrawer();
+    const assemblyContainer = document.getElementById('sty-assembly-container');
+    const btnToggleAssembly = document.getElementById('btn-toggle-style-assembly');
+    if (assemblyContainer && assemblyContainer.style.display === 'none') {
+      assemblyContainer.style.display = 'block';
+      if (btnToggleAssembly) {
+        btnToggleAssembly.textContent = '✕ 收合組裝精靈';
+        btnToggleAssembly.classList.add('active-rp');
+      }
+    }
+    assemblyContainer?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+
+  btnGotoRemixer?.addEventListener('click', () => {
+    closeStylePoolDrawer();
+    openStyleRemixerModal();
+  });
+}
+
 function renderRemixerPoolUI() {
   const countBadge = document.getElementById('remixer-pool-count-badge');
   const chipsContainer = document.getElementById('remixer-pool-chips');
@@ -3829,17 +4321,7 @@ function renderRemixerPoolUI() {
         const btnRemove = chip.querySelector('.btn-remove-pool-item') as HTMLButtonElement | null;
         btnRemove?.addEventListener('click', (e) => {
           e.stopPropagation();
-          remixerPool = remixerPool.filter((p) => p.id !== item.id);
-          for (const sec of Object.keys(remixerSectionAssignments)) {
-            for (const pId of Object.keys(remixerSectionAssignments[sec])) {
-              if (remixerSectionAssignments[sec][pId as StylePartId]?.sourceStyleId === item.id) {
-                remixerSectionAssignments[sec][pId as StylePartId].sourceStyleId = '';
-              }
-            }
-          }
-          renderRemixerPoolUI();
-          renderRemixerPartsMatrixUI();
-          showStatus(`已從伴奏庫移除: ${item.name}`);
+          removePoolItem(item.id);
         });
 
         chipsContainer.appendChild(chip);
@@ -4404,7 +4886,7 @@ function initStyleRemixerModal() {
 
     if (addedCount > 0) {
       autoInitRemixerAssignmentsIfEmpty();
-      renderRemixerPoolUI();
+      syncAllStylePoolUIs();
       renderRemixerSectionTabsUI();
       renderRemixerPartsMatrixUI();
       showStatus(`🎵 已成功載入 ${addedCount} 個示範 STY 伴奏檔至伴奏庫！`);
@@ -4421,32 +4903,8 @@ function initStyleRemixerModal() {
   fileInput?.addEventListener('change', async (e) => {
     const files = Array.from((e.target as HTMLInputElement).files || []);
     if (files.length === 0) return;
-
-    let successCount = 0;
-    for (const file of files) {
-      try {
-        const buf = await file.arrayBuffer();
-        const parsed = YamahaParser.parse(new Uint8Array(buf), 'STY');
-        remixerPool.push({
-          id: `pool-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-          name: file.name,
-          parsed,
-        });
-        successCount++;
-      } catch (err: any) {
-        console.error(`解析檔案 ${file.name} 失敗:`, err);
-        showStatus(`檔案 ${file.name} 不是有效的 Yamaha STY 伴奏檔`, true);
-      }
-    }
-
+    await loadFilesIntoStylePool(files);
     fileInput.value = '';
-    if (successCount > 0) {
-      autoInitRemixerAssignmentsIfEmpty();
-      renderRemixerPoolUI();
-      renderRemixerSectionTabsUI();
-      renderRemixerPartsMatrixUI();
-      showStatus(`📂 成功匯入 ${successCount} 個 STY 伴奏檔至伴奏庫！`);
-    }
   });
 
   // 快速全域套用
@@ -4882,20 +5340,36 @@ function initEvents() {
       dropZone.classList.remove('dragover');
     });
 
-    dropZone.addEventListener('drop', (e) => {
+    dropZone.addEventListener('drop', async (e) => {
       e.preventDefault();
       dropZone.classList.remove('dragover');
       if (e.dataTransfer && e.dataTransfer.files.length > 0) {
-        handleFile(e.dataTransfer.files[0]);
+        const droppedFiles = Array.from(e.dataTransfer.files);
+        const styFiles = droppedFiles.filter((f) => f.name.toLowerCase().endsWith('.sty'));
+        if (styFiles.length > 1) {
+          handleFile(styFiles[0]);
+          await loadFilesIntoStylePool(styFiles);
+          openStylePoolDrawer();
+        } else {
+          handleFile(droppedFiles[0]);
+        }
       }
     });
   }
 
   // 選擇檔案事件
   if (fileInput) {
-    fileInput.addEventListener('change', () => {
+    fileInput.addEventListener('change', async () => {
       if (fileInput.files && fileInput.files.length > 0) {
-        handleFile(fileInput.files[0]);
+        const selectedFiles = Array.from(fileInput.files);
+        const styFiles = selectedFiles.filter((f) => f.name.toLowerCase().endsWith('.sty'));
+        if (styFiles.length > 1) {
+          handleFile(styFiles[0]);
+          await loadFilesIntoStylePool(styFiles);
+          openStylePoolDrawer();
+        } else {
+          handleFile(selectedFiles[0]);
+        }
       }
     });
   }
@@ -5198,6 +5672,9 @@ function initEvents() {
 
   // Phase 3.3: 初始化跨 STY 聲部混搭重組精靈彈窗
   initStyleRemixerModal();
+
+  // Phase 3.4: 初始化伴奏樣式庫抽屜 (Style Pool Drawer)
+  initStylePoolDrawer();
 
   // Phase 2.7: 初始化琴端即時錄音視窗 (Live Pad Recorder)
   initPadRecordModal();
@@ -6449,6 +6926,18 @@ function updateAssemblyExecuteButtonState(overview: SectionOverview) {
     countBadge.style.borderColor = count > 0 ? 'rgba(56,189,248,0.4)' : '#334155';
   }
 
+  const btnAuditionAll = document.getElementById('btn-assembly-audition-all-src') as HTMLButtonElement | null;
+  if (btnAuditionAll) {
+    if (count > 1) {
+      btnAuditionAll.style.display = 'inline-block';
+      if (!isAssemblyAuditioningAllSrc) {
+        btnAuditionAll.textContent = `🎧 試聽所選合奏 (${count} 聲部)`;
+      }
+    } else {
+      btnAuditionAll.style.display = 'none';
+    }
+  }
+
   if (!btnExecute) return;
 
   if (count === 0) {
@@ -6714,6 +7203,9 @@ function updateStyleAssemblyUI() {
   // 7. 更新卡片資訊盒
   updateAssemblySrcInfoBox();
   updateAssemblyDestInfoBox();
+
+  // 8. 跨風格相容性檢測與警告
+  updateAssemblyCompatibilityBanner(srcParsed, currentParsed, selectSrcSection.value, selectDestSection.value);
 }
 
 function handleAssemblySuccess(message: string) {
@@ -6748,6 +7240,18 @@ function stopAssemblyAudition() {
       btnAudition.textContent = '🎧 試聽來源聲部';
       btnAudition.classList.remove('playing');
     }
+  }
+  if (isAssemblyAuditioningAllSrc) {
+    audioEngine.stopBackingTrack();
+    isAssemblyAuditioningAllSrc = false;
+    const btnAuditionAll = document.getElementById('btn-assembly-audition-all-src') as HTMLButtonElement | null;
+    if (btnAuditionAll) {
+      btnAuditionAll.textContent = `🎧 試聽所選合奏 (${assemblySelectedChannels.size} 聲部)`;
+      btnAuditionAll.classList.remove('playing');
+    }
+  }
+  if (isAssemblyHybridPreviewPlaying) {
+    stopAssemblyHybridPreview();
   }
 }
 
@@ -6843,6 +7347,385 @@ function playAssemblySourcePartAudition() {
       }
     },
   });
+}
+
+let isAssemblyAuditioningAllSrc = false;
+let isAssemblyHybridPreviewPlaying = false;
+
+function toggleAssemblyAllSelectedPartsAudition() {
+  const btnAuditionAll = document.getElementById('btn-assembly-audition-all-src') as HTMLButtonElement | null;
+
+  if (isAssemblyAuditioningAllSrc) {
+    audioEngine.stopBackingTrack();
+    isAssemblyAuditioningAllSrc = false;
+    if (btnAuditionAll) {
+      btnAuditionAll.textContent = `🎧 試聽所選合奏 (${assemblySelectedChannels.size} 聲部)`;
+      btnAuditionAll.classList.remove('playing');
+    }
+    showStatus('已停止來源聲部合奏試聽');
+    return;
+  }
+
+  stopAssemblyAudition();
+
+  const srcParsed = getAssemblySourceParsed();
+  const selectSrcSection = document.getElementById('assembly-src-section') as HTMLSelectElement | null;
+  if (!srcParsed || !selectSrcSection) return;
+
+  const secName = selectSrcSection.value;
+  const range = StyleRemixer.getSectionTickRange(srcParsed, secName);
+  if (!range) return;
+
+  const channels = Array.from(assemblySelectedChannels);
+  if (channels.length === 0) {
+    showStatus('請至少勾選 1 個來源聲部進行合奏試聽', true);
+    return;
+  }
+
+  const backingItems: BackingTrackItem[] = [];
+  const division = srcParsed.division || 480;
+  const totalTicks = Math.max(division * 4, range.endTick - range.startTick);
+
+  for (const ch of channels) {
+    const notes = StyleRemixer.extractSectionChannelNotes(srcParsed, range.startTick, range.endTick, ch);
+    if (notes.length === 0) continue;
+
+    const override = StyleRemixer.getSectionChannelOverride(srcParsed, range.startTick, range.endTick, ch);
+    const part = srcParsed.parts.find((p) => p.channel === ch);
+    const msb = override.bankMsb ?? part?.bankMsb ?? (ch === 8 || ch === 9 ? 127 : 0);
+    const lsb = override.bankLsb ?? part?.bankLsb ?? 0;
+    const pc = override.pc ?? part?.programChange ?? 0;
+    const vol = override.volume ?? part?.volume ?? 100;
+    const pan = override.pan ?? part?.pan ?? 64;
+    const reverb = part?.reverb ?? 40;
+    const chorus = part?.chorus ?? 0;
+
+    const { instrumentId: instId, isDrum } = resolveAuditionInstrumentId(msb, lsb, pc, ch);
+
+    backingItems.push({
+      padNum: ch + 1,
+      notes: notes.map((n) => ({
+        note: n.note,
+        velocity: n.velocity,
+        startTick: n.startTick,
+        durationTick: n.durationTick,
+      })),
+      totalTicks,
+      channelParams: {
+        volume: vol,
+        pan,
+        reverb,
+        chorus,
+        instrumentId: instId,
+        msb,
+        lsb,
+        pc,
+        channel: ch,
+        isDrum,
+      },
+    });
+  }
+
+  if (backingItems.length === 0) {
+    showStatus(`勾選的聲部在段落 [${secName}] 中均無音符`, true);
+    return;
+  }
+
+  const styBpmInput = document.getElementById('sty-playback-bpm') as HTMLInputElement | null;
+  const bpm = styBpmInput ? (parseInt(styBpmInput.value, 10) || srcParsed.bpm || 120) : (srcParsed.bpm || 120);
+
+  isAssemblyAuditioningAllSrc = true;
+  if (btnAuditionAll) {
+    btnAuditionAll.textContent = '⏹ 停止合奏試聽';
+    btnAuditionAll.classList.add('playing');
+  }
+
+  audioEngine.startBackingTrack(backingItems, {
+    bpm,
+    division,
+    beatsPerBar: srcParsed.timeSignature?.numerator || 4,
+    volumeRatio: 1.0,
+    loop: true,
+    onEnded: () => {
+      isAssemblyAuditioningAllSrc = false;
+      if (btnAuditionAll) {
+        btnAuditionAll.textContent = `🎧 試聽所選合奏 (${assemblySelectedChannels.size} 聲部)`;
+        btnAuditionAll.classList.remove('playing');
+      }
+    },
+  });
+
+  showStatus(`▶ 正在試聽來源段落 [${secName}] 的 ${backingItems.length} 個聲部合奏...`);
+}
+
+function stopAssemblyHybridPreview() {
+  if (isAssemblyHybridPreviewPlaying) {
+    audioEngine.stopBackingTrack();
+    isAssemblyHybridPreviewPlaying = false;
+    const btnPreview = document.getElementById('btn-assembly-preview-hybrid') as HTMLButtonElement | null;
+    if (btnPreview) {
+      btnPreview.textContent = '🎛️ 跨風格拼裝預覽試聽';
+      btnPreview.classList.remove('playing');
+    }
+  }
+}
+
+function toggleAssemblyHybridPreview() {
+  const btnPreview = document.getElementById('btn-assembly-preview-hybrid') as HTMLButtonElement | null;
+
+  if (isAssemblyHybridPreviewPlaying) {
+    stopAssemblyHybridPreview();
+    showStatus('已停止跨風格拼裝預覽');
+    return;
+  }
+
+  if (!currentParsed || currentParsed.format !== 'STY') return;
+
+  stopAssemblyAudition();
+
+  const selectDestSection = document.getElementById('assembly-dest-section') as HTMLSelectElement | null;
+  const selectSrcSection = document.getElementById('assembly-src-section') as HTMLSelectElement | null;
+  const selectSrcPart = document.getElementById('assembly-src-part') as HTMLSelectElement | null;
+  const inputTranspose = document.getElementById('assembly-transpose') as HTMLInputElement | null;
+  const selectVelocity = document.getElementById('assembly-velocity-scale') as HTMLSelectElement | null;
+  const selectLoopMode = document.getElementById('assembly-loop-mode') as HTMLSelectElement | null;
+
+  if (!selectDestSection || !selectSrcSection) return;
+
+  const destSection = selectDestSection.value;
+  const srcSection = selectSrcSection.value;
+  const srcParsed = getAssemblySourceParsed();
+
+  const destRange = StyleRemixer.getSectionTickRange(currentParsed, destSection);
+  const srcRange = StyleRemixer.getSectionTickRange(srcParsed, srcSection);
+  if (!destRange || !srcRange) return;
+
+  let channelsToReplace = Array.from(assemblySelectedChannels);
+  if (channelsToReplace.length === 0 && selectSrcPart && selectSrcPart.value) {
+    channelsToReplace = [parseInt(selectSrcPart.value, 10)];
+  }
+
+  if (channelsToReplace.length === 0) {
+    showStatus('請至少選取 1 個欲替換組裝的聲部進行預覽', true);
+    return;
+  }
+
+  const destDivision = currentParsed.division || 480;
+  const srcDivision = srcParsed.division || 480;
+  const divisionScale = destDivision / srcDivision;
+  const destSpanTicks = destRange.endTick - destRange.startTick;
+  const srcSpanTicks = Math.round((srcRange.endTick - srcRange.startTick) * divisionScale);
+
+  const transposeShift = parseInt(inputTranspose?.value || '0', 10) || 0;
+  const velocityScale = parseFloat(selectVelocity?.value || '1.0') || 1.0;
+  const loopMode = selectLoopMode?.value || 'loop';
+
+  let loopCount = 1;
+  if (loopMode === 'loop' && srcSpanTicks > 0 && srcSpanTicks < destSpanTicks) {
+    loopCount = Math.ceil(destSpanTicks / srcSpanTicks);
+  }
+
+  const backingItems: BackingTrackItem[] = [];
+  const replacedChannelsSet = new Set(channelsToReplace);
+
+  // 1. 加入目標段落中「未被替換」的既有聲部
+  for (const part of currentParsed.parts || []) {
+    const ch = part.channel;
+    if (replacedChannelsSet.has(ch)) continue;
+
+    const notes = StyleRemixer.extractSectionChannelNotes(currentParsed, destRange.startTick, destRange.endTick, ch);
+    if (notes.length === 0) continue;
+
+    const override = StyleRemixer.getSectionChannelOverride(currentParsed, destRange.startTick, destRange.endTick, ch);
+    const msb = override.bankMsb ?? part.bankMsb ?? (ch === 8 || ch === 9 ? 127 : 0);
+    const lsb = override.bankLsb ?? part.bankLsb ?? 0;
+    const pc = override.pc ?? part.programChange ?? 0;
+    const vol = override.volume ?? part.volume ?? 100;
+    const pan = override.pan ?? part.pan ?? 64;
+    const reverb = part.reverb ?? 40;
+    const chorus = part.chorus ?? 0;
+
+    const { instrumentId: instId, isDrum } = resolveAuditionInstrumentId(msb, lsb, pc, ch);
+
+    backingItems.push({
+      padNum: ch + 1,
+      notes: notes.map((n) => ({
+        note: n.note,
+        velocity: n.velocity,
+        startTick: n.startTick,
+        durationTick: n.durationTick,
+      })),
+      totalTicks: destSpanTicks,
+      channelParams: {
+        volume: vol,
+        pan,
+        reverb,
+        chorus,
+        instrumentId: instId,
+        msb,
+        lsb,
+        pc,
+        channel: ch,
+        isDrum,
+      },
+    });
+  }
+
+  // 2. 加入來源風格中「欲替換組裝」的聲部
+  for (const ch of channelsToReplace) {
+    const rawNotes = StyleRemixer.extractSectionChannelNotes(srcParsed, srcRange.startTick, srcRange.endTick, ch);
+    if (rawNotes.length === 0) continue;
+
+    const isDrum = ch === 9 || ch === 8;
+    const effShift = isDrum ? 0 : transposeShift;
+
+    const mappedNotes: Array<{ note: number; velocity: number; startTick: number; durationTick: number }> = [];
+
+    for (let l = 0; l < loopCount; l++) {
+      const loopOffset = l * srcSpanTicks;
+      for (const n of rawNotes) {
+        const scaledStart = Math.round(n.startTick * divisionScale);
+        const scaledDur = Math.max(12, Math.round(n.durationTick * divisionScale));
+        const absStart = loopOffset + scaledStart;
+        if (absStart >= destSpanTicks) continue;
+
+        const dur = Math.min(scaledDur, destSpanTicks - absStart);
+        const pitch = Math.min(127, Math.max(0, n.note + effShift));
+        const vel = Math.min(127, Math.max(1, Math.round(n.velocity * velocityScale)));
+
+        mappedNotes.push({
+          note: pitch,
+          velocity: vel,
+          startTick: absStart,
+          durationTick: dur,
+        });
+      }
+    }
+
+    const override = StyleRemixer.getSectionChannelOverride(srcParsed, srcRange.startTick, srcRange.endTick, ch);
+    const part = srcParsed.parts.find((p) => p.channel === ch);
+    const msb = override.bankMsb ?? part?.bankMsb ?? (isDrum ? 127 : 0);
+    const lsb = override.bankLsb ?? part?.bankLsb ?? 0;
+    const pc = override.pc ?? part?.programChange ?? 0;
+    const vol = override.volume ?? part?.volume ?? 100;
+    const pan = override.pan ?? part?.pan ?? 64;
+    const reverb = part?.reverb ?? 40;
+    const chorus = part?.chorus ?? 0;
+
+    const { instrumentId: instId } = resolveAuditionInstrumentId(msb, lsb, pc, ch);
+
+    backingItems.push({
+      padNum: ch + 1,
+      notes: mappedNotes,
+      totalTicks: destSpanTicks,
+      channelParams: {
+        volume: vol,
+        pan,
+        reverb,
+        chorus,
+        instrumentId: instId,
+        msb,
+        lsb,
+        pc,
+        channel: ch,
+        isDrum,
+      },
+    });
+  }
+
+  if (backingItems.length === 0) {
+    showStatus(`混搭拼裝段落中無音符可供試聽`, true);
+    return;
+  }
+
+  isAssemblyHybridPreviewPlaying = true;
+  if (btnPreview) {
+    btnPreview.textContent = '⏹ 停止拼裝預覽';
+    btnPreview.classList.add('playing');
+  }
+
+  const bpm = currentParsed.bpm || 120;
+  audioEngine.startBackingTrack(backingItems, {
+    bpm,
+    division: destDivision,
+    beatsPerBar: currentParsed.timeSignature?.numerator || 4,
+    volumeRatio: 1.0,
+    loop: true,
+    onEnded: () => {
+      isAssemblyHybridPreviewPlaying = false;
+      if (btnPreview) {
+        btnPreview.textContent = '🎛️ 跨風格拼裝預覽試聽';
+        btnPreview.classList.remove('playing');
+      }
+    },
+  });
+
+  showStatus(`▶ 正在試聽 [${destSection}] 跨風格混搭合奏預覽 (${channelsToReplace.length} 聲部自來源替換)...`);
+}
+
+function updateAssemblyCompatibilityBanner(
+  srcParsed: YamahaFileParsed,
+  destParsed: YamahaFileParsed,
+  srcSectionName: string,
+  destSectionName: string
+) {
+  const banner = document.getElementById('assembly-compatibility-banner');
+  if (!banner) return;
+
+  if (srcParsed && destParsed && srcParsed !== destParsed) {
+    const report = StyleCompatibilityChecker.checkCompatibility(
+      srcParsed,
+      destParsed,
+      srcSectionName,
+      destSectionName
+    );
+
+    banner.style.display = 'flex';
+
+    if (!report.isTimeSignatureCompatible) {
+      banner.style.background = 'rgba(239, 68, 68, 0.14)';
+      banner.style.border = '1px solid rgba(239, 68, 68, 0.45)';
+      banner.style.color = '#fca5a5';
+      banner.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.15rem;">⚠️</span>
+          <div>
+            <strong style="color: #fca5a5;">${escapeHtml(report.warnings[0])}</strong>
+            ${report.advisories.length > 0 ? `<div style="font-size: 0.72rem; color: #cbd5e1; margin-top: 3px;">💡 ${report.advisories.map(escapeHtml).join(' | ')}</div>` : ''}
+          </div>
+        </div>
+        <span class="badge" style="background: rgba(239,68,68,0.25); color: #f87171; border: 1px solid rgba(239,68,68,0.5); font-weight: 700;">拍號不符 (${escapeHtml(report.srcTimeSig)} vs ${escapeHtml(report.destTimeSig)})</span>
+      `;
+    } else if (report.bpmDiff > 15 || report.advisories.length > 0) {
+      banner.style.background = 'rgba(245, 158, 11, 0.12)';
+      banner.style.border = '1px solid rgba(245, 158, 11, 0.35)';
+      banner.style.color = '#fde68a';
+      const primaryMsg = report.warnings[0] || report.advisories[0] || report.summaryMessage;
+      banner.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.15rem;">ℹ️</span>
+          <div>
+            <strong style="color: #fde68a;">${escapeHtml(primaryMsg)}</strong>
+            ${report.advisories.length > 1 ? `<div style="font-size: 0.72rem; color: #cbd5e1; margin-top: 3px;">💡 ${report.advisories.slice(1).map(escapeHtml).join(' | ')}</div>` : ''}
+          </div>
+        </div>
+        <span class="badge" style="background: rgba(245,158,11,0.25); color: #fbbf24; border: 1px solid rgba(245,158,11,0.4); font-weight: 600;">速度相差 ${report.bpmDiff} BPM</span>
+      `;
+    } else {
+      banner.style.background = 'rgba(16, 185, 129, 0.1)';
+      banner.style.border = '1px solid rgba(16, 185, 129, 0.3)';
+      banner.style.color = '#6ee7b7';
+      banner.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span>✅</span>
+          <span>來源風格與目標風格<strong>拍號 (${escapeHtml(report.destTimeSig)}) 與速度 (${report.destBpm} BPM) 完全相容</strong>，可放心進行跨風格混血拼貼！</span>
+        </div>
+        <span class="badge" style="background: rgba(16,185,129,0.2); color: #34d399; border: 1px solid rgba(16,185,129,0.35); font-weight: 600;">完全相容</span>
+      `;
+    }
+  } else {
+    banner.style.display = 'none';
+  }
 }
 
 function executeSingleAssembly() {
@@ -7427,6 +8310,24 @@ function initStyleAssemblyUI() {
     }
   });
 
+  // 試聽來源已選合奏
+  const btnAuditionAllSrc = document.getElementById('btn-assembly-audition-all-src') as HTMLButtonElement | null;
+  btnAuditionAllSrc?.addEventListener('click', () => {
+    toggleAssemblyAllSelectedPartsAudition();
+  });
+
+  // 跨風格拼裝預覽試聽
+  const btnPreviewHybrid = document.getElementById('btn-assembly-preview-hybrid') as HTMLButtonElement | null;
+  btnPreviewHybrid?.addEventListener('click', () => {
+    toggleAssemblyHybridPreview();
+  });
+
+  // 開啟伴奏庫抽屜
+  const btnOpenPool = document.getElementById('btn-assembly-open-pool') as HTMLButtonElement | null;
+  btnOpenPool?.addEventListener('click', () => {
+    openStylePoolDrawer();
+  });
+
   // 試聽目標段落合奏
   const btnAuditionDest = document.getElementById('btn-assembly-audition-dest') as HTMLButtonElement | null;
   btnAuditionDest?.addEventListener('click', () => {
@@ -7663,6 +8564,11 @@ function renderSections(parsed: YamahaFileParsed) {
     btnOpenRemixer.style.display = isPad ? 'none' : 'inline-flex';
   }
 
+  const btnOpenPoolPanel = document.getElementById('btn-open-style-pool-panel');
+  if (btnOpenPoolPanel) {
+    btnOpenPoolPanel.style.display = isPad ? 'none' : 'inline-flex';
+  }
+
   const btnTogglePartMatrix = document.getElementById('btn-toggle-part-matrix');
   if (btnTogglePartMatrix) {
     btnTogglePartMatrix.style.display = isPad ? 'none' : 'inline-flex';
@@ -7686,6 +8592,8 @@ function renderSections(parsed: YamahaFileParsed) {
   } else if (!isPad && assemblyContainer && assemblyContainer.style.display !== 'none') {
     updateStyleAssemblyUI();
   }
+
+  syncAllStylePoolUIs();
 
   sectionCount.textContent = isPad ? '4 組打擊墊設定' : `${parsed.sections.length} 個標記段落`;
 

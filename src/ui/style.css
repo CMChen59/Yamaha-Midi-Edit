@@ -2644,5 +2644,49 @@ body {
   box-shadow: 0 0 10px rgba(239, 68, 68, 0.35);
 }
 
+/* ========================================================
+   伴奏樣式庫抽屜 (Style Pool Drawer)
+   ======================================================== */
+@keyframes slideInDrawer {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
 
+.style-pool-drawer-slide {
+  animation: slideInDrawer 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
 
+.style-pool-card {
+  background: #151926;
+  border: 1px solid #232c40;
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: all 0.18s ease;
+}
+
+.style-pool-card:hover {
+  border-color: #4f46e5;
+  box-shadow: 0 4px 18px rgba(79, 70, 229, 0.16);
+  transform: translateY(-1px);
+}
+
+.style-pool-card.current-active {
+  border-color: #0284c7;
+  background: #111728;
+}
+
+.style-pool-card-badge {
+  font-size: 0.68rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}

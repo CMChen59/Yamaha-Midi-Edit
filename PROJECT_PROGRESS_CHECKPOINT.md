@@ -1,6 +1,6 @@
 # Yamaha PSR-SX920 伴奏 / 打擊墊編輯器 — 專案進度存檔與執行藍圖
 
-> **更新時間**：2026-10-18  
+> **更新時間**：2026-10-19  
 > **重大里程碑**：
 > 1. 🎉 **Phase 1.5 實琴驗收 100% 通過！**（PSR-SX920 實機二進位解析與重構完全相容）  
 > 2. 🎉 **Phase 2.3 外部標準 MIDI 匯入與切片分配精靈全面完工！**  
@@ -10,9 +10,10 @@
 > 6. 🎉 **Phase 3.0 (Module 3) 純 STY 伴奏視覺化工作台 100% 完工！**（雙視野時間軸、Track 0 音符編輯、小節動態剪裁、琴鍵試聽、雷射紅走帶遊標、SFF2 CASM 完整保留與匯出防呆驗證）  
 > 7. 🎉 **Style Section Assembly Studio 伴奏聲部組裝精靈 100% 完工！**（聲部開口矩陣、跨段落/跨風格自由拼貼、小節循環填滿、移調力度縮放、新增自訂段落、多聲部自由勾選與批次組裝）  
 > 8. 🎉 **Phase 3.6 實體琴 Style 伴奏音色退化 (Fallback to Piano) 重大問題攻堅 100% 完工！**（突破 Yamaha 伴奏引擎三大硬體相容限制：Bank LSB 112 違法無效修正為 XG Capital 0、SInt 初始化第 1 小節獨立隔離防止段落撞車、注入原廠 Style Header 與 XG On SysEx，已完成 PSR-SX920 實機驗收）  
-> 9. 📌 **正式將【6 大後續進階計畫 (STY伴奏琴端即時跟彈錄音 / CASM轉調規則 / 樣式庫批次載入 / 外部MIDI匯入 / OTS編輯 / WebMIDI琴端直連)】納入待執行庫！詳細請見：[`PENDING_EXECUTION_PLANS.md`](file:///d:/Vibe%20Coding/MIDI/Yamaha-Midi-Edit/PENDING_EXECUTION_PLANS.md)**  
+> 9. 📌 **正式將【4 大主題式整合執行包 (樣式庫抽屜混血 / 外部MIDI樂句採集器與C根音校正 / STY琴端即時跟彈錄音 / Yamaha出廠規格封裝與高級轉調試聽)】納入待執行庫！詳細請見：[`PENDING_EXECUTION_PLANS.md`](file:///d:/Vibe%20Coding/MIDI/PENDING_EXECUTION_PLANS.md)**  
+> 10. 🎉 **【整合包 1】伴奏樣式庫抽屜與跨風格混血拼貼 (Multi-Style Pool & Cross-Style Remixing) 100% 完工！**（支援 5~10 個 STY 風格拖曳載入記憶體庫、右側滑入式樣式庫抽屜、獨立卡片試聽、拍號/BPM/長度相容性檢測引擎、所選合奏試聽與首創「🎛️ 跨風格拼裝預覽試聽 (Hybrid Preview)」）。  
 > **代碼倉庫**：`https://github.com/CMChen59/Yamaha-Midi-Edit.git`（分支: `main`，已同步推播遠端備份）  
-> **測試狀態**：153 / 153 項單元測試全數通過（通過率 100%），26 個測試套件全數綠燈通過，TypeScript 編譯 0 錯誤，Vite 生產打包無誤。
+> **測試狀態**：160 / 160 項單元測試全數通過（通過率 100%），28 個測試套件全數綠燈通過，TypeScript 編譯 0 錯誤，Vite 生產打包無誤。
 
 ---
 
@@ -52,6 +53,22 @@
 * **原廠音色與混音雙向同步**：Bank Select (CC0/CC32) 與 Program Change，混音推桿同步 CC7 (Volume)、CC10 (Pan)、CC91 (Reverb)、CC93 (Chorus)。
 * **多重發聲路由與防掛音保護**：切換時廣播 CC 123 (All Notes Off) 與 CC 120 (All Sound Off)。
 * **實琴端對端驗收**：隨身碟載入 `.PAD` 檔案於 PSR-SX920 實體按鈕 1~4 回放、Repeat 循環與 Chord Match 和弦轉調實測 100% 正常。
+
+---
+
+### 4. Phase 3.7 / 整合包 1：伴奏樣式庫抽屜與跨風格混血拼貼 (已完工)
+* **樣式庫抽屜面板 (Style Library Drawer)**：
+  * 右側滑入式現代抽屜，支援多個 `.sty` 伴奏風格檔拖曳暫存與本地多選載入（5~10 個）。
+  * 卡片顯示風格標題、BPM、拍號、段落清單與相容性標籤。
+  * 卡片支援「▶ 試聽風格」獨立播放發聲與「📌 設為組裝來源」。
+* **相容性自動檢測引擎 (`StyleCompatibilityChecker`)**：
+  * 即時計算拍號相容性（如 4/4 vs 3/4）、BPM 差距（>15 BPM 提示、>30 BPM 強烈警告）及小節長度差異。
+  * 組裝精靈頂部以動態彩色橫幅提示製作人，避免音樂結構衝突。
+* **跨風格拼裝預覽試聽 (`Hybrid Section Preview`)**：
+  * 革命性即時混血預聽機制：以目標段落未被替換之聲部為底座，實時混入來源風格選定聲部。
+  * 不需提前寫入檔案即可耳聽為憑確認混血成果。
+* **多聲部自由勾選與批次無損組裝**：
+  * 支援跨風格聲部隨意混搭（如 A 風格鼓 + B 風格貝斯 + C 風格吉他），一鍵無損注入目標段落，CASM 轉調與音色完全相容 Yamaha 琴端。
 
 ---
 
