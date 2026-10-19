@@ -1095,10 +1095,17 @@ function getPadBackingTrackItem(padNum: number): BackingTrackItem | null {
     ...n,
     startTick: Math.max(0, n.startTick - padBaseTick),
   }));
+  const padIdx = padNum - 1;
+  const isChordMatch = currentParsed.padConfig?.chordMatchFlags[padIdx] ?? false;
+  const isDrum = currentMsb === 127 || currentMsb === 126;
+
+  const finalNotes = (isChordMatch && !isDrum)
+    ? ChordTransposer.transposeNotes(relNotes, currentAuditionChord, padNum - 1, false)
+    : relNotes;
 
   return {
     padNum,
-    notes: relNotes,
+    notes: finalNotes,
     totalTicks,
     channelParams: {
       volume,
@@ -6998,13 +7005,19 @@ function togglePadAudition(padNum: number, startBar?: number) {
 
   const padIdx = padNum - 1;
   const isRepeat = currentParsed.padConfig?.repeatFlags[padIdx] ?? false;
-  const { instrumentId } = resolveAuditionInstrumentId(currentMsb, currentLsb, currentPc, padNum - 1);
+  const isChordMatch = currentParsed.padConfig?.chordMatchFlags[padIdx] ?? false;
+  const { instrumentId, isDrum } = resolveAuditionInstrumentId(currentMsb, currentLsb, currentPc, padNum - 1);
+
+  // Phase 3.4: 若此 Pad 啟用了 Chord Match (和弦跟隨) 且非打擊樂，即時套用當前虛擬左手和弦轉調
+  const finalNotes = (isChordMatch && !isDrum)
+    ? ChordTransposer.transposeNotes(notes, currentAuditionChord, padNum - 1, false)
+    : notes;
 
   const division = currentParsed.division || 96;
   const beatsPerBar = currentParsed.timeSignature?.numerator || 4;
   const ticksPerBar = division * beatsPerBar;
-  const firstNoteTick = Math.min(...notes.map(n => n.startTick));
-  const lastNoteTick = Math.max(...notes.map(n => n.startTick + n.durationTick));
+  const firstNoteTick = Math.min(...finalNotes.map(n => n.startTick));
+  const lastNoteTick = Math.max(...finalNotes.map(n => n.startTick + n.durationTick));
   const explicitBars = YamahaPadModifier.getPadBarLength(currentParsed, padNum);
   const padLoopTicks = explicitBars * ticksPerBar;
   const gridStartTick = firstNoteTick >= padLoopTicks ? Math.floor(firstNoteTick / ticksPerBar) * ticksPerBar : 0;
@@ -7023,7 +7036,7 @@ function togglePadAudition(padNum: number, startBar?: number) {
 
   updateAuditionUIState(padNum);
 
-  audioEngine.playSequence(padNum, notes, {
+  audioEngine.playSequence(padNum, finalNotes, {
     bpm,
     division,
     beatsPerBar,
@@ -9061,6 +9074,7 @@ function renderVirtualChordAuditionUI() {
   const container = document.getElementById('sty-quick-chords-container');
   if (!badge) return;
 
+  const isPad = currentParsed?.format === 'PAD';
   const isOriginal = currentAuditionChord.displayName === 'C (原調)' || (currentAuditionChord.root === 'C' && currentAuditionChord.type === 'maj');
   badge.textContent = currentAuditionChord.displayName;
   badge.style.background = isOriginal ? 'rgba(16, 185, 129, 0.2)' : 'rgba(56, 189, 248, 0.25)';
@@ -9068,11 +9082,15 @@ function renderVirtualChordAuditionUI() {
   badge.style.color = isOriginal ? '#34d399' : '#38bdf8';
 
   if (hint) {
-    if (isOriginal) {
-      hint.textContent = '(伴奏播放時點擊下方和弦，即時模擬 Yamaha CASM 轉調發聲)';
+    const shiftStr = currentAuditionChord.semitonesFromC >= 0 ? `+${currentAuditionChord.semitonesFromC}` : `${currentAuditionChord.semitonesFromC}`;
+    if (isPad) {
+      hint.textContent = isOriginal
+        ? '(PAD 模式: 支援和弦跟隨！開啟「和弦跟隨 (Chord Match)」的 Pad 將隨下方和弦轉調發聲)'
+        : `(PAD 和弦跟隨中: 開啟 Chord Match 的 Pad 移調 ${shiftStr} 半音，三度音與音階變形)`;
     } else {
-      const shiftStr = currentAuditionChord.semitonesFromC >= 0 ? `+${currentAuditionChord.semitonesFromC}` : `${currentAuditionChord.semitonesFromC}`;
-      hint.textContent = `(CASM 轉調生效中: 根音位移 ${shiftStr} 半音，三度音與音階變形)`;
+      hint.textContent = isOriginal
+        ? '(伴奏播放時點擊下方和弦，即時模擬 Yamaha CASM 轉調發聲)'
+        : `(CASM 轉調生效中: 根音位移 ${shiftStr} 半音，三度音與音階變形)`;
     }
   }
 
@@ -9105,6 +9123,21 @@ function switchAuditionChord(newChord: ChordDefinition) {
     const curBar = Math.floor(currentAuditionStyPlaybackTick / ticksPerBar) + 1;
     toggleStySectionAudition(sec, curBar);
     showStatus(`🎹 左手和弦切換為 [${newChord.displayName}]，伴奏即時轉調接續播放！`);
+  } else if (currentParsed?.format === 'PAD') {
+    if (isAllPadsPlaying) {
+      togglePlayAllPads();
+      togglePlayAllPads();
+      showStatus(`🎹 左手和弦切換為 [${newChord.displayName}]，合奏 Pad 即時轉調！`);
+    } else if (audioEngine.isPlaying()) {
+      const activePad = audioEngine.getPlayingPadNum();
+      if (activePad !== null) {
+        togglePadAudition(activePad);
+        togglePadAudition(activePad);
+        showStatus(`🎹 左手和弦切換為 [${newChord.displayName}]，Pad ${activePad} 即時轉調！`);
+      }
+    } else {
+      showStatus(`🎹 已設定左手模擬和弦為 [${newChord.displayName}]，開啟 Chord Match 的 Pad 試聽時將自動轉調！`);
+    }
   } else {
     showStatus(`🎹 已設定左手模擬和弦為 [${newChord.displayName}]，點擊任一段落試聽即可聆聽轉調效果！`);
   }
@@ -9362,10 +9395,8 @@ function renderSections(parsed: YamahaFileParsed) {
 
   const styVirtualChordBar = document.getElementById('sty-virtual-chord-audition-bar');
   if (styVirtualChordBar) {
-    styVirtualChordBar.style.display = isPad ? 'none' : 'flex';
-    if (!isPad) {
-      initVirtualChordAuditionBar();
-    }
+    styVirtualChordBar.style.display = 'flex';
+    initVirtualChordAuditionBar();
   }
 
   const btnOpenRemixer = document.getElementById('btn-open-style-remixer');
