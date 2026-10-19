@@ -234,12 +234,44 @@ export class CasmModifier {
         ctbData[31] = Math.max(0, Math.min(127, rule.noteLowLimit));  // Low Limit
         ctbData[32] = Math.max(0, Math.min(127, rule.noteHighLimit)); // High Limit
         ctbData[33] = rule.retriggerRule === 'Stop' ? 0x00 : rule.retriggerRule === 'Pitch Shift' ? 0x01 : 0x02; // RTR
-        ctbData[34] = 0x00;
-        ctbData[35] = 0x01;
-        ctbData[36] = 0x07;
-        ctbData[37] = 0x00;
-        ctbData[38] = 0x7f;
-        ctbData[39] = 0x01;
+
+        // Byte 34~39: 小和弦轉調規則表 (Minor Chord Table)
+        if (rule.ntr === 'Root Fixed') {
+          ctbData[34] = 0x01; // 小和弦同為 Root Fixed 固定音高，徹底杜絕大小和弦切換時跳八度
+          ctbData[35] = rule.ntt === 'Bypass' ? 0x00 : 0x01;
+          ctbData[36] = rule.ntt === 'Bypass' ? 0x07 : 0x07;
+          ctbData[37] = ctbData[31];
+          ctbData[38] = ctbData[32];
+          ctbData[39] = ctbData[33];
+        } else {
+          ctbData[34] = 0x00; // Root Transpose 跟隨根音
+          if (rule.ntt === 'Bypass') {
+            ctbData[35] = 0x00;
+            ctbData[36] = 0x07;
+          } else if (rule.ntt === 'Bass') {
+            ctbData[35] = 0x81;
+            ctbData[36] = 0x03;
+          } else if (rule.ntt === 'Melody') {
+            ctbData[35] = 0x03;
+            ctbData[36] = 0x07;
+          } else {
+            ctbData[35] = 0x01;
+            ctbData[36] = 0x07;
+          }
+          ctbData[37] = ctbData[31];
+          ctbData[38] = ctbData[32];
+          ctbData[39] = ctbData[33];
+        }
+
+        if (rule.isDrum) {
+          ctbData[40] = 0x00;
+          ctbData[41] = 0x01;
+          ctbData[42] = 0x00;
+          ctbData[43] = 0x18;
+          ctbData[44] = 0x31;
+          ctbData[45] = 0x50;
+          ctbData[46] = 0x00;
+        }
 
         csegWriter.writeBytes(ctbData);
       }
