@@ -273,6 +273,22 @@ export class StyleImporter {
       return 'percussion';
     }
 
+    // 1.5 主旋律 / 導唱判斷 (Melody / Vocal / Lead)
+    if (
+      nameLower.includes('melody') ||
+      nameLower.includes('vocal') ||
+      nameLower.includes('lead') ||
+      nameLower.includes('solo') ||
+      nameLower.includes('主旋律') ||
+      nameLower.includes('主唱') ||
+      nameLower.includes('導唱') ||
+      nameLower.includes('歌') ||
+      nameLower.includes('唱') ||
+      (pc >= 80 && pc <= 87)
+    ) {
+      return 'lead';
+    }
+
     // 2. 貝斯判斷
     if (nameLower.includes('bass') || (pc >= 32 && pc <= 39) || (avgPitch <= 48 && avgDurationTicks >= division * 0.5)) {
       return 'bass';

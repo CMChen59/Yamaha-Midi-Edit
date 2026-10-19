@@ -927,9 +927,19 @@ export class AudioEngine {
     const vol = (params.volume ?? 100) / 127;
     const vel = velocity / 127;
     const isDrum = params.isDrum || (params.pc !== undefined && params.pc >= 120);
-    // 鼓組為打擊瞬態音色，維持充足動態衝擊感 (punch)，非打擊樂器則採 0.35 緩和系數防止和弦複音過載失真
-    const gainFactor = isDrum ? vol * Math.min(1.0, vel * 1.25) * 0.9 : vol * vel * 0.35;
     const inst = params.instrumentId || 'grand-piano';
+    const isMelody = inst.includes('lead') || inst.includes('melody') || inst.includes('vocal');
+
+    // 聲部音量動態平衡：主旋律賦予充足飽滿度 (0.78)，伴奏聲部維持清晰層次 (0.60)，打擊樂維持俐落重擊 (0.65)
+    let baseGain = 0.60;
+    if (isDrum) {
+      baseGain = 0.65;
+    } else if (isMelody) {
+      baseGain = 0.78;
+    }
+    const gainFactor = isDrum
+      ? vol * Math.min(1.0, vel * 1.15) * baseGain
+      : vol * vel * baseGain;
 
     // 建立軌道聲道架構 (Gain -> Panner -> Sub-bus / Backing-bus / Master)
     const targetBus = customBus || this.currentPadGain || this.masterGain;
@@ -971,6 +981,8 @@ export class AudioEngine {
     const freq = midiToFreq(note);
     if (isDrum) {
       this.synthesizeDrum(note, velocity, startTime, channelGain);
+    } else if (isMelody) {
+      this.synthesizeLead(freq, startTime, durationSec, channelGain);
     } else if (inst.includes('strings') || inst.includes('kino') || inst.includes('pad')) {
       this.synthesizeStrings(freq, startTime, durationSec, channelGain);
     } else if (inst.includes('pizz')) {
@@ -979,7 +991,7 @@ export class AudioEngine {
       this.synthesizeGuitar(freq, startTime, durationSec, channelGain);
     } else if (inst.includes('bass')) {
       this.synthesizeBass(freq, startTime, durationSec, channelGain);
-    } else if (inst.includes('brass') || inst.includes('trumpet') || inst.includes('sax') || inst.includes('lead')) {
+    } else if (inst.includes('brass') || inst.includes('trumpet') || inst.includes('sax')) {
       this.synthesizeBrass(freq, startTime, durationSec, channelGain);
     } else if (inst.includes('flute') || inst.includes('pipe') || inst.includes('woodwind')) {
       this.synthesizeFlute(freq, startTime, durationSec, channelGain);
@@ -1015,24 +1027,6 @@ export class AudioEngine {
     };
 
     const targetVoiceList = (customBus && customBus === this.backingGain) ? this.activeBackingVoices : this.activeVoices;
-
-    // 複音數上限保護 (Max 32 Polyphony Capping)：避免密集副歌時爆音與 CPU 量子超時
-    const MAX_POLYPHONY = 32;
-    if (targetVoiceList.length >= MAX_POLYPHONY) {
-      let candidateIdx = -1;
-      let earliestTime = Infinity;
-      for (let i = 0; i < targetVoiceList.length; i++) {
-        const v = targetVoiceList[i];
-        if (!v.isDrum && v.endTime < earliestTime) {
-          earliestTime = v.endTime;
-          candidateIdx = i;
-        }
-      }
-      if (candidateIdx === -1) candidateIdx = 0;
-      const stolenVoice = targetVoiceList.splice(candidateIdx, 1)[0];
-      stolenVoice.stop(ctx.currentTime);
-    }
-
     targetVoiceList.push(voiceEntry);
 
     // 自然斷開計時器 (保證在聲音尾音結束後立即從 Web Audio 圖譜中斷開)
@@ -1077,6 +1071,41 @@ export class AudioEngine {
     osc2.start(start);
     osc1.stop(start + dur + 0.1);
     osc2.stop(start + dur + 0.1);
+  }
+
+  /** 主旋律 / 主奏 (Lead / Vocal / Melody)：雙震盪器失諧溫暖人聲/主奏質感與平穩 Sustain */
+  private synthesizeLead(freq: number, start: number, dur: number, target: AudioNode) {
+    if (!this.ctx) return;
+    const osc1 = this.createOscillator();
+    const osc2 = this.createOscillator();
+    const filter = this.ctx.createBiquadFilter();
+    const env = this.ctx.createGain();
+
+    osc1.type = 'sawtooth';
+    osc1.frequency.setValueAtTime(freq, start);
+
+    // osc2 帶微幅失諧 (+4 cents)，營造自然人聲/獨奏厚度
+    osc2.type = 'triangle';
+    osc2.frequency.setValueAtTime(freq * 1.0025, start);
+
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(Math.min(freq * 3.5, 4500), start);
+
+    // 圓潤起音、飽滿維持 (Sustain)、自然釋音 (Release)
+    env.gain.setValueAtTime(0.001, start);
+    env.gain.linearRampToValueAtTime(0.95, start + 0.02);
+    env.gain.setValueAtTime(0.9, start + dur - 0.02);
+    env.gain.exponentialRampToValueAtTime(0.001, start + dur + 0.12);
+
+    osc1.connect(filter);
+    osc2.connect(filter);
+    filter.connect(env);
+    env.connect(target);
+
+    osc1.start(start);
+    osc2.start(start);
+    osc1.stop(start + dur + 0.15);
+    osc2.stop(start + dur + 0.15);
   }
 
   /** 弦樂：平滑 Attack、鋸齒波疊合低通濾波 */

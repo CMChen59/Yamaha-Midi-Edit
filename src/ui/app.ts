@@ -2673,23 +2673,79 @@ function playFullMidi(startFromBar: number = 1) {
 
   currentFullMidiPlaybackBar = startBar;
 
-  // 多軌音量自適應平衡：若 MIDI 軌道眾多 (例如 16~33 軌)，依據能量平方根衰減防止副歌密集發聲時破音失真 (Clipping)
+  // 多軌音量自適應平衡：若 MIDI 軌道眾多 (例如 16~33 軌)，依平緩曲線微幅衰減，既保留各軌充足音量又防止主混音爆音
   const trackCount = validTracks.length;
-  const trackScale = trackCount > 4 ? Math.max(0.4, 3.2 / Math.sqrt(trackCount)) : 0.85;
-  const fullMidiVolume = Math.min(0.85, Math.max(0.35, trackScale));
+  const trackScale = trackCount > 4 ? Math.max(0.65, 2.8 / Math.pow(trackCount, 0.3)) : 0.85;
+  const fullMidiVolume = Math.min(0.85, Math.max(0.65, trackScale));
+
+  // 1. 智慧主旋律 / 導唱軌道偵測 (Melody / Vocal Lead Track Detection)
+  const melodyTrackIndices = new Set<number>();
+  for (const t of validTracks) {
+    const nameLower = (t.name || '').toLowerCase();
+    const pc = t.programChange ?? -1;
+    const styleTrack = currentStyleAnalysis?.styleTracks.find((st) => st.trackIndex === t.trackIndex);
+    const cat = styleTrack?.detectedCategory;
+    if (
+      nameLower.includes('melody') ||
+      nameLower.includes('vocal') ||
+      nameLower.includes('lead') ||
+      nameLower.includes('solo') ||
+      nameLower.includes('主旋律') ||
+      nameLower.includes('主唱') ||
+      nameLower.includes('導唱') ||
+      nameLower.includes('歌') ||
+      nameLower.includes('唱') ||
+      cat === 'lead' ||
+      (pc >= 80 && pc <= 87)
+    ) {
+      melodyTrackIndices.add(t.trackIndex);
+    }
+  }
+
+  // 若未包含關鍵字，從非打擊、非貝斯軌中依單音比率與平均音高自動偵測最可能的主旋律軌
+  if (melodyTrackIndices.size === 0) {
+    for (const t of validTracks) {
+      if (t.channel === 9) continue;
+      const styleTrack = currentStyleAnalysis?.styleTracks.find((st) => st.trackIndex === t.trackIndex);
+      const cat = styleTrack?.detectedCategory;
+      if (cat === 'drums' || cat === 'percussion' || cat === 'bass') continue;
+
+      const avgPitch = styleTrack?.avgPitch ?? 60;
+      const polyRatio = styleTrack?.polyphonyRatio ?? 0;
+      // 人聲主旋律特徵：單音為主 (polyphony < 0.2)、位於人聲音域 (55 ~ 84)、音符數量充足 (> 25)
+      if (polyRatio < 0.2 && avgPitch >= 55 && avgPitch <= 84 && t.notes.length >= 25) {
+        melodyTrackIndices.add(t.trackIndex);
+        break; // 鎖定第一個最符合特徵的軌道
+      }
+    }
+  }
 
   // 封裝所有音軌為 BackingTrackItem (整曲試聽維持原汁原味原曲音高，不移調至 C)
   const backingTracks: BackingTrackItem[] = validTracks.map((t, idx) => {
     const styleTrack = currentStyleAnalysis?.styleTracks.find((st) => st.trackIndex === t.trackIndex);
     const cat = styleTrack?.detectedCategory || 'other';
     const isDrum = cat === 'drums' || cat === 'percussion' || t.channel === 9;
+    const pc = t.programChange ?? -1;
+    const isMelody = melodyTrackIndices.has(t.trackIndex);
 
     let instrumentId = 'grand-piano';
-    if (cat === 'bass') instrumentId = 'bass';
-    else if (cat === 'guitar') instrumentId = 'guitar';
-    else if (cat === 'strings' || cat === 'pad') instrumentId = 'strings';
-    else if (cat === 'brass') instrumentId = 'brass';
-    else if (cat === 'reed') instrumentId = 'flute';
+    if (isMelody) {
+      instrumentId = 'lead';
+    } else if (cat === 'bass' || (pc >= 32 && pc <= 39)) {
+      instrumentId = 'bass';
+    } else if (cat === 'guitar' || (pc >= 24 && pc <= 31)) {
+      instrumentId = 'guitar';
+    } else if (cat === 'strings' || cat === 'pad' || (pc >= 40 && pc <= 51) || (pc >= 88 && pc <= 95)) {
+      instrumentId = 'strings';
+    } else if (cat === 'brass' || (pc >= 56 && pc <= 63)) {
+      instrumentId = 'brass';
+    } else if (cat === 'reed' || (pc >= 64 && pc <= 79)) {
+      instrumentId = 'flute';
+    } else if (pc >= 0 && pc <= 7) {
+      instrumentId = 'grand-piano';
+    } else if (pc >= 16 && pc <= 23) {
+      instrumentId = 'strings';
+    }
 
     return {
       padNum: idx + 1,
@@ -2702,6 +2758,7 @@ function playFullMidi(startFromBar: number = 1) {
         channel: t.channel !== undefined ? t.channel : (idx % 16),
         isDrum,
         instrumentId,
+        volume: isMelody ? 120 : 100, // 主旋律音量微調更清晰突出
       },
     };
   });
