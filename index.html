@@ -1103,15 +1103,52 @@
             </div>
           </div>
 
-          <!-- 4. 聽音快速標記按鈕 (Section Quick Stamps) -->
-          <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
-            <span style="font-size: 0.74rem; color: #94a3b8; font-weight: 600;">🏷️ 聽音快速標記為：</span>
-            <button type="button" class="btn-stamp-section toggle-btn" data-section="Intro A" data-bars="4" style="padding: 3px 8px; font-size: 0.72rem; color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4);" title="前奏：標記第 1 節至當前播放/暫停小節">🎵 前奏 (Intro A)</button>
-            <button type="button" class="btn-stamp-section toggle-btn" data-section="Main A" data-bars="8" style="padding: 3px 8px; font-size: 0.72rem; color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4);" title="主歌：智慧接續上一段結尾至當前小節 (預設 8 小節)">🎹 主歌 (Main A)</button>
-            <button type="button" class="btn-stamp-section toggle-btn" data-section="Main B" data-bars="8" style="padding: 3px 8px; font-size: 0.72rem; color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4);" title="副歌：智慧接續上一段結尾至當前小節 (預設 8 小節)">🔥 副歌 (Main B)</button>
-            <button type="button" class="btn-stamp-section toggle-btn" data-section="Fill In AA" data-bars="1" style="padding: 3px 8px; font-size: 0.72rem; color: #a78bfa; border: 1px solid rgba(167, 139, 250, 0.4);" title="過門：智慧接續上一段結尾至當前小節 (預設 1 小節)">⚡ 過門 (Fill In AA)</button>
-            <button type="button" class="btn-stamp-section toggle-btn" data-section="Ending A" data-bars="4" style="padding: 3px 8px; font-size: 0.72rem; color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);" title="尾奏：智慧接續上一段結尾並延伸至全曲結尾">🛑 尾奏 (Ending A)</button>
-            <span id="style-sampler-stamp-toast" style="display: none; font-size: 0.72rem; color: #38bdf8; font-weight: 600; background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 4px; padding: 2px 8px; margin-left: 4px;"></span>
+          <!-- 4. 聽音快速標記全段落按鈕 (Section Quick Stamps) -->
+          <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 6px; padding: 6px 10px; display: flex; flex-direction: column; gap: 5px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px;">
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="font-size: 0.74rem; color: #e2e8f0; font-weight: 700;">🏷️ 聽音快速標記全段落：</span>
+                <span style="font-size: 0.68rem; color: #94a3b8;">（連續聽音打卡：聽完一段按下，自動接續前段結尾框選）</span>
+              </div>
+              <span id="style-sampler-stamp-toast" style="display: none; font-size: 0.72rem; color: #38bdf8; font-weight: 600; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 4px; padding: 2px 8px;"></span>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <!-- 前奏 (Intro) -->
+              <div style="display: flex; align-items: center; gap: 3px; background: rgba(16, 185, 129, 0.08); padding: 2px 5px; border-radius: 4px; border: 1px solid rgba(16, 185, 129, 0.25);">
+                <span style="font-size: 0.68rem; color: #34d399; font-weight: 700; margin-right: 2px;">前奏</span>
+                <button type="button" class="btn-stamp-section toggle-btn" data-section="Intro A" data-bars="4" style="padding: 2px 6px; font-size: 0.71rem; color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4);" title="前奏 A (4節)：標記第 1 節至當前播放小節">Intro A</button>
+                <button type="button" class="btn-stamp-section toggle-btn" data-section="Intro B" data-bars="8" style="padding: 2px 6px; font-size: 0.71rem; color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4);" title="前奏 B (8節)：標記第 1 節至當前播放小節 (或自上一段接續)">Intro B</button>
+                <button type="button" class="btn-stamp-section toggle-btn" data-section="Intro C" data-bars="8" style="padding: 2px 6px; font-size: 0.71rem; color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4);" title="前奏 C (8節)：標記第 1 節至當前播放小節 (或自上一段接續)">Intro C</button>
+              </div>
+
+              <!-- 主段落 (Main) -->
+              <div style="display: flex; align-items: center; gap: 3px; background: rgba(56, 189, 248, 0.08); padding: 2px 5px; border-radius: 4px; border: 1px solid rgba(56, 189, 248, 0.25);">
+                <span style="font-size: 0.68rem; color: #38bdf8; font-weight: 700; margin-right: 2px;">主段落</span>
+                <button type="button" class="btn-stamp-section toggle-btn" data-section="Main A" data-bars="8" style="padding: 2px 6px; font-size: 0.71rem; color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4);" title="主歌 A (8節)：智慧接續上一段結尾至當前小節">Main A</button>
+                <button type="button" class="btn-stamp-section toggle-btn" data-section="Main B" data-bars="8" style="padding: 2px 6px; font-size: 0.71rem; color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4);" title="主歌/副歌 B (8節)：智慧接續上一段結尾至當前小節">Main B</button>
+                <button type="button" class="btn-stamp-section toggle-btn" data-section="Main C" data-bars="8" style="padding: 2px 6px; font-size: 0.71rem; color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4);" title="副歌/高潮 C (8節)：智慧接續上一段結尾至當前小節">Main C</button>
+                <button type="button" class="btn-stamp-section toggle-btn" data-section="Main D" data-bars="8" style="padding: 2px 6px; font-size: 0.71rem; color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4);" title="最高潮 D (8節)：智慧接續上一段結尾至當前小節">Main D</button>
+              </div>
+
+              <!-- 過門 (Fill In) -->
+              <div style="display: flex; align-items: center; gap: 3px; background: rgba(167, 139, 250, 0.08); padding: 2px 5px; border-radius: 4px; border: 1px solid rgba(167, 139, 250, 0.25);">
+                <span style="font-size: 0.68rem; color: #a78bfa; font-weight: 700; margin-right: 2px;">過門</span>
+                <button type="button" class="btn-stamp-section toggle-btn" data-section="Fill In AA" data-bars="1" style="padding: 2px 5px; font-size: 0.71rem; color: #a78bfa; border: 1px solid rgba(167, 139, 250, 0.4);" title="過門 AA (1節)">Fill AA</button>
+                <button type="button" class="btn-stamp-section toggle-btn" data-section="Fill In BB" data-bars="1" style="padding: 2px 5px; font-size: 0.71rem; color: #a78bfa; border: 1px solid rgba(167, 139, 250, 0.4);" title="過門 BB (1節)">Fill BB</button>
+                <button type="button" class="btn-stamp-section toggle-btn" data-section="Fill In CC" data-bars="1" style="padding: 2px 5px; font-size: 0.71rem; color: #a78bfa; border: 1px solid rgba(167, 139, 250, 0.4);" title="過門 CC (1節)">Fill CC</button>
+                <button type="button" class="btn-stamp-section toggle-btn" data-section="Fill In DD" data-bars="1" style="padding: 2px 5px; font-size: 0.71rem; color: #a78bfa; border: 1px solid rgba(167, 139, 250, 0.4);" title="過門 DD (1節)">Fill DD</button>
+                <button type="button" class="btn-stamp-section toggle-btn" data-section="Break" data-bars="1" style="padding: 2px 5px; font-size: 0.71rem; color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4);" title="過門 Break (1節)">Break</button>
+              </div>
+
+              <!-- 尾奏 (Ending) -->
+              <div style="display: flex; align-items: center; gap: 3px; background: rgba(239, 68, 68, 0.08); padding: 2px 5px; border-radius: 4px; border: 1px solid rgba(239, 68, 68, 0.25);">
+                <span style="font-size: 0.68rem; color: #f87171; font-weight: 700; margin-right: 2px;">尾奏</span>
+                <button type="button" class="btn-stamp-section toggle-btn" data-section="Ending A" data-bars="4" style="padding: 2px 6px; font-size: 0.71rem; color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);" title="尾奏 A (4節)：自上一段接續至當前小節或曲末">Ending A</button>
+                <button type="button" class="btn-stamp-section toggle-btn" data-section="Ending B" data-bars="8" style="padding: 2px 6px; font-size: 0.71rem; color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);" title="尾奏 B (8節)：自上一段接續至當前小節或曲末">Ending B</button>
+                <button type="button" class="btn-stamp-section toggle-btn" data-section="Ending C" data-bars="8" style="padding: 2px 6px; font-size: 0.71rem; color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);" title="尾奏 C (8節)：自上一段接續至當前小節或曲末">Ending C</button>
+              </div>
+            </div>
           </div>
 
           <!-- 5. 視覺化全曲時間軸長條 (Interactive Timeline Bar + Realtime Playhead) -->
@@ -1275,14 +1312,29 @@
             <span>📥</span> 注入目標段落：
           </span>
           <select id="style-import-inject-target-section" style="background: #11131a; border: 1px solid #0284c7; border-radius: 4px; color: #38bdf8; padding: 4px 10px; font-size: 0.8rem; font-weight: 700;">
-            <option value="Main A">Main A</option>
-            <option value="Main B">Main B</option>
-            <option value="Main C">Main C</option>
-            <option value="Main D">Main D</option>
-            <option value="Fill In AA">Fill In AA</option>
-            <option value="Fill In BB">Fill In BB</option>
-            <option value="Intro A">Intro A</option>
-            <option value="Ending A">Ending A</option>
+            <optgroup label="前奏 (Intro)">
+              <option value="Intro A">Intro A</option>
+              <option value="Intro B">Intro B</option>
+              <option value="Intro C">Intro C</option>
+            </optgroup>
+            <optgroup label="主要段落 (Main)">
+              <option value="Main A">Main A</option>
+              <option value="Main B">Main B</option>
+              <option value="Main C">Main C</option>
+              <option value="Main D">Main D</option>
+            </optgroup>
+            <optgroup label="過門 (Fill In / Break)">
+              <option value="Fill In AA">Fill In AA</option>
+              <option value="Fill In BB">Fill In BB</option>
+              <option value="Fill In CC">Fill In CC</option>
+              <option value="Fill In DD">Fill In DD</option>
+              <option value="Break">Break</option>
+            </optgroup>
+            <optgroup label="尾奏 (Ending)">
+              <option value="Ending A">Ending A</option>
+              <option value="Ending B">Ending B</option>
+              <option value="Ending C">Ending C</option>
+            </optgroup>
           </select>
           <label style="font-size: 0.74rem; color: #94a3b8; display: flex; align-items: center; gap: 4px; cursor: pointer;">
             <input type="checkbox" id="style-import-replace-mode" checked style="accent-color: #38bdf8;" />

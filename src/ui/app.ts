@@ -2909,12 +2909,20 @@ function applySectionRange(startBar: number, endBar: number, targetSectionName?:
   if (targetSectionName) {
     const targetSectionSel = document.getElementById('style-import-inject-target-section') as HTMLSelectElement | null;
     if (targetSectionSel) {
-      // 檢查是否包含該選項，若有則直接選定
+      let matched = false;
       for (let i = 0; i < targetSectionSel.options.length; i++) {
         if (targetSectionSel.options[i].value === targetSectionName) {
           targetSectionSel.selectedIndex = i;
+          matched = true;
           break;
         }
+      }
+      if (!matched) {
+        const newOpt = document.createElement('option');
+        newOpt.value = targetSectionName;
+        newOpt.textContent = `＋ 新增 ${targetSectionName}`;
+        targetSectionSel.appendChild(newOpt);
+        targetSectionSel.value = targetSectionName;
       }
     }
   }
@@ -3040,16 +3048,49 @@ function openStyleImportModal(bytes: Uint8Array, fileName: string) {
     }
     if (injectSectionSelect) {
       const musicalSecs = YamahaStyleSynthesizer.getMusicalSections(currentParsed);
+      const existingNames = new Set(musicalSecs.map((s) => s.name));
+      const allStandardSections: StyleSectionType[] = [
+        'Intro A', 'Intro B', 'Intro C',
+        'Main A', 'Main B', 'Main C', 'Main D',
+        'Fill In AA', 'Fill In BB', 'Fill In CC', 'Fill In DD', 'Break',
+        'Ending A', 'Ending B', 'Ending C'
+      ];
+      const additionalSections = allStandardSections.filter((name) => !existingNames.has(name));
+
+      let html = '';
       if (musicalSecs.length > 0) {
-        injectSectionSelect.innerHTML = musicalSecs.map((s) => `<option value="${s.name}">${s.name}</option>`).join('');
+        html += `<optgroup label="伴奏現有段落">` + musicalSecs.map((s) => `<option value="${s.name}">${s.name}</option>`).join('') + `</optgroup>`;
+        if (additionalSections.length > 0) {
+          html += `<optgroup label="＋ 擴充新增段落">` + additionalSections.map((name) => `<option value="${name}">＋ 新增 ${name}</option>`).join('') + `</optgroup>`;
+        }
       } else {
-        injectSectionSelect.innerHTML = `
-          <option value="Main A">Main A</option>
-          <option value="Main B">Main B</option>
-          <option value="Fill In AA">Fill In AA</option>
-          <option value="Ending A">Ending A</option>
+        html = `
+          <optgroup label="前奏 (Intro)">
+            <option value="Intro A">Intro A</option>
+            <option value="Intro B">Intro B</option>
+            <option value="Intro C">Intro C</option>
+          </optgroup>
+          <optgroup label="主要段落 (Main)">
+            <option value="Main A">Main A</option>
+            <option value="Main B">Main B</option>
+            <option value="Main C">Main C</option>
+            <option value="Main D">Main D</option>
+          </optgroup>
+          <optgroup label="過門 (Fill In / Break)">
+            <option value="Fill In AA">Fill In AA</option>
+            <option value="Fill In BB">Fill In BB</option>
+            <option value="Fill In CC">Fill In CC</option>
+            <option value="Fill In DD">Fill In DD</option>
+            <option value="Break">Break</option>
+          </optgroup>
+          <optgroup label="尾奏 (Ending)">
+            <option value="Ending A">Ending A</option>
+            <option value="Ending B">Ending B</option>
+            <option value="Ending C">Ending C</option>
+          </optgroup>
         `;
       }
+      injectSectionSelect.innerHTML = html;
       if (scout && scout.introRange) {
         for (let i = 0; i < injectSectionSelect.options.length; i++) {
           if (injectSectionSelect.options[i].value === 'Intro A') {
@@ -3669,32 +3710,34 @@ function initStyleImportModal() {
 
       // 智慧段落判定：
       if (sec.startsWith('Intro')) {
-        // 1. 前奏必定由第 1 小節開始
-        effectiveStart = 1;
-        effectiveEnd = playBar > 1 ? playBar : Math.min(tot, defaultBars);
-        stampTypeDescription = `前奏 (從第 1 節至當前第 ${effectiveEnd} 節)`;
+        // 1. 前奏判定：若前方已有標記 (如 Intro A 1~4)，按 Intro B 智慧接續；否則前奏必從第 1 節開始
+        if (lastTaggedEndBar > 0 && playBar > lastTaggedEndBar && playBar <= lastTaggedEndBar + 16) {
+          effectiveStart = lastTaggedEndBar + 1;
+          effectiveEnd = playBar;
+          stampTypeDescription = `前奏接續 (接續第 ${lastTaggedEndBar} 節後，第 ${effectiveStart} ~ ${effectiveEnd} 節)`;
+        } else {
+          effectiveStart = 1;
+          effectiveEnd = playBar > 1 ? playBar : Math.min(tot, defaultBars);
+          stampTypeDescription = `前奏 (從第 1 節至當前第 ${effectiveEnd} 節)`;
+        }
       } else if (sec.startsWith('Ending') && (playBar > 1 || lastTaggedEndBar > 0)) {
-        // 2. 尾奏判定：若前方已有標記過段落，自上一段結尾接續並延伸至歌曲結尾
+        // 2. 尾奏判定：若前方已有標記過段落，自上一段結尾接續並延伸至歌曲結尾或當前小節
         if (lastTaggedEndBar > 0 && playBar > lastTaggedEndBar && playBar <= lastTaggedEndBar + 32) {
           effectiveStart = lastTaggedEndBar + 1;
         } else {
           effectiveStart = playBar;
         }
-        effectiveEnd = tot;
-        stampTypeDescription = `尾奏 (從第 ${effectiveStart} 節至全曲結尾第 ${tot} 節)`;
+        effectiveEnd = (playBar >= tot - 2 || playBar === tot) ? tot : playBar;
+        if (effectiveEnd < effectiveStart) effectiveEnd = tot;
+        stampTypeDescription = `尾奏 (從第 ${effectiveStart} 節至第 ${effectiveEnd} 節)`;
       } else if (lastTaggedEndBar > 0 && playBar > lastTaggedEndBar && playBar <= lastTaggedEndBar + 32) {
         // 3. 連續接續聽音抓段模式 (Chained Section Mode)：
-        // 使用者心智模型：聽完一段音樂到達結尾交界處時按鈕標記
-        // 例如使用者在第 8 節按了 Intro A (記錄 lastTaggedEndBar = 8)，
-        // 接著播放到第 16 節主歌唱完時按下 Main A：
-        // 系統自動判定上一段在第 8 節結束，當前在第 16 節，立即標記為【第 9 ～ 16 小節】！
+        // 適用於 Main A~D、Fill In AA~DD、Break 等所有段落
         if (playBar === lastTaggedEndBar + 1 && defaultBars > 1) {
-          // 使用者是在段落開頭第一拍按下，往後推算預設長度
           effectiveStart = playBar;
           effectiveEnd = Math.min(tot, playBar + defaultBars - 1);
           stampTypeDescription = `接續起點 (第 ${effectiveStart} ~ ${effectiveEnd} 節)`;
         } else {
-          // 使用者在段落結束處按下（聽完打卡）
           effectiveStart = lastTaggedEndBar + 1;
           effectiveEnd = playBar;
           stampTypeDescription = `接續打卡 (接續上一段第 ${lastTaggedEndBar} 節後，第 ${effectiveStart} ~ ${effectiveEnd} 節)`;
