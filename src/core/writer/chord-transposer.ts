@@ -5,6 +5,7 @@
  */
 
 import type { NoteEvent } from '../audio/audio-engine';
+import type { NtrRule, NttRule } from './casm-modifier';
 
 export type ChordType = 'maj' | 'm' | '7' | 'maj7' | 'm7' | 'sus4' | 'dim';
 
@@ -121,6 +122,8 @@ export class ChordTransposer {
    * @param isDrum 是否為打擊樂/鼓組聲部
    * @param lowLimit 該聲部音高下限 (預設 0)
    * @param highLimit 該聲部音高上限 (預設 127)
+   * @param ntr 轉調規則 (Root Transpose / Root Fixed)
+   * @param ntt 音符變換表 (Bypass / Chord / Bass / Melody)
    */
   public static transposeNotes(
     notes: NoteEvent[],
@@ -128,19 +131,21 @@ export class ChordTransposer {
     channel: number,
     isDrum: boolean = false,
     lowLimit: number = 0,
-    highLimit: number = 127
+    highLimit: number = 127,
+    ntr?: NtrRule,
+    ntt?: NttRule
   ): NoteEvent[] {
-    // 1. 打擊樂 / 鼓組 (Ch 8 / Ch 9 / isDrum): NTR = Fixed, NTT = Bypass -> 保持原音不變
-    if (isDrum || channel === 8 || channel === 9) {
+    // 1. 打擊樂 / 鼓組 (Ch 8 / Ch 9 / isDrum) 或設定為 Root Fixed + Bypass (原音直通) 之聲部: 保持原音不變
+    if (isDrum || channel === 8 || channel === 9 || (ntr === 'Root Fixed' && ntt === 'Bypass')) {
       return notes.map((n) => ({ ...n }));
     }
 
-    // 2. 若為 C 大三和弦且半音位移為 0，直接回傳
-    if (targetChord.semitonesFromC === 0 && targetChord.type === 'maj') {
+    // 2. 若為 C 大三和弦且半音位移為 0，且非特殊變形，直接回傳
+    if (targetChord.semitonesFromC === 0 && targetChord.type === 'maj' && ntr !== 'Root Fixed') {
       return notes.map((n) => ({ ...n }));
     }
 
-    const rootShift = targetChord.semitonesFromC;
+    const rootShift = ntr === 'Root Fixed' ? 0 : targetChord.semitonesFromC;
     const isBass = channel === 10; // Ch 10 為 Bass 聲部
     const isChordPart = channel === 11 || channel === 12; // Ch 11/12 為 Chord 1/2
 
@@ -152,24 +157,26 @@ export class ChordTransposer {
       // 在 C 基準中，主要音為：C (0), D (2), E (4), F (5), G (7), A (9), B (11)
       let scaleShift = 0;
 
-      if (targetChord.type === 'm' || targetChord.type === 'm7' || targetChord.type === 'dim') {
-        // 小調和弦：將大三度音 (E, pitchClass=4) 降半音轉為小三度 (Eb, pitchClass=3)
-        if (pitchClass === 4) {
-          scaleShift = -1;
-        }
-        // 減和弦：五度音 (G, pitchClass=7) 降半音 (Gb, pitchClass=6)
-        if (targetChord.type === 'dim' && pitchClass === 7) {
-          scaleShift = -1;
-        }
-      } else if (targetChord.type === 'sus4') {
-        // 掛留四和弦：將大三度音 (E, pitchClass=4) 升為純四度 (F, pitchClass=5)
-        if (pitchClass === 4) {
-          scaleShift = +1;
-        }
-      } else if (targetChord.type === '7') {
-        // 屬七和弦：若原音包含大七度 (B, pitchClass=11)，降為小七度 (Bb, pitchClass=10)
-        if (pitchClass === 11) {
-          scaleShift = -1;
+      if (ntt !== 'Bypass') {
+        if (targetChord.type === 'm' || targetChord.type === 'm7' || targetChord.type === 'dim') {
+          // 小調和弦：將大三度音 (E, pitchClass=4) 降半音轉為小三度 (Eb, pitchClass=3)
+          if (pitchClass === 4) {
+            scaleShift = -1;
+          }
+          // 減和弦：五度音 (G, pitchClass=7) 降半音 (Gb, pitchClass=6)
+          if (targetChord.type === 'dim' && pitchClass === 7) {
+            scaleShift = -1;
+          }
+        } else if (targetChord.type === 'sus4') {
+          // 掛留四和弦：將大三度音 (E, pitchClass=4) 升為純四度 (F, pitchClass=5)
+          if (pitchClass === 4) {
+            scaleShift = +1;
+          }
+        } else if (targetChord.type === '7') {
+          // 屬七和弦：若原音包含大七度 (B, pitchClass=11)，降為小七度 (Bb, pitchClass=10)
+          if (pitchClass === 11) {
+            scaleShift = -1;
+          }
         }
       }
 

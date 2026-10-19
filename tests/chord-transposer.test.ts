@@ -99,4 +99,39 @@ describe('ChordTransposer 虛擬和弦即時轉調引擎測試', () => {
     expect(chordNames).toContain('Dm');
     expect(chordNames).toContain('G7');
   });
+
+  it('7. 設定 NTR = Root Fixed 且 NTT = Bypass (Phrase 1/2 原音直通) 時，無論和弦為何均嚴格保持原音', () => {
+    // 模擬《傷心酒店》Phrase 1 笛子前奏音符: Eb5 (75), D5 (74), C5 (72)
+    const fluteNotes: NoteEvent[] = [
+      { note: 75, velocity: 100, startTick: 0, durationTick: 240 },
+      { note: 74, velocity: 90, startTick: 240, durationTick: 240 },
+      { note: 72, velocity: 95, startTick: 480, durationTick: 480 },
+    ];
+
+    const chordsToTest = [
+      ChordTransposer.buildChord('F', 'maj'),
+      ChordTransposer.buildChord('G', '7'),
+      ChordTransposer.buildChord('A', 'm'),
+      ChordTransposer.buildChord('C', 'm'),
+      ChordTransposer.buildChord('D', 'm7'),
+    ];
+
+    for (const chord of chordsToTest) {
+      const resPhrase1 = ChordTransposer.transposeNotes(
+        fluteNotes,
+        chord,
+        14, // Phrase 1: Ch 15
+        false,
+        0,
+        127,
+        'Root Fixed',
+        'Bypass'
+      );
+
+      expect(resPhrase1[0].note).toBe(75);
+      expect(resPhrase1[1].note).toBe(74);
+      expect(resPhrase1[2].note).toBe(72);
+    }
+  });
 });
+

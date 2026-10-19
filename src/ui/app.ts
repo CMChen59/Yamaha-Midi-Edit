@@ -6769,7 +6769,7 @@ function renderParsed(bytes: Uint8Array, filename: string, format: 'STY' | 'PAD'
       styBpmInput.value = `${currentParsed.bpm}`;
     }
 
-    currentCasmPartRules = [];
+    currentCasmPartRules = CasmModifier.extractPartRules(currentParsed);
     isCasmEditorOpen = false;
     const casmCont = document.getElementById('sty-casm-editor-container');
     if (casmCont) casmCont.style.display = 'none';
@@ -9302,9 +9302,9 @@ function renderCasmEditorTable() {
       </td>
       <td style="padding: 8px 10px;">
         <select class="casm-rtr-select" data-idx="${idx}" style="background: #0f1320; color: #94a3b8; border: 1px solid #2d354b; border-radius: 4px; padding: 2px 6px; font-size: 0.74rem;">
-          <option value="Retrigger" ${rule.retriggerRule === 'Retrigger' ? 'selected' : ''}>Retrigger (重奏)</option>
-          <option value="Pitch Shift" ${rule.retriggerRule === 'Pitch Shift' ? 'selected' : ''}>Pitch Shift (滑音)</option>
-          <option value="Stop" ${rule.retriggerRule === 'Stop' ? 'selected' : ''}>Stop (靜音)</option>
+          <option value="Pitch Shift" ${rule.retriggerRule === 'Pitch Shift' ? 'selected' : ''}>Pitch Shift (保持發聲/滑音 - 旋律推薦)</option>
+          <option value="Retrigger" ${rule.retriggerRule === 'Retrigger' ? 'selected' : ''}>Retrigger (換和弦重奏)</option>
+          <option value="Stop" ${rule.retriggerRule === 'Stop' ? 'selected' : ''}>Stop (換和弦強制切音靜音)</option>
         </select>
       </td>
       <td style="padding: 8px 10px;">
@@ -9831,12 +9831,17 @@ function toggleStySectionAudition(sectionName: string, startBar?: number) {
       durationTick: n.durationTick,
     }));
 
-    // Phase 3.4: 套用虛擬左手和弦 CASM 即時轉調 (打擊樂維持原音，非打擊樂聲部根音位移與音階變形)
+    // Phase 3.4: 套用虛擬左手和弦 CASM 即時轉調 (支援 Root Fixed + Bypass 原音直通與聲部自訂轉調)
+    const casmRule = currentCasmPartRules.find((r) => r.channel === ch);
     const transposedNotes = ChordTransposer.transposeNotes(
       rawNotes,
       currentAuditionChord,
       ch,
-      isDrum
+      isDrum,
+      casmRule?.noteLowLimit ?? 0,
+      casmRule?.noteHighLimit ?? 127,
+      casmRule?.ntr,
+      casmRule?.ntt
     );
 
     backingItems.push({

@@ -50,8 +50,8 @@ export const CASM_STANDARD_PRESETS: Record<string, { label: string; rules: Parti
   fixed_all: {
     label: '嚴格原音防走音 (Safe Fixed / Bypass)',
     rules: {
-      Phrase1: { ntr: 'Root Fixed', ntt: 'Bypass', noteLowLimit: 0, noteHighLimit: 127, retriggerRule: 'Stop' },
-      Phrase2: { ntr: 'Root Fixed', ntt: 'Bypass', noteLowLimit: 0, noteHighLimit: 127, retriggerRule: 'Stop' },
+      Phrase1: { ntr: 'Root Fixed', ntt: 'Bypass', noteLowLimit: 0, noteHighLimit: 127, retriggerRule: 'Pitch Shift' },
+      Phrase2: { ntr: 'Root Fixed', ntt: 'Bypass', noteLowLimit: 0, noteHighLimit: 127, retriggerRule: 'Pitch Shift' },
     },
   },
 };
