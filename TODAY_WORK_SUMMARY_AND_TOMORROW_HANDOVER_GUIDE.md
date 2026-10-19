@@ -7,8 +7,9 @@
 > - [`PENDING_EXECUTION_PLANS.md`](file:///d:/Vibe%20Coding/MIDI/PENDING_EXECUTION_PLANS.md)（4 大主題式整合執行包）
 > - [`PSR_SX920_LIVE_RECORDING_VERIFICATION_GUIDE.md`](file:///d:/Vibe%20Coding/MIDI/PSR_SX920_LIVE_RECORDING_VERIFICATION_GUIDE.md)（實機驗收指引手冊）  
 > **最新備份檔**：`d:\Vibe Coding\MIDI-20261019-pack2.zip` (整合包 2 完工全量備份)  
+> **最新 Commit**：`3301919` (`feat(ots): implement Phase 3 OTS 1~4 voice assignment, style header packaging, and audition`)  
 > **程式碼倉庫**：`https://github.com/CMChen59/Yamaha-Midi-Edit.git`（分支: `main`）  
-> **測試覆蓋**：29 個測試套件、164 / 164 項單元測試 100% 通過；TypeScript 編譯 0 錯誤；生產環境打包正常。
+> **測試覆蓋**：32 個測試套件、182 / 182 項單元測試 100% 通過；TypeScript 編譯 0 錯誤；生產環境打包正常。
 
 ---
 
@@ -66,12 +67,14 @@
    - 提供三重出口：直接注入當前 STY 指定段落、加入伴奏庫抽屜、建立全新 Style 專案。
    - STY 工作台段落結構面板新增直達按鈕，一鍵讀取外部 MIDI 檔案彈出採集器。
    - ⚡ *新增單元測試 `tests/midi-section-sampler.test.ts`，全專案 164 / 164 項測試 100% 通過。*
-3. **【整合包 3】STY 伴奏聲部琴端即時跟彈錄音 (STY Live Metronome Overdub Recorder) — 🎯【下一步待執行】**
+3. **【整合包 4】Yamaha 出廠規格封裝與高級轉調試聽 (CASM NTR/NTT + OTS 1~4 + 虛擬和弦測試條) — 🎉【✅ 100% 完工】**
+   - **虛擬左手和弦即時測試條 (Chord Audition Bar)**：提供 `C, Dm, Em, F, G, G7, Am, Bdim` 和弦按鈕，循環播放時點擊即時模擬 CASM 轉調發聲；同步支援 PAD 模式之 Chord Match 轉調。
+   - **CASM 和弦轉調規則視覺化微調 (NTR / NTT Editor)**：各聲部獨立設定 NTR (Root Trans / Fixed)、NTT (Bypass / Melody / Chord / Bass)，二進位重構引擎 (`CasmModifier.rebuildCasm`) 100% 原廠相容。
+   - **風格標頭中繼資料與 OTS (One Touch Setting 1~4) 編輯器 (`OtsManager`)**：4 組 OTS 右手主奏音色、音量、聲相與 Reverb/Chorus 效果器，支援各組獨立試聽發聲與二進位封裝寫入。
+   - ⚡ *新增單元測試 `chord-transposer.test.ts`、`casm-modifier.test.ts`、`ots-manager.test.ts`，全專案 182 / 182 項測試 100% 通過。*
+4. **【整合包 3】STY 伴奏聲部琴端即時跟彈錄音 (STY Live Metronome Overdub Recorder) — 🎯【下一步待執行】**
    - 將 Multi Pad 成熟的跟彈錄音、4 拍預備拍節拍器、1/16 與 1/8 智慧量化、多軌背景伴奏疊錄監聽完整移植至 STY 伴奏各聲部。
    - 🎹 *實時手彈原創演奏核心。*
-4. **【整合包 4】Yamaha 出廠規格封裝與高級轉調試聽 (CASM NTR/NTT + OTS 1~4 + 虛擬和弦測試條)**
-   - CASM 轉調規則編輯（Root Trans / Fixed）、風格標頭與 OTS 1~4 右手音色設定、畫面虛擬和弦測試條（C, F, G7, Am 模擬琴端轉調聽感）。
-   - 📦 *出廠販售級規格完備度封裝。*
 
 ### 📌 附屬擴充包：鋼琴卷軸多音符批次進階工具
 - **BACKLOG-02**：選取音符跨 Pad 搬移/複製換音色（雙樂器立體聲對位）。

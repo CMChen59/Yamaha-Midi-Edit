@@ -7,7 +7,7 @@
 > - ✅ **Phase 3 (Module 3)**：STY 伴奏工作台（雙視野時間軸、Track 0 鋼琴卷軸音符編輯、小節動態剪裁延伸、雷射紅走帶/琴鍵試聽、SFF2 CASM 完整保留與匯出防呆）全數完成。  
 > - ✅ **Style Assembly Studio**：聲部開口矩陣 (Option A)、跨段落/跨風格組裝 (Option B)、新增自訂/標準段落、多聲部自由勾選與批次組裝全數完成。  
 > - ✅ **Phase 3.6 琴端音色退化 (Fallback to Piano) 重大問題攻堅完工**：修正 Bank LSB 0、隔離 SInt 第 1 小節、注入原廠 Style Header 與 XG On SysEx，已完成 PSR-SX920 實琴驗收。  
-> - ✅ **測試狀態**：26 個測試套件、153 項單元測試 100% 通過。
+> - ✅ **測試狀態**：32 個測試套件、182 項單元測試 100% 通過。
 
 ---
 
@@ -85,22 +85,25 @@
 
 ---
 
-### 📦 整合包四：【Yamaha 出廠規格封裝與高級轉調試聽】 (CASM, OTS & Virtual Chord Audition)
+### 📦 整合包四：【Yamaha 出廠規格封裝與高級轉調試聽】 (CASM, OTS & Virtual Chord Audition) — 🎉【✅ 100% 完工】
 * **對應原計畫**：原「計畫 1」+「計畫 4」+「早期和弦測試條」。
+* **完工狀態**：✅ **100% 完工**（包含即時和弦轉調引擎 `ChordTransposer`、虛擬左手和弦測試條、PAD 模式 Chord Match 聯動、CASM NTR/NTT 視覺化規則微調與重構引擎 `CasmModifier`、OTS 1~4 右手音色設定與試聽引擎 `OtsManager`）。
 * **核心目標**：
   在伴奏音符結構確立後，進行細緻的轉調邏輯掌控與原廠出廠規格封裝，達到原廠 Expansion Pack 級別的完備度。
-* **具體功能**：
-  1. **CASM 和弦轉調規則視覺化微調 (NTR / NTT Editor)**：
+* **具體落地功能**：
+  1. **虛擬左手和弦即時測試條 (Chord Audition Bar)**：
+     - 提供 `C, Dm, Em, F, G, G7, Am, Bdim` 和弦按鈕，循環播放時點擊可即時切換和弦轉調聽感。
+     - 同步支援 PAD 模式，帶有 Chord Match 標記的打擊墊即時轉調。
+  2. **CASM 和弦轉調規則視覺化微調 (NTR / NTT Editor)**：
      - 各聲部獨立 NTR 設定（根音移調 Root Trans / 根音固定 Root Fixed）。
      - 各聲部獨立 NTT 設定（Bypass 原音直通、Melody 旋律、Chord 和弦反轉、Bass 低音專屬）。
      - High / Low Key 音域極限防護，防止轉調後音高破音。
-  2. **風格標頭中繼資料與 OTS (One Touch Setting 1~4) 編輯器**：
-     - 伴奏標題（Style Title）、樂風分類（Genre）、預設 Tempo、預設拍號與版權。
-     - 檢視與調整琴端 4 組 OTS 按鍵關聯的右手主奏音色（Right 1 / Right 2）、音量與效果器。
-  3. **虛擬左手和弦即時測試條 (Chord Audition Bar)**：
-     - 畫面提供 `[C]`、`[Dm]`、`[Em]`、`[F]`、`[G7]`、`[Am]` 按鈕，循環播放時點擊可即時模擬 CASM 轉調發聲，在電腦端驗證換和弦聽感。
-* **開發複雜度**：📦 **中高（需深入 CASM 樹狀二進位結構與 OTS 區塊封裝）**
-* **推薦指數**：⭐⭐⭐⭐（高階編曲者出廠封裝必備）
+     - 二進位重構引擎 (`CasmModifier.rebuildCasm`) 100% 原樣相容 SFF2 規範。
+  3. **風格標頭中繼資料與 OTS (One Touch Setting 1~4) 編輯器 (`OtsManager`)**：
+     - 4 組 OTS 按鍵關聯的右手主奏音色（Right 1 / Right 2）、音量、聲相與 Reverb/Chorus 效果器。
+     - 支援 OTS 各組獨立試聽發聲。
+     - 原廠 OTS 二進位區塊封裝寫入與驗證。
+* **測試覆蓋**：新增 `chord-transposer.test.ts`、`casm-modifier.test.ts`、`ots-manager.test.ts`，全專案 32 個測試套件、182 項單元測試 100% 通過。
 
 ---
 
@@ -118,18 +121,18 @@
 
 ```mermaid
 flowchart TD
-    Current["當前系統狀態：Phase 3.6 伴奏音色退化攻堅完工\n(PSR-SX920 實機驗收通過 / 160項單元測試綠燈)"]
+    Current["當前系統狀態：Phase 3.6 伴奏音色退化攻堅完工\n(PSR-SX920 實機驗收通過 / 182項單元測試綠燈)"]
 
     PKG1["【整合包 1】伴奏樣式庫抽屜與跨風格混血拼貼\n(多檔 .sty 拖入抽屜 + 跨風格拼裝預覽 + 相容性檢測)\n🎉【✅ 100% 完工】"]
     PKG2["【整合包 2】外部 MIDI 樂句採集器 + C 根音校正\n(小節精準採集 + 移調對齊 C 調 + 三重出口動作)\n🎉【✅ 100% 完工】"]
-    PKG3["【整合包 3】STY 伴奏琴端即時跟彈錄音\n(移植 Multi Pad 預備拍/量化/疊錄至伴奏聲部)\n🎹 實時手彈原創核心"]
-    PKG4["【整合包 4】Yamaha 出廠規格封裝與高級轉調試聽\n(CASM NTR/NTT + OTS 1~4 + 虛擬和弦測試條)\n📦 出廠級品質封裝"]
+    PKG4["【整合包 4】Yamaha 出廠規格封裝與高級轉調試聽\n(CASM NTR/NTT + OTS 1~4 + 虛擬和弦測試條)\n🎉【✅ 100% 完工】"]
+    PKG3["【整合包 3】STY 伴奏琴端即時跟彈錄音\n(移植 Multi Pad 預備拍/量化/疊錄至伴奏聲部)\n🎹 實時手彈原創核心 (🎯 下一步待執行)"]
 
     Current --> PKG1
     PKG1 --> PKG2
-    PKG1 --> PKG3
     PKG2 --> PKG4
-    PKG3 --> PKG4
+    PKG1 --> PKG3
+    PKG4 --> PKG3
 ```
 
 本清單即日起作為全專案後續功能開發之正式基準依據。
