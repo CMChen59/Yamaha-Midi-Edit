@@ -3655,16 +3655,61 @@ function initStyleImportModal() {
       const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
       const curStart = parseInt(startBarInput?.value || '1', 10);
       const tot = currentStyleAnalysis?.totalMeasures || 16;
-
-      // 優先採納當前播放或暫停所在小節作為採集起點；若未播放過則以輸入框起點為準
-      const effectiveStart = (isStyleFullMidiPlaying || currentFullMidiPlaybackBar > 1)
+      const playBar = (isStyleFullMidiPlaying || currentFullMidiPlaybackBar > 1)
         ? Math.min(tot, currentFullMidiPlaybackBar)
         : curStart;
-      const newEnd = Math.min(tot, effectiveStart + bars - 1);
-      applySectionRange(effectiveStart, newEnd, sec);
 
-      showSectionStampToast(`🏷️ 已標記第 ${effectiveStart} ~ ${newEnd} 節為 [${sec}]！注入目標已同步切換，點擊下方【📥 注入當前伴奏段落】即可寫入！`);
+      let effectiveStart = playBar;
+      let effectiveEnd = Math.min(tot, playBar + bars - 1);
+
+      // 智慧前奏判定：前奏必定由第 1 小節開始。
+      // 若使用者在播放或暫停於第 2 小節以上時點擊【前奏 (Intro)】，代表使用者剛聽完前奏，自動將「第 1 小節 ~ 當前小節」設為前奏！
+      if (sec.startsWith('Intro') && playBar > 1) {
+        effectiveStart = 1;
+        effectiveEnd = playBar;
+      } else if (sec.startsWith('Ending') && playBar > 1) {
+        // 尾奏判定：若在後段點擊尾奏，自動延伸至歌曲結束
+        effectiveStart = playBar;
+        effectiveEnd = tot;
+      }
+
+      applySectionRange(effectiveStart, effectiveEnd, sec);
+
+      showSectionStampToast(`🏷️ 已標記第 ${effectiveStart} ~ ${effectiveEnd} 節 (共 ${effectiveEnd - effectiveStart + 1} 節) 為 [${sec}]！注入目標已同步切換，點擊下方【📥 注入當前伴奏段落】即可寫入！`);
     });
+  });
+
+  // Mark In (設為起點) 與 Mark Out (設為終點) 快速打卡
+  const btnMarkIn = document.getElementById('btn-stamp-mark-in');
+  btnMarkIn?.addEventListener('click', () => {
+    if (!currentStyleAnalysis) return;
+    const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
+    const endBarInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
+    const tot = currentStyleAnalysis.totalMeasures || 16;
+    const playBar = (isStyleFullMidiPlaying || currentFullMidiPlaybackBar > 1) ? Math.min(tot, currentFullMidiPlaybackBar) : 1;
+    let curEnd = parseInt(endBarInput?.value || '4', 10);
+    if (curEnd < playBar) curEnd = Math.min(tot, playBar + 3);
+
+    if (startBarInput) startBarInput.value = `${playBar}`;
+    if (endBarInput) endBarInput.value = `${curEnd}`;
+    updateSamplerHighlightBar();
+    showSectionStampToast(`📍 已將【第 ${playBar} 小節】設為採集起點！`);
+  });
+
+  const btnMarkOut = document.getElementById('btn-stamp-mark-out');
+  btnMarkOut?.addEventListener('click', () => {
+    if (!currentStyleAnalysis) return;
+    const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
+    const endBarInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
+    const tot = currentStyleAnalysis.totalMeasures || 16;
+    const playBar = (isStyleFullMidiPlaying || currentFullMidiPlaybackBar > 1) ? Math.min(tot, currentFullMidiPlaybackBar) : 1;
+    let curStart = parseInt(startBarInput?.value || '1', 10);
+    if (curStart > playBar) curStart = 1;
+
+    if (startBarInput) startBarInput.value = `${curStart}`;
+    if (endBarInput) endBarInput.value = `${playBar}`;
+    updateSamplerHighlightBar();
+    showSectionStampToast(`📍 已將【第 ${playBar} 小節】設為採集終點 (當前區間: 第 ${curStart} ~ ${playBar} 節，共 ${playBar - curStart + 1} 節)！`);
   });
 
   // 時間軸長條點擊：非播放時移動採集區間；整曲播放時直接 Seek 跳轉！
