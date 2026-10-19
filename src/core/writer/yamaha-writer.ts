@@ -227,6 +227,15 @@ export class YamahaWriter {
       if (origCasm && reCasm && origCasm.data.length !== reCasm.data.length) {
         throw new Error(`二進位驗證失敗: CASM 區塊長度不一致 (原始: ${origCasm.data.length}, 重構: ${reCasm.data.length})`);
       }
+
+      const origOts = parsed.customChunks.find(c => c.id.trim() === 'OTS' || c.id.trim() === 'OTSc' || c.id.startsWith('OTS'));
+      const reOts = reParsed.customChunks.find(c => c.id.trim() === 'OTS' || c.id.trim() === 'OTSc' || c.id.startsWith('OTS'));
+      if (origOts && !reOts) {
+        throw new Error('二進位驗證失敗: OTS 右手音色設定區塊遺失！');
+      }
+      if (origOts && reOts && origOts.data.length !== reOts.data.length) {
+        throw new Error(`二進位驗證失敗: OTS 區塊長度不一致 (原始: ${origOts.data.length}, 重構: ${reOts.data.length})`);
+      }
     }
 
     return {

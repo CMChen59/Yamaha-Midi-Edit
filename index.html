@@ -115,6 +115,7 @@
             <button type="button" id="btn-open-midi-sampler-for-sty" class="btn btn-secondary" style="background: #1e1b4b; color: #a5b4fc; border: 1px solid #6366f1; font-size: 0.76rem; padding: 4px 10px; font-weight: 600; display: none;" title="載入外部 MIDI 歌曲並採集精華樂句注入當前伴奏 (整合包 2)">📥 採集外部 MIDI 樂句</button>
             <button type="button" id="btn-open-style-pool-panel" class="btn btn-secondary" style="background: #312e81; color: #c7d2fe; border: 1px solid #4f46e5; font-size: 0.76rem; padding: 4px 10px; font-weight: 600; display: none;" title="開啟伴奏樣式庫抽屜 (Style Pool Drawer)">📂 樣式庫抽屜 (<span id="panel-pool-count-badge">0</span>)</button>
             <button type="button" id="btn-toggle-casm-editor" class="btn btn-secondary" style="background: #1e1b4b; color: #c7d2fe; border: 1px solid #4338ca; font-size: 0.76rem; padding: 4px 10px; font-weight: 600; display: none;" title="開啟/收合 Yamaha SFF2 CASM 轉調規則微調編輯器 (NTR / NTT / Limits)">⚙️ CASM 轉調微調</button>
+            <button type="button" id="btn-toggle-ots-editor" class="btn btn-secondary" style="background: #064e3b; color: #6ee7b7; border: 1px solid #059669; font-size: 0.76rem; padding: 4px 10px; font-weight: 600; display: none;" title="開啟/收合 Yamaha OTS (One Touch Setting 1~4) 右手音色與風格標頭封裝編輯器">⭐ OTS 與風格標頭</button>
           </div>
         </div>
 
@@ -291,6 +292,208 @@
                 <!-- 程式動態渲染 8 伴奏聲部 -->
               </tbody>
             </table>
+          </div>
+        </div>
+
+        <!-- 方案 D: Yamaha OTS (One Touch Setting 1~4) 右手音色與風格標頭封裝編輯器面板 -->
+        <div id="sty-ots-editor-container" class="sty-ots-editor-container" style="display: none; margin-bottom: 20px; background: #0c1514; border: 1px solid #059669; border-radius: 8px; padding: 14px 16px; box-shadow: 0 4px 20px rgba(5, 150, 105, 0.12);">
+          <!-- 頂部標題與快速動作列 -->
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; border-bottom: 1px solid #132e27; padding-bottom: 10px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 1.2rem;">⭐</span>
+              <div>
+                <h3 style="font-size: 0.95rem; font-weight: 700; color: #f8fafc; margin: 0;">Yamaha OTS (One Touch Setting 1~4) 右手音色與風格標頭封裝</h3>
+                <p style="font-size: 0.75rem; color: #94a3b8; margin: 2px 0 0 0;">配置琴端 4 顆 OTS 按鍵對應的 Right 1 / Right 2 旗艦音色、雙音色疊音與混音，並維護伴奏出廠風格標頭</p>
+              </div>
+            </div>
+            <!-- 快速範本與儲存 -->
+            <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+              <span style="font-size: 0.75rem; color: #a7f3d0; font-weight: 600;">⚡ 推薦範本:</span>
+              <button type="button" id="btn-ots-preset-pop" class="toggle-btn" style="padding: 3px 8px; font-size: 0.72rem; background: rgba(5,150,105,0.2); color: #6ee7b7; border-color: rgba(5,150,105,0.4);" title="經典流行：鋼琴 ➔ 電鋼琴 ➔ 薩克斯風 ➔ 銅管群">🎹 經典流行</button>
+              <button type="button" id="btn-ots-preset-jazz" class="toggle-btn" style="padding: 3px 8px; font-size: 0.72rem;" title="都會爵士：爵士吉他 ➔ 柔音號 ➔ 呼吸薩克斯 ➔ 管風琴">🎷 都會爵士</button>
+              <button type="button" id="btn-ots-preset-rock" class="toggle-btn" style="padding: 3px 8px; font-size: 0.72rem;" title="搖滾樂團：民謠吉他 ➔ 超載電吉他 ➔ 破音主奏 ➔ 雙重重金屬">🎸 搖滾樂團</button>
+              <button type="button" id="btn-ots-preset-ballad" class="toggle-btn" style="padding: 3px 8px; font-size: 0.72rem;" title="影視史詩：旗艦三角鋼琴 ➔ 長笛 ➔ 雙簧管 ➔ 電影史詩弦樂">🎻 影視史詩</button>
+              <button type="button" id="btn-ots-audition-active" class="toggle-btn" style="padding: 3px 10px; font-size: 0.74rem; background: rgba(245,158,11,0.2); color: #fbbf24; border-color: rgba(245,158,11,0.4); font-weight: 600;" title="試聽當前 OTS 頁籤之 Right 1 / Right 2 音色發聲">▶ 試聽 OTS 音色</button>
+              <button type="button" id="btn-ots-save-apply" class="toggle-btn" style="padding: 3px 12px; font-size: 0.74rem; background: #059669; color: #ffffff; border-color: #10b981; font-weight: 700; margin-left: 6px;" title="將 OTS 與風格標頭封裝寫入伴奏專案">💾 套用並封裝至 Style</button>
+              <button type="button" id="btn-ots-editor-close" class="toggle-btn" style="padding: 2px 8px; font-size: 0.72rem; margin-left: 4px;" title="收合 OTS 編輯器">✕ 收合</button>
+            </div>
+          </div>
+
+          <!-- 上半部：風格標頭中繼資料卡片 (Style Header Card) -->
+          <div style="background: rgba(18, 38, 33, 0.6); border: 1px solid #1b4d3e; border-radius: 6px; padding: 10px 14px; margin-bottom: 14px;">
+            <div style="font-size: 0.8rem; font-weight: 700; color: #6ee7b7; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+              <span>🏷️ 風格標頭中繼資料 (Style Header & Project Info)</span>
+              <span style="font-size: 0.72rem; color: #94a3b8; font-weight: normal;">(PSR-SX920 琴端載入時螢幕顯示之伴奏名稱、樂風分類、預設速度與版權)</span>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;">
+              <div>
+                <label style="display: block; font-size: 0.74rem; color: #cbd5e1; margin-bottom: 3px;">伴奏風格標題 (Style Title):</label>
+                <input type="text" id="sty-header-title-input" style="width: 100%; background: #071512; color: #34d399; border: 1px solid #059669; border-radius: 4px; padding: 4px 8px; font-size: 0.8rem; font-weight: 600;" placeholder="例如: 80s Disco Pop" />
+              </div>
+              <div>
+                <label style="display: block; font-size: 0.74rem; color: #cbd5e1; margin-bottom: 3px;">樂風分類 (Genre):</label>
+                <select id="sty-header-genre-select" style="width: 100%; background: #071512; color: #6ee7b7; border: 1px solid #059669; border-radius: 4px; padding: 4px 8px; font-size: 0.8rem;">
+                  <option value="Pop">Pop (流行)</option>
+                  <option value="Rock">Rock (搖滾)</option>
+                  <option value="Ballad">Ballad (抒情慢歌)</option>
+                  <option value="Jazz">Jazz (爵士)</option>
+                  <option value="Latin">Latin (拉丁)</option>
+                  <option value="Dance">Dance / Electronic (電音)</option>
+                  <option value="R&B">R&B / Soul (節奏藍調)</option>
+                  <option value="Country">Country (鄉村)</option>
+                  <option value="World">World / Traditional (世界/國風)</option>
+                  <option value="Movie">Movie & Show (影視配樂)</option>
+                </select>
+              </div>
+              <div>
+                <label style="display: block; font-size: 0.74rem; color: #cbd5e1; margin-bottom: 3px;">預設演奏速度 (BPM):</label>
+                <input type="number" id="sty-header-bpm-input" min="30" max="300" style="width: 100%; background: #071512; color: #fbbf24; border: 1px solid #059669; border-radius: 4px; padding: 4px 8px; font-size: 0.8rem; font-weight: 600;" value="120" />
+              </div>
+              <div>
+                <label style="display: block; font-size: 0.74rem; color: #cbd5e1; margin-bottom: 3px;">拍號 (Time Signature):</label>
+                <select id="sty-header-timesig-select" style="width: 100%; background: #071512; color: #38bdf8; border: 1px solid #059669; border-radius: 4px; padding: 4px 8px; font-size: 0.8rem;">
+                  <option value="4/4">4/4 拍 (標準四拍)</option>
+                  <option value="3/4">3/4 拍 (華爾滋)</option>
+                  <option value="2/4">2/4 拍 (進行曲)</option>
+                  <option value="6/8">6/8 拍 (六八拍搖擺)</option>
+                  <option value="12/8">12/8 拍 (慢搖滾抒情)</option>
+                </select>
+              </div>
+              <div style="grid-column: 1 / -1;">
+                <label style="display: block; font-size: 0.74rem; color: #cbd5e1; margin-bottom: 3px;">版權 / 創作者宣告 (Copyright / Author):</label>
+                <input type="text" id="sty-header-copyright-input" style="width: 100%; background: #071512; color: #94a3b8; border: 1px solid #2d4f43; border-radius: 4px; padding: 4px 8px; font-size: 0.78rem;" placeholder="例如: Copyright (C) 2026 Producer" />
+              </div>
+            </div>
+          </div>
+
+          <!-- 下半部：4 個 OTS 槽位標籤頁切換 (OTS 1~4 Tabs) -->
+          <div style="display: flex; gap: 6px; margin-bottom: 12px; border-bottom: 1px solid #1b4d3e; padding-bottom: 8px;">
+            <button type="button" class="btn-ots-tab active" data-slot="1" style="flex: 1; padding: 6px 12px; font-size: 0.8rem; font-weight: 700; border-radius: 6px; border: 1px solid #059669; background: #064e3b; color: #6ee7b7; cursor: pointer;">⭐ OTS 1 (Intro / Main A)</button>
+            <button type="button" class="btn-ots-tab" data-slot="2" style="flex: 1; padding: 6px 12px; font-size: 0.8rem; font-weight: 700; border-radius: 6px; border: 1px solid #1b4d3e; background: #0d1e1a; color: #94a3b8; cursor: pointer;">⭐ OTS 2 (Main B)</button>
+            <button type="button" class="btn-ots-tab" data-slot="3" style="flex: 1; padding: 6px 12px; font-size: 0.8rem; font-weight: 700; border-radius: 6px; border: 1px solid #1b4d3e; background: #0d1e1a; color: #94a3b8; cursor: pointer;">⭐ OTS 3 (Main C)</button>
+            <button type="button" class="btn-ots-tab" data-slot="4" style="flex: 1; padding: 6px 12px; font-size: 0.8rem; font-weight: 700; border-radius: 6px; border: 1px solid #1b4d3e; background: #0d1e1a; color: #94a3b8; cursor: pointer;">⭐ OTS 4 (Main D / Climax)</button>
+          </div>
+
+          <!-- 槽位內部聲部卡片 (Right 1 vs Right 2) -->
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px;">
+            <!-- Right 1 卡片 (主奏聲部) -->
+            <div style="background: #091a16; border: 1px solid #059669; border-radius: 6px; padding: 12px 14px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; border-bottom: 1px solid #13392f; padding-bottom: 6px;">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <span style="font-size: 1rem;">🎹</span>
+                  <span style="font-size: 0.84rem; font-weight: 700; color: #6ee7b7;">Right 1 (主奏聲部)</span>
+                </div>
+                <span class="badge" style="background: rgba(16,185,129,0.2); color: #34d399; border: 1px solid rgba(16,185,129,0.4); font-size: 0.7rem;">固定啟用</span>
+              </div>
+
+              <!-- 音色展示與選擇按鈕 -->
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; background: #05100e; border: 1px solid #184c3e; border-radius: 5px; padding: 6px 10px;">
+                <div style="flex: 1; min-width: 0;">
+                  <div id="ots-r1-voice-name" style="font-weight: 700; color: #f8fafc; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">CFX Concert Grand</div>
+                  <div id="ots-r1-voice-sub" style="font-size: 0.72rem; color: #94a3b8;">CFX 音樂會旗艦三角鋼琴 (104-1-0)</div>
+                </div>
+                <button type="button" id="btn-ots-pick-voice-r1" class="btn btn-secondary" style="padding: 3px 8px; font-size: 0.74rem; background: #064e3b; color: #6ee7b7; border-color: #059669; white-space: nowrap; cursor: pointer;">🔍 選擇原廠音色</button>
+              </div>
+
+              <!-- 混音控制推桿 (Volume, Pan, Reverb, Chorus, Octave) -->
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.74rem;">
+                <div>
+                  <div style="display: flex; justify-content: space-between; color: #cbd5e1; margin-bottom: 2px;">
+                    <span>音量 (Volume):</span>
+                    <span id="ots-r1-vol-val" style="color: #38bdf8; font-weight: 600;">100</span>
+                  </div>
+                  <input type="range" id="ots-r1-vol-slider" min="0" max="127" value="100" style="width: 100%; accent-color: #059669;" />
+                </div>
+                <div>
+                  <div style="display: flex; justify-content: space-between; color: #cbd5e1; margin-bottom: 2px;">
+                    <span>相位 (Pan):</span>
+                    <span id="ots-r1-pan-val" style="color: #38bdf8; font-weight: 600;">C</span>
+                  </div>
+                  <input type="range" id="ots-r1-pan-slider" min="0" max="127" value="64" style="width: 100%; accent-color: #059669;" />
+                </div>
+                <div>
+                  <div style="display: flex; justify-content: space-between; color: #cbd5e1; margin-bottom: 2px;">
+                    <span>殘響 (Reverb):</span>
+                    <span id="ots-r1-rev-val" style="color: #a78bfa; font-weight: 600;">40</span>
+                  </div>
+                  <input type="range" id="ots-r1-rev-slider" min="0" max="127" value="40" style="width: 100%; accent-color: #8b5cf6;" />
+                </div>
+                <div>
+                  <div style="display: flex; justify-content: space-between; color: #cbd5e1; margin-bottom: 2px;">
+                    <span>八度位移 (Octave):</span>
+                    <span id="ots-r1-oct-val" style="color: #fbbf24; font-weight: 600;">0</span>
+                  </div>
+                  <select id="ots-r1-oct-select" style="width: 100%; background: #05100e; color: #fbbf24; border: 1px solid #184c3e; border-radius: 4px; padding: 2px 6px; font-size: 0.74rem;">
+                    <option value="-2">-2 八度</option>
+                    <option value="-1">-1 八度</option>
+                    <option value="0" selected>標準八度 (0)</option>
+                    <option value="1">+1 八度</option>
+                    <option value="2">+2 八度</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right 2 卡片 (雙音色疊音) -->
+            <div style="background: #091a16; border: 1px solid #184c3e; border-radius: 6px; padding: 12px 14px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; border-bottom: 1px solid #13392f; padding-bottom: 6px;">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <span style="font-size: 1rem;">🎻</span>
+                  <span style="font-size: 0.84rem; font-weight: 700; color: #cbd5e1;">Right 2 (雙音色疊音 Dual Layer)</span>
+                </div>
+                <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 0.74rem; color: #6ee7b7; cursor: pointer;">
+                  <input type="checkbox" id="ots-r2-enable-checkbox" style="accent-color: #059669;" />
+                  <span>啟用此疊音</span>
+                </label>
+              </div>
+
+              <!-- 音色展示與選擇按鈕 -->
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; background: #05100e; border: 1px solid #184c3e; border-radius: 5px; padding: 6px 10px;">
+                <div style="flex: 1; min-width: 0;">
+                  <div id="ots-r2-voice-name" style="font-weight: 700; color: #94a3b8; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Kino Strings</div>
+                  <div id="ots-r2-voice-sub" style="font-size: 0.72rem; color: #64748b;">電影大片史詩弦樂 (104-2-48)</div>
+                </div>
+                <button type="button" id="btn-ots-pick-voice-r2" class="btn btn-secondary" style="padding: 3px 8px; font-size: 0.74rem; background: #0d1e1a; color: #94a3b8; border-color: #1b4d3e; white-space: nowrap; cursor: pointer;">🔍 選擇原廠音色</button>
+              </div>
+
+              <!-- 混音控制推桿 (Volume, Pan, Reverb, Chorus, Octave) -->
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.74rem;">
+                <div>
+                  <div style="display: flex; justify-content: space-between; color: #cbd5e1; margin-bottom: 2px;">
+                    <span>音量 (Volume):</span>
+                    <span id="ots-r2-vol-val" style="color: #38bdf8; font-weight: 600;">75</span>
+                  </div>
+                  <input type="range" id="ots-r2-vol-slider" min="0" max="127" value="75" style="width: 100%; accent-color: #059669;" />
+                </div>
+                <div>
+                  <div style="display: flex; justify-content: space-between; color: #cbd5e1; margin-bottom: 2px;">
+                    <span>相位 (Pan):</span>
+                    <span id="ots-r2-pan-val" style="color: #38bdf8; font-weight: 600;">C</span>
+                  </div>
+                  <input type="range" id="ots-r2-pan-slider" min="0" max="127" value="64" style="width: 100%; accent-color: #059669;" />
+                </div>
+                <div>
+                  <div style="display: flex; justify-content: space-between; color: #cbd5e1; margin-bottom: 2px;">
+                    <span>殘響 (Reverb):</span>
+                    <span id="ots-r2-rev-val" style="color: #a78bfa; font-weight: 600;">50</span>
+                  </div>
+                  <input type="range" id="ots-r2-rev-slider" min="0" max="127" value="50" style="width: 100%; accent-color: #8b5cf6;" />
+                </div>
+                <div>
+                  <div style="display: flex; justify-content: space-between; color: #cbd5e1; margin-bottom: 2px;">
+                    <span>八度位移 (Octave):</span>
+                    <span id="ots-r2-oct-val" style="color: #fbbf24; font-weight: 600;">0</span>
+                  </div>
+                  <select id="ots-r2-oct-select" style="width: 100%; background: #05100e; color: #fbbf24; border: 1px solid #184c3e; border-radius: 4px; padding: 2px 6px; font-size: 0.74rem;">
+                    <option value="-2">-2 八度</option>
+                    <option value="-1">-1 八度</option>
+                    <option value="0" selected>標準八度 (0)</option>
+                    <option value="1">+1 八度</option>
+                    <option value="2">+2 八度</option>
+                  </select>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 

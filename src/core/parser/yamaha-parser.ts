@@ -331,7 +331,7 @@ export class YamahaParser {
     }
 
     const hasCasm = customChunks.some((c) => c.id === 'CASM');
-    const hasOts = customChunks.some((c) => c.id.trim() === 'OTS');
+    const hasOts = customChunks.some((c) => c.id.trim() === 'OTS' || c.id.trim() === 'OTSc' || c.id.startsWith('OTS'));
 
     return {
       format: fallbackFormat,

@@ -42,6 +42,11 @@ import {
   type NttRule,
   type RetriggerRule,
 } from '../core/writer/casm-modifier';
+import { YamahaOtsManager } from '../core/writer/ots-manager';
+import type {
+  StyleOtsData,
+  StyleHeaderMetadata,
+} from '../core/models/ots-types';
 import {
   DEFAULT_STYLE_PARTS,
   type StylePartId,
@@ -203,9 +208,11 @@ function updatePadCardInstrumentSelect(padNum: number, msb: number, lsb: number,
 // ========================================================
 // Yamaha PSR-SX920 原廠音色搜尋與替換面板控制 (Voice Modal)
 // ========================================================
-let targetModalType: 'PAD' | 'STY' = 'PAD';
+let targetModalType: 'PAD' | 'STY' | 'OTS' = 'PAD';
 let targetModalPadNum: number = 1;
 let targetModalStyChannel: number = 8;
+let targetModalOtsSlot: number = 1;
+let targetModalOtsPart: 'right1' | 'right2' = 'right1';
 let currentModalCategory: VoiceCategory | 'ALL' = 'ALL';
 let currentModalSuitabilityFilter: VoiceSuitabilityFilter = 'ALL';
 let currentModalSearchQuery: string = '';
@@ -455,7 +462,7 @@ function initVoiceSearchModal() {
   }
 }
 
-function openVoiceModal(targetNum: number, targetType: 'PAD' | 'STY' = 'PAD') {
+function openVoiceModal(targetNum: number, targetType: 'PAD' | 'STY' | 'OTS' = 'PAD', otsPart: 'right1' | 'right2' = 'right1') {
   const modal = document.getElementById('voice-search-modal');
   const badge = document.getElementById('modal-target-pad-badge');
   const searchInput = document.getElementById('voice-search-input') as HTMLInputElement | null;
@@ -480,6 +487,16 @@ function openVoiceModal(targetNum: number, targetType: 'PAD' | 'STY' = 'PAD') {
     } else {
       currentModalCategory = 'ALL';
     }
+  } else if (targetType === 'OTS') {
+    targetModalOtsSlot = targetNum;
+    targetModalOtsPart = otsPart;
+    if (badge) {
+      badge.textContent = `⭐ OTS ${targetNum} - ${otsPart === 'right1' ? 'Right 1 (主奏)' : 'Right 2 (疊音)'}`;
+      badge.style.background = '#064e3b';
+      badge.style.color = '#6ee7b7';
+      badge.style.borderColor = '#059669';
+    }
+    currentModalCategory = 'ALL';
   } else {
     targetModalPadNum = targetNum;
     if (badge) {
@@ -5654,6 +5671,26 @@ function applyVoiceToPad(padNum: number, voice: YamahaVoice) {
   }
 }
 
+function applyVoiceToOts(slotIndex: number, partKey: 'right1' | 'right2', voice: YamahaVoice) {
+  if (!currentStyleOtsData) {
+    currentStyleOtsData = YamahaOtsManager.createDefaultOtsData();
+  }
+  const slot = currentStyleOtsData.slots[slotIndex - 1];
+  if (slot) {
+    slot[partKey].voiceName = voice.name;
+    slot[partKey].chineseName = voice.chineseName;
+    slot[partKey].msb = voice.msb;
+    slot[partKey].lsb = voice.lsb;
+    slot[partKey].pc = voice.pc;
+    if (partKey === 'right2') {
+      slot.right2.enabled = true;
+    }
+  }
+  closeVoiceModal();
+  renderOtsEditorSlot(slotIndex);
+  showStatus(`⭐ 已為 OTS ${slotIndex} ${partKey === 'right1' ? 'Right 1' : 'Right 2'} 套用音色: ${voice.name} (${voice.chineseName || ''})`);
+}
+
 function applyVoiceToStylePart(channel: number, voice: YamahaVoice) {
   if (!currentParsed || currentParsed.format !== 'STY') return;
 
@@ -5781,6 +5818,8 @@ function renderVoiceModalList() {
 
     const targetTitle = targetModalType === 'STY'
       ? `套用至 ${getStylePartDisplayName(targetModalStyChannel)} (Ch ${targetModalStyChannel + 1})`
+      : targetModalType === 'OTS'
+      ? `套用至 OTS ${targetModalOtsSlot} - ${targetModalOtsPart === 'right1' ? 'Right 1 (主奏)' : 'Right 2 (疊音)'}`
       : `套用至 Pad ${targetModalPadNum}`;
 
     tr.innerHTML = `
@@ -5815,6 +5854,8 @@ function renderVoiceModalList() {
       e.stopPropagation();
       if (targetModalType === 'STY') {
         applyVoiceToStylePart(targetModalStyChannel, voice);
+      } else if (targetModalType === 'OTS') {
+        applyVoiceToOts(targetModalOtsSlot, targetModalOtsPart, voice);
       } else {
         applyVoiceToPad(targetModalPadNum, voice);
       }
@@ -9359,6 +9400,357 @@ function initCasmEditor() {
   });
 }
 
+// ========================================================
+// 方案 D: Yamaha OTS (One Touch Setting 1~4) 與風格標頭管理
+// ========================================================
+let isOtsEditorOpen: boolean = false;
+let currentStyleOtsData: StyleOtsData | null = null;
+let currentStyleHeaderData: StyleHeaderMetadata | null = null;
+let currentActiveOtsSlot: number = 1;
+let isOtsEditorEventsBound: boolean = false;
+
+function syncOtsInputsFromState(slotIdx: number) {
+  if (!currentStyleOtsData) return;
+  const slot = currentStyleOtsData.slots[slotIdx - 1];
+  if (!slot) return;
+
+  // Right 1
+  const elR1Name = document.getElementById('ots-r1-voice-name');
+  const elR1Sub = document.getElementById('ots-r1-voice-sub');
+  const elR1Vol = document.getElementById('ots-r1-vol-slider') as HTMLInputElement | null;
+  const elR1VolVal = document.getElementById('ots-r1-vol-val');
+  const elR1Pan = document.getElementById('ots-r1-pan-slider') as HTMLInputElement | null;
+  const elR1PanVal = document.getElementById('ots-r1-pan-val');
+  const elR1Rev = document.getElementById('ots-r1-rev-slider') as HTMLInputElement | null;
+  const elR1RevVal = document.getElementById('ots-r1-rev-val');
+  const elR1Oct = document.getElementById('ots-r1-oct-select') as HTMLSelectElement | null;
+  const elR1OctVal = document.getElementById('ots-r1-oct-val');
+
+  if (elR1Name) elR1Name.textContent = slot.right1.voiceName;
+  if (elR1Sub) elR1Sub.textContent = `${slot.right1.chineseName || ''} (${slot.right1.msb}-${slot.right1.lsb}-${slot.right1.pc})`;
+  if (elR1Vol) elR1Vol.value = String(slot.right1.volume ?? 100);
+  if (elR1VolVal) elR1VolVal.textContent = String(slot.right1.volume ?? 100);
+  if (elR1Pan) elR1Pan.value = String(slot.right1.pan ?? 64);
+  if (elR1PanVal) elR1PanVal.textContent = formatPan(slot.right1.pan ?? 64);
+  if (elR1Rev) elR1Rev.value = String(slot.right1.reverb ?? 40);
+  if (elR1RevVal) elR1RevVal.textContent = String(slot.right1.reverb ?? 40);
+  if (elR1Oct) elR1Oct.value = String(slot.right1.octave ?? 0);
+  if (elR1OctVal) elR1OctVal.textContent = String(slot.right1.octave ?? 0);
+
+  // Right 2
+  const elR2Check = document.getElementById('ots-r2-enable-checkbox') as HTMLInputElement | null;
+  const elR2Name = document.getElementById('ots-r2-voice-name');
+  const elR2Sub = document.getElementById('ots-r2-voice-sub');
+  const elR2Vol = document.getElementById('ots-r2-vol-slider') as HTMLInputElement | null;
+  const elR2VolVal = document.getElementById('ots-r2-vol-val');
+  const elR2Pan = document.getElementById('ots-r2-pan-slider') as HTMLInputElement | null;
+  const elR2PanVal = document.getElementById('ots-r2-pan-val');
+  const elR2Rev = document.getElementById('ots-r2-rev-slider') as HTMLInputElement | null;
+  const elR2RevVal = document.getElementById('ots-r2-rev-val');
+  const elR2Oct = document.getElementById('ots-r2-oct-select') as HTMLSelectElement | null;
+  const elR2OctVal = document.getElementById('ots-r2-oct-val');
+
+  if (elR2Check) elR2Check.checked = !!slot.right2.enabled;
+  if (elR2Name) {
+    elR2Name.textContent = slot.right2.voiceName;
+    elR2Name.style.color = slot.right2.enabled ? '#f8fafc' : '#94a3b8';
+  }
+  if (elR2Sub) elR2Sub.textContent = `${slot.right2.chineseName || ''} (${slot.right2.msb}-${slot.right2.lsb}-${slot.right2.pc})`;
+  if (elR2Vol) elR2Vol.value = String(slot.right2.volume ?? 75);
+  if (elR2VolVal) elR2VolVal.textContent = String(slot.right2.volume ?? 75);
+  if (elR2Pan) elR2Pan.value = String(slot.right2.pan ?? 64);
+  if (elR2PanVal) elR2PanVal.textContent = formatPan(slot.right2.pan ?? 64);
+  if (elR2Rev) elR2Rev.value = String(slot.right2.reverb ?? 50);
+  if (elR2RevVal) elR2RevVal.textContent = String(slot.right2.reverb ?? 50);
+  if (elR2Oct) elR2Oct.value = String(slot.right2.octave ?? 0);
+  if (elR2OctVal) elR2OctVal.textContent = String(slot.right2.octave ?? 0);
+}
+
+function syncStateFromOtsInputs(slotIdx: number) {
+  if (!currentStyleOtsData) return;
+  const slot = currentStyleOtsData.slots[slotIdx - 1];
+  if (!slot) return;
+
+  const elR1Vol = document.getElementById('ots-r1-vol-slider') as HTMLInputElement | null;
+  const elR1Pan = document.getElementById('ots-r1-pan-slider') as HTMLInputElement | null;
+  const elR1Rev = document.getElementById('ots-r1-rev-slider') as HTMLInputElement | null;
+  const elR1Oct = document.getElementById('ots-r1-oct-select') as HTMLSelectElement | null;
+
+  if (elR1Vol) slot.right1.volume = parseInt(elR1Vol.value, 10);
+  if (elR1Pan) slot.right1.pan = parseInt(elR1Pan.value, 10);
+  if (elR1Rev) slot.right1.reverb = parseInt(elR1Rev.value, 10);
+  if (elR1Oct) slot.right1.octave = parseInt(elR1Oct.value, 10);
+
+  const elR2Check = document.getElementById('ots-r2-enable-checkbox') as HTMLInputElement | null;
+  const elR2Vol = document.getElementById('ots-r2-vol-slider') as HTMLInputElement | null;
+  const elR2Pan = document.getElementById('ots-r2-pan-slider') as HTMLInputElement | null;
+  const elR2Rev = document.getElementById('ots-r2-rev-slider') as HTMLInputElement | null;
+  const elR2Oct = document.getElementById('ots-r2-oct-select') as HTMLSelectElement | null;
+
+  if (elR2Check) slot.right2.enabled = elR2Check.checked;
+  if (elR2Vol) slot.right2.volume = parseInt(elR2Vol.value, 10);
+  if (elR2Pan) slot.right2.pan = parseInt(elR2Pan.value, 10);
+  if (elR2Rev) slot.right2.reverb = parseInt(elR2Rev.value, 10);
+  if (elR2Oct) slot.right2.octave = parseInt(elR2Oct.value, 10);
+}
+
+function renderOtsEditorSlot(slotIdx: number) {
+  currentActiveOtsSlot = slotIdx;
+  document.querySelectorAll('.btn-ots-tab').forEach((tab) => {
+    const s = parseInt(tab.getAttribute('data-slot') || '1', 10);
+    const isActive = s === slotIdx;
+    tab.classList.toggle('active', isActive);
+    (tab as HTMLElement).style.background = isActive ? '#064e3b' : '#0d1e1a';
+    (tab as HTMLElement).style.color = isActive ? '#6ee7b7' : '#94a3b8';
+    (tab as HTMLElement).style.borderColor = isActive ? '#059669' : '#1b4d3e';
+  });
+  syncOtsInputsFromState(slotIdx);
+}
+
+function renderStyleHeaderInputs() {
+  if (!currentStyleHeaderData) return;
+  const elTitle = document.getElementById('sty-header-title-input') as HTMLInputElement | null;
+  const elGenre = document.getElementById('sty-header-genre-select') as HTMLSelectElement | null;
+  const elBpm = document.getElementById('sty-header-bpm-input') as HTMLInputElement | null;
+  const elSig = document.getElementById('sty-header-timesig-select') as HTMLSelectElement | null;
+  const elCopy = document.getElementById('sty-header-copyright-input') as HTMLInputElement | null;
+
+  if (elTitle) elTitle.value = currentStyleHeaderData.title;
+  if (elGenre) elGenre.value = currentStyleHeaderData.genre;
+  if (elBpm) elBpm.value = String(currentStyleHeaderData.bpm);
+  if (elSig) {
+    elSig.value = `${currentStyleHeaderData.timeSignature.numerator}/${currentStyleHeaderData.timeSignature.denominator}`;
+  }
+  if (elCopy) elCopy.value = currentStyleHeaderData.copyright || '';
+}
+
+function auditionActiveOts() {
+  if (!currentStyleOtsData) return;
+  const slot = currentStyleOtsData.slots[currentActiveOtsSlot - 1];
+  if (!slot) return;
+
+  const r1 = slot.right1;
+  const r1OctShift = (r1.octave || 0) * 12;
+  const chordNotes = [60, 64, 67]; // C4, E4, G4
+
+  chordNotes.forEach((pitch, idx) => {
+    setTimeout(() => {
+      audioEngine.playAuditionNote(pitch + r1OctShift, 0.7, {
+        instrumentId: 'grand-piano',
+        msb: r1.msb,
+        lsb: r1.lsb,
+        pc: r1.pc,
+        isDrum: false,
+      });
+    }, idx * 120);
+  });
+
+  if (slot.right2 && slot.right2.enabled) {
+    const r2 = slot.right2;
+    const r2OctShift = (r2.octave || 0) * 12;
+    chordNotes.forEach((pitch, idx) => {
+      setTimeout(() => {
+        audioEngine.playAuditionNote(pitch + r2OctShift, 0.7, {
+          instrumentId: 'strings',
+          msb: r2.msb,
+          lsb: r2.lsb,
+          pc: r2.pc,
+          isDrum: false,
+        });
+      }, idx * 120 + 20);
+    });
+  }
+
+  showStatus(`▶ 正在試聽 OTS ${currentActiveOtsSlot}: ${r1.voiceName}${slot.right2.enabled ? ` + ${slot.right2.voiceName}` : ''}`);
+}
+
+function initOtsEditor() {
+  if (!currentParsed || currentParsed.format !== 'STY') return;
+
+  currentStyleOtsData = YamahaOtsManager.extractOtsFromParsed(currentParsed);
+  currentStyleHeaderData = YamahaOtsManager.extractStyleHeader(currentParsed);
+
+  renderStyleHeaderInputs();
+  renderOtsEditorSlot(currentActiveOtsSlot);
+
+  if (isOtsEditorEventsBound) return;
+  isOtsEditorEventsBound = true;
+
+  const btnToggle = document.getElementById('btn-toggle-ots-editor');
+  const container = document.getElementById('sty-ots-editor-container');
+  const btnClose = document.getElementById('btn-ots-editor-close');
+  const btnSave = document.getElementById('btn-ots-save-apply');
+  const btnAudition = document.getElementById('btn-ots-audition-active');
+
+  btnToggle?.addEventListener('click', () => {
+    if (!container) return;
+    isOtsEditorOpen = !isOtsEditorOpen;
+    container.style.display = isOtsEditorOpen ? 'block' : 'none';
+    btnToggle.classList.toggle('active-rp', isOtsEditorOpen);
+    if (isOtsEditorOpen) {
+      renderStyleHeaderInputs();
+      renderOtsEditorSlot(currentActiveOtsSlot);
+    }
+  });
+
+  btnClose?.addEventListener('click', () => {
+    if (!container) return;
+    isOtsEditorOpen = false;
+    container.style.display = 'none';
+    btnToggle?.classList.remove('active-rp');
+  });
+
+  // Tab 切換
+  document.querySelectorAll('.btn-ots-tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      const slotNum = parseInt(tab.getAttribute('data-slot') || '1', 10);
+      syncStateFromOtsInputs(currentActiveOtsSlot);
+      renderOtsEditorSlot(slotNum);
+    });
+  });
+
+  // 音色挑選按鈕
+  document.getElementById('btn-ots-pick-voice-r1')?.addEventListener('click', () => {
+    syncStateFromOtsInputs(currentActiveOtsSlot);
+    openVoiceModal(currentActiveOtsSlot, 'OTS', 'right1');
+  });
+
+  document.getElementById('btn-ots-pick-voice-r2')?.addEventListener('click', () => {
+    syncStateFromOtsInputs(currentActiveOtsSlot);
+    openVoiceModal(currentActiveOtsSlot, 'OTS', 'right2');
+  });
+
+  // 試聽按鈕
+  btnAudition?.addEventListener('click', () => {
+    syncStateFromOtsInputs(currentActiveOtsSlot);
+    auditionActiveOts();
+  });
+
+  // 快速範本
+  const presets = YamahaOtsManager.getGenrePresets();
+  document.getElementById('btn-ots-preset-pop')?.addEventListener('click', () => {
+    const pop = presets.find((p) => p.id === 'POP');
+    if (pop) {
+      currentStyleOtsData = { slots: pop.slots };
+      const elGenre = document.getElementById('sty-header-genre-select') as HTMLSelectElement | null;
+      if (elGenre) elGenre.value = 'Pop';
+      renderOtsEditorSlot(currentActiveOtsSlot);
+      showStatus('⚡ 已載入【經典流行 (Pop)】OTS 4 組右手音色範本！請點擊【💾 套用並封裝至 Style】生效。');
+    }
+  });
+
+  document.getElementById('btn-ots-preset-jazz')?.addEventListener('click', () => {
+    const jazz = presets.find((p) => p.id === 'JAZZ');
+    if (jazz) {
+      currentStyleOtsData = { slots: jazz.slots };
+      const elGenre = document.getElementById('sty-header-genre-select') as HTMLSelectElement | null;
+      if (elGenre) elGenre.value = 'Jazz';
+      renderOtsEditorSlot(currentActiveOtsSlot);
+      showStatus('⚡ 已載入【都會爵士 (Jazz)】OTS 4 組右手音色範本！請點擊【💾 套用並封裝至 Style】生效。');
+    }
+  });
+
+  document.getElementById('btn-ots-preset-rock')?.addEventListener('click', () => {
+    const rock = presets.find((p) => p.id === 'ROCK');
+    if (rock) {
+      currentStyleOtsData = { slots: rock.slots };
+      const elGenre = document.getElementById('sty-header-genre-select') as HTMLSelectElement | null;
+      if (elGenre) elGenre.value = 'Rock';
+      renderOtsEditorSlot(currentActiveOtsSlot);
+      showStatus('⚡ 已載入【搖滾樂團 (Rock)】OTS 4 組右手音色範本！請點擊【💾 套用並封裝至 Style】生效。');
+    }
+  });
+
+  document.getElementById('btn-ots-preset-ballad')?.addEventListener('click', () => {
+    const ballad = presets.find((p) => p.id === 'BALLAD');
+    if (ballad) {
+      currentStyleOtsData = { slots: ballad.slots };
+      const elGenre = document.getElementById('sty-header-genre-select') as HTMLSelectElement | null;
+      if (elGenre) elGenre.value = 'Ballad';
+      renderOtsEditorSlot(currentActiveOtsSlot);
+      showStatus('⚡ 已載入【影視史詩 (Symphonic & Ballad)】OTS 4 組右手音色範本！請點擊【💾 套用並封裝至 Style】生效。');
+    }
+  });
+
+  // Slider 即時數字連動
+  const wireSlider = (sliderId: string, labelId: string, isPan = false) => {
+    const s = document.getElementById(sliderId) as HTMLInputElement | null;
+    const l = document.getElementById(labelId);
+    s?.addEventListener('input', () => {
+      const v = parseInt(s.value, 10);
+      if (l) l.textContent = isPan ? formatPan(v) : String(v);
+      syncStateFromOtsInputs(currentActiveOtsSlot);
+    });
+  };
+
+  wireSlider('ots-r1-vol-slider', 'ots-r1-vol-val');
+  wireSlider('ots-r1-pan-slider', 'ots-r1-pan-val', true);
+  wireSlider('ots-r1-rev-slider', 'ots-r1-rev-val');
+  wireSlider('ots-r2-vol-slider', 'ots-r2-vol-val');
+  wireSlider('ots-r2-pan-slider', 'ots-r2-pan-val', true);
+  wireSlider('ots-r2-rev-slider', 'ots-r2-rev-val');
+
+  document.getElementById('ots-r1-oct-select')?.addEventListener('change', (e) => {
+    const v = (e.target as HTMLSelectElement).value;
+    const l = document.getElementById('ots-r1-oct-val');
+    if (l) l.textContent = v;
+    syncStateFromOtsInputs(currentActiveOtsSlot);
+  });
+
+  document.getElementById('ots-r2-oct-select')?.addEventListener('change', (e) => {
+    const v = (e.target as HTMLSelectElement).value;
+    const l = document.getElementById('ots-r2-oct-val');
+    if (l) l.textContent = v;
+    syncStateFromOtsInputs(currentActiveOtsSlot);
+  });
+
+  document.getElementById('ots-r2-enable-checkbox')?.addEventListener('change', (e) => {
+    const chk = (e.target as HTMLInputElement).checked;
+    const nameEl = document.getElementById('ots-r2-voice-name');
+    if (nameEl) nameEl.style.color = chk ? '#f8fafc' : '#94a3b8';
+    syncStateFromOtsInputs(currentActiveOtsSlot);
+  });
+
+  // 儲存套用
+  btnSave?.addEventListener('click', () => {
+    if (!currentParsed) return;
+    syncStateFromOtsInputs(currentActiveOtsSlot);
+
+    const title = (document.getElementById('sty-header-title-input') as HTMLInputElement)?.value.trim() || 'New Style';
+    const genre = (document.getElementById('sty-header-genre-select') as HTMLSelectElement)?.value || 'Pop';
+    const bpm = parseInt((document.getElementById('sty-header-bpm-input') as HTMLInputElement)?.value, 10) || 120;
+    const timeSigStr = (document.getElementById('sty-header-timesig-select') as HTMLSelectElement)?.value || '4/4';
+    const [num, den] = timeSigStr.split('/').map(Number);
+    const copyright = (document.getElementById('sty-header-copyright-input') as HTMLInputElement)?.value.trim();
+
+    currentStyleHeaderData = {
+      title,
+      genre,
+      bpm,
+      timeSignature: { numerator: num || 4, denominator: den || 4 },
+      copyright,
+    };
+
+    YamahaOtsManager.updateStyleHeader(currentParsed, currentStyleHeaderData);
+
+    if (currentStyleOtsData) {
+      YamahaOtsManager.injectOrUpdateOts(currentParsed, currentStyleOtsData);
+    }
+
+    markModified('已封裝 OTS 1~4 右手音色與風格標頭');
+    showStatus(`⭐ 成功封裝 OTS 1~4 右手音色與風格標頭 [${title}]！完全符合 Yamaha 原廠擴充包出廠規範。`);
+
+    const elTitle = document.getElementById('project-name');
+    if (elTitle && title) {
+      elTitle.textContent = title;
+    }
+    const elTempo = document.getElementById('project-tempo');
+    if (elTempo) {
+      elTempo.textContent = `${bpm} BPM`;
+    }
+  });
+}
+
 function toggleStySectionAudition(sectionName: string, startBar?: number) {
   if (!currentParsed || currentParsed.format !== 'STY') return;
 
@@ -9599,6 +9991,11 @@ function renderSections(parsed: YamahaFileParsed) {
     btnToggleCasm.style.display = isPad ? 'none' : 'inline-flex';
   }
 
+  const btnToggleOts = document.getElementById('btn-toggle-ots-editor');
+  if (btnToggleOts) {
+    btnToggleOts.style.display = isPad ? 'none' : 'inline-flex';
+  }
+
   const casmContainer = document.getElementById('sty-casm-editor-container');
   if (isPad && casmContainer) {
     casmContainer.style.display = 'none';
@@ -9607,6 +10004,17 @@ function renderSections(parsed: YamahaFileParsed) {
     initCasmEditor();
     if (casmContainer && casmContainer.style.display !== 'none') {
       renderCasmEditorTable();
+    }
+  }
+
+  const otsContainer = document.getElementById('sty-ots-editor-container');
+  if (isPad && otsContainer) {
+    otsContainer.style.display = 'none';
+  } else if (!isPad) {
+    initOtsEditor();
+    if (otsContainer && otsContainer.style.display !== 'none') {
+      renderStyleHeaderInputs();
+      renderOtsEditorSlot(currentActiveOtsSlot);
     }
   }
 
