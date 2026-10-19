@@ -6769,6 +6769,13 @@ function renderParsed(bytes: Uint8Array, filename: string, format: 'STY' | 'PAD'
       styBpmInput.value = `${currentParsed.bpm}`;
     }
 
+    currentCasmPartRules = [];
+    isCasmEditorOpen = false;
+    const casmCont = document.getElementById('sty-casm-editor-container');
+    if (casmCont) casmCont.style.display = 'none';
+    const btnCasm = document.getElementById('btn-toggle-casm-editor');
+    btnCasm?.classList.remove('active-rp');
+
     renderSections(currentParsed);
     renderParts(currentParsed);
 
@@ -9244,6 +9251,7 @@ function initVirtualChordAuditionBar() {
 
 let isCasmEditorOpen: boolean = false;
 let currentCasmPartRules: CasmPartRule[] = [];
+let isCasmEditorEventsBound: boolean = false;
 
 function renderCasmEditorTable() {
   const tbody = document.getElementById('sty-casm-rules-tbody');
@@ -9330,6 +9338,9 @@ function renderCasmEditorTable() {
 }
 
 function initCasmEditor() {
+  if (isCasmEditorEventsBound) return;
+  isCasmEditorEventsBound = true;
+
   const btnToggle = document.getElementById('btn-toggle-casm-editor');
   const container = document.getElementById('sty-casm-editor-container');
   const btnClose = document.getElementById('btn-casm-editor-close');
@@ -9342,6 +9353,7 @@ function initCasmEditor() {
     btnToggle.classList.toggle('active-rp', isCasmEditorOpen);
     if (isCasmEditorOpen) {
       renderCasmEditorTable();
+      container.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
   });
 
@@ -10000,7 +10012,6 @@ function renderSections(parsed: YamahaFileParsed) {
   if (isPad && casmContainer) {
     casmContainer.style.display = 'none';
   } else if (!isPad) {
-    currentCasmPartRules = [];
     initCasmEditor();
     if (casmContainer && casmContainer.style.display !== 'none') {
       renderCasmEditorTable();
