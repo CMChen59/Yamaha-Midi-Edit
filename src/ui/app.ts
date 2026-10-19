@@ -2626,6 +2626,20 @@ function updateAuditionAllButtonText() {
 // --- 整合包 2: 整曲 MIDI 試聽與智慧段落嗅探 (Full MIDI Player & Section Scout) ---
 
 let isStyleFullMidiPlaying: boolean = false;
+let currentFullMidiPlaybackBar: number = 1;
+let sectionStampToastTimeout: any = null;
+
+function showSectionStampToast(msg: string) {
+  const el = document.getElementById('style-sampler-stamp-toast');
+  if (el) {
+    el.textContent = msg;
+    el.style.display = 'inline-block';
+    if (sectionStampToastTimeout) clearTimeout(sectionStampToastTimeout);
+    sectionStampToastTimeout = setTimeout(() => {
+      el.style.display = 'none';
+    }, 4500);
+  }
+}
 
 function playFullMidi(startFromBar: number = 1) {
   if (!currentStyleAnalysis) return;
@@ -2656,6 +2670,13 @@ function playFullMidi(startFromBar: number = 1) {
   const totalTicks = currentStyleAnalysis.totalTicks || (totalMeasures * ticksPerMeasure);
   const startBar = Math.max(1, Math.min(totalMeasures, startFromBar));
   const startOffsetTick = (startBar - 1) * ticksPerMeasure;
+
+  currentFullMidiPlaybackBar = startBar;
+
+  // 多軌音量自適應平衡：若 MIDI 軌道眾多 (例如 16~33 軌)，依據能量平方根衰減防止副歌密集發聲時破音失真 (Clipping)
+  const trackCount = validTracks.length;
+  const trackScale = trackCount > 4 ? Math.max(0.4, 3.2 / Math.sqrt(trackCount)) : 0.85;
+  const fullMidiVolume = Math.min(0.85, Math.max(0.35, trackScale));
 
   // 封裝所有音軌為 BackingTrackItem (整曲試聽維持原汁原味原曲音高，不移調至 C)
   const backingTracks: BackingTrackItem[] = validTracks.map((t, idx) => {
@@ -2703,7 +2724,7 @@ function playFullMidi(startFromBar: number = 1) {
     division: currentStyleAnalysis.division,
     beatsPerBar: timeSig.numerator,
     loop: false,
-    volumeRatio: 0.85,
+    volumeRatio: fullMidiVolume,
     startOffsetTick: startOffsetTick,
     enableActiveNotesDetection: false,
     onProgress: (state: PlaybackState) => {
@@ -2712,6 +2733,8 @@ function playFullMidi(startFromBar: number = 1) {
       const curSec = ticksToSeconds(curTick, currentStyleAnalysis!.bpm, division);
       const curBar = Math.min(totalMeasures, Math.floor(curTick / ticksPerMeasure) + 1);
       const curPct = Math.max(0, Math.min(100, (curTick / totalTicks) * 100));
+
+      currentFullMidiPlaybackBar = curBar;
 
       if (playhead) {
         playhead.style.display = 'block';
@@ -2742,6 +2765,7 @@ function stopFullMidi(resetPlayhead: boolean = false) {
   const playhead = document.getElementById('style-sampler-playhead');
   const timeBadge = document.getElementById('style-sampler-playback-time-badge');
   if (resetPlayhead) {
+    currentFullMidiPlaybackBar = 1;
     if (playhead) playhead.style.display = 'none';
     if (timeBadge) timeBadge.textContent = '⏱ 00:00 / 00:00 (停止)';
   } else {
@@ -3515,7 +3539,8 @@ function initStyleImportModal() {
     if (isStyleFullMidiPlaying) {
       stopFullMidi(false);
     } else {
-      playFullMidi(1);
+      const sBar = currentFullMidiPlaybackBar > 1 ? currentFullMidiPlaybackBar : 1;
+      playFullMidi(sBar);
     }
   });
 
@@ -3537,6 +3562,7 @@ function initStyleImportModal() {
     if (!currentStyleAnalysis) return;
     const scout = currentStyleAnalysis.scoutResult || StyleImporter.detectSongStructureScout(currentStyleAnalysis);
     applySectionRange(scout.introRange.start, scout.introRange.end, 'Intro A');
+    showSectionStampToast(`💡 已套用 AI 推測前奏 (第 ${scout.introRange.start} ~ ${scout.introRange.end} 節)，目標已切換為 Intro A！`);
   });
 
   const btnScoutMain = document.getElementById('btn-scout-apply-main');
@@ -3544,6 +3570,7 @@ function initStyleImportModal() {
     if (!currentStyleAnalysis) return;
     const scout = currentStyleAnalysis.scoutResult || StyleImporter.detectSongStructureScout(currentStyleAnalysis);
     applySectionRange(scout.mainRange.start, scout.mainRange.end, 'Main A');
+    showSectionStampToast(`💡 已套用 AI 推測主歌 (第 ${scout.mainRange.start} ~ ${scout.mainRange.end} 節)，目標已切換為 Main A！`);
   });
 
   const btnScoutChorus = document.getElementById('btn-scout-apply-chorus');
@@ -3551,6 +3578,7 @@ function initStyleImportModal() {
     if (!currentStyleAnalysis) return;
     const scout = currentStyleAnalysis.scoutResult || StyleImporter.detectSongStructureScout(currentStyleAnalysis);
     applySectionRange(scout.chorusRange.start, scout.chorusRange.end, 'Main B');
+    showSectionStampToast(`💡 已套用 AI 推測副歌 (第 ${scout.chorusRange.start} ~ ${scout.chorusRange.end} 節)，目標已切換為 Main B！`);
   });
 
   const btnScoutEnding = document.getElementById('btn-scout-apply-ending');
@@ -3558,6 +3586,7 @@ function initStyleImportModal() {
     if (!currentStyleAnalysis) return;
     const scout = currentStyleAnalysis.scoutResult || StyleImporter.detectSongStructureScout(currentStyleAnalysis);
     applySectionRange(scout.endingRange.start, scout.endingRange.end, 'Ending A');
+    showSectionStampToast(`💡 已套用 AI 推測尾奏 (第 ${scout.endingRange.start} ~ ${scout.endingRange.end} 節)，目標已切換為 Ending A！`);
   });
 
   // 聽音快速標記按鈕 (Section Stamps)
@@ -3569,8 +3598,15 @@ function initStyleImportModal() {
       const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
       const curStart = parseInt(startBarInput?.value || '1', 10);
       const tot = currentStyleAnalysis?.totalMeasures || 16;
-      const newEnd = Math.min(tot, curStart + bars - 1);
-      applySectionRange(curStart, newEnd, sec);
+
+      // 優先採納當前播放或暫停所在小節作為採集起點；若未播放過則以輸入框起點為準
+      const effectiveStart = (isStyleFullMidiPlaying || currentFullMidiPlaybackBar > 1)
+        ? Math.min(tot, currentFullMidiPlaybackBar)
+        : curStart;
+      const newEnd = Math.min(tot, effectiveStart + bars - 1);
+      applySectionRange(effectiveStart, newEnd, sec);
+
+      showSectionStampToast(`🏷️ 已標記第 ${effectiveStart} ~ ${newEnd} 節為 [${sec}]！注入目標已同步切換，點擊下方【📥 注入當前伴奏段落】即可寫入！`);
     });
   });
 
@@ -3583,6 +3619,8 @@ function initStyleImportModal() {
     const pct = Math.max(0, Math.min(1, clickX / rect.width));
     const totalMeasures = Math.max(1, currentStyleAnalysis.totalMeasures);
     const clickedBar = Math.min(totalMeasures, Math.floor(pct * totalMeasures) + 1);
+
+    currentFullMidiPlaybackBar = clickedBar;
 
     if (isStyleFullMidiPlaying) {
       // 整曲正在播放中：立即 Seek 跳轉至該小節接續播放

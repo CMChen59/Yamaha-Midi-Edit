@@ -110,6 +110,13 @@ function createReverbBuffer(ctx: AudioContext, duration: number = 1.2, decay: nu
   return buffer;
 }
 
+interface ActiveVoiceHandle {
+  endTime: number;
+  isDrum: boolean;
+  stop: (time: number) => void;
+  cleanup: () => void;
+}
+
 export class AudioEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
@@ -125,13 +132,13 @@ export class AudioEngine {
   private playbackStartTime: number = 0;
   private playbackOptions: PlaybackOptions | null = null;
   private scheduledNotes: NoteEvent[] = [];
-  private activeVoices: Array<{ stop: (time: number) => void }> = [];
+  private activeVoices: ActiveVoiceHandle[] = [];
 
   // 防聲音重疊與排程隔離機制
   private playbackSessionId = 0;
   private scheduledTimerIds: any[] = [];
   private currentPadGain: GainNode | null = null;
-  private activeOscillators: Array<OscillatorNode | AudioBufferSourceNode> = [];
+  private activeOscillators: Set<OscillatorNode | AudioBufferSourceNode> = new Set();
 
   // 2.8-A 疊錄伴奏音軌專用匯流排與狀態
   private backingGain: GainNode | null = null;
@@ -139,21 +146,29 @@ export class AudioEngine {
   private backingPlaybackSessionId: number = 0;
   private isBackingPlaying: boolean = false;
   private backingStartTime: number = 0;
-  private activeBackingVoices: Array<{ stop: (time: number) => void }> = [];
+  private activeBackingVoices: ActiveVoiceHandle[] = [];
   private backingVolume: number = 0.6;
   private backingAnimFrameId: number | null = null;
 
   private createOscillator(): OscillatorNode {
     if (!this.ctx) throw new Error('AudioContext not initialized');
     const osc = this.ctx.createOscillator();
-    this.activeOscillators.push(osc);
+    this.activeOscillators.add(osc);
+    osc.onended = () => {
+      try { osc.disconnect(); } catch {}
+      this.activeOscillators.delete(osc);
+    };
     return osc;
   }
 
   private createBufferSource(): AudioBufferSourceNode {
     if (!this.ctx) throw new Error('AudioContext not initialized');
     const src = this.ctx.createBufferSource();
-    this.activeOscillators.push(src);
+    this.activeOscillators.add(src);
+    src.onended = () => {
+      try { src.disconnect(); } catch {}
+      this.activeOscillators.delete(src);
+    };
     return src;
   }
 
@@ -314,7 +329,7 @@ export class AudioEngine {
           osc.disconnect();
         } catch {}
       }
-      this.activeOscillators = [];
+      this.activeOscillators.clear();
 
       // 4.3 執行所有聲音通道的自定義 stop
       for (const voice of this.activeVoices) {
@@ -601,6 +616,20 @@ export class AudioEngine {
       const currentBeat = Math.floor(tickInBar / division) + 1;
       const progress = Math.max(0, Math.min(1, relTick / maxTotalTicks));
 
+      // 自然清理已過期結束發聲的 voice 節點，防止 activeBackingVoices 無限堆積並降低 GC 負擔
+      const now = this.ctx.currentTime;
+      if (this.activeBackingVoices.length > 0) {
+        const remaining: ActiveVoiceHandle[] = [];
+        for (const v of this.activeBackingVoices) {
+          if (v.endTime <= now) {
+            v.cleanup();
+          } else {
+            remaining.push(v);
+          }
+        }
+        this.activeBackingVoices = remaining;
+      }
+
       // 持續推進 Lookahead 排程窗口
       const targetTick = Math.min(maxTotalTicks, relTick + lookaheadTicks);
       if (targetTick > scheduledUntilTick) {
@@ -751,6 +780,11 @@ export class AudioEngine {
 
     osc.start(now);
     osc.stop(now + 0.03);
+    osc.onended = () => {
+      try { osc.disconnect(); } catch {}
+      try { gain.disconnect(); } catch {}
+      this.activeOscillators.delete(osc);
+    };
   }
 
   /**
@@ -893,8 +927,8 @@ export class AudioEngine {
     const vol = (params.volume ?? 100) / 127;
     const vel = velocity / 127;
     const isDrum = params.isDrum || (params.pc !== undefined && params.pc >= 120);
-    // 鼓組為打擊瞬態音色，維持充足動態衝擊感 (punch)，非打擊樂器則採 0.4 緩和系數防止和弦複音過載失真
-    const gainFactor = isDrum ? vol * Math.min(1.0, vel * 1.25) * 0.95 : vol * vel * 0.4;
+    // 鼓組為打擊瞬態音色，維持充足動態衝擊感 (punch)，非打擊樂器則採 0.35 緩和系數防止和弦複音過載失真
+    const gainFactor = isDrum ? vol * Math.min(1.0, vel * 1.25) * 0.9 : vol * vel * 0.35;
     const inst = params.instrumentId || 'grand-piano';
 
     // 建立軌道聲道架構 (Gain -> Panner -> Sub-bus / Backing-bus / Master)
@@ -902,20 +936,24 @@ export class AudioEngine {
     const channelGain = ctx.createGain();
     channelGain.gain.setValueAtTime(gainFactor, startTime);
 
+    let panner: StereoPannerNode | null = null;
+    let revSend: GainNode | null = null;
+    let choSend: GainNode | null = null;
+
     const panVal = ((params.pan ?? 64) - 64) / 64;
     if (ctx.createStereoPanner) {
-      const panner = ctx.createStereoPanner();
+      panner = ctx.createStereoPanner();
       panner.pan.setValueAtTime(Math.max(-1, Math.min(1, panVal)), startTime);
       channelGain.connect(panner);
       panner.connect(targetBus);
       if (this.convolver && (params.reverb ?? 40) > 0) {
-        const revSend = ctx.createGain();
+        revSend = ctx.createGain();
         revSend.gain.setValueAtTime(((params.reverb ?? 40) / 127) * 0.5, startTime);
         panner.connect(revSend);
         revSend.connect(this.convolver);
       }
       if (this.chorusInput && (params.chorus ?? 0) > 0) {
-        const choSend = ctx.createGain();
+        choSend = ctx.createGain();
         choSend.gain.setValueAtTime(((params.chorus ?? 0) / 127) * 0.65, startTime);
         panner.connect(choSend);
         choSend.connect(this.chorusInput);
@@ -923,7 +961,7 @@ export class AudioEngine {
     } else {
       channelGain.connect(targetBus);
       if (this.chorusInput && (params.chorus ?? 0) > 0) {
-        const choSend = ctx.createGain();
+        choSend = ctx.createGain();
         choSend.gain.setValueAtTime(((params.chorus ?? 0) / 127) * 0.65, startTime);
         channelGain.connect(choSend);
         choSend.connect(this.chorusInput);
@@ -950,20 +988,63 @@ export class AudioEngine {
       this.synthesizePiano(freq, startTime, durationSec, channelGain);
     }
 
-    const voiceEntry = {
+    const voiceDuration = isDrum ? 1.0 : Math.max(0.2, durationSec + 0.25);
+    const endTime = startTime + voiceDuration;
+
+    let isCleanedUp = false;
+    const cleanup = () => {
+      if (isCleanedUp) return;
+      isCleanedUp = true;
+      try { channelGain.disconnect(); } catch {}
+      try { if (panner) panner.disconnect(); } catch {}
+      try { if (revSend) revSend.disconnect(); } catch {}
+      try { if (choSend) choSend.disconnect(); } catch {}
+    };
+
+    const voiceEntry: ActiveVoiceHandle = {
+      endTime,
+      isDrum,
       stop: (t: number) => {
         try {
           channelGain.gain.cancelScheduledValues(t);
           channelGain.gain.setValueAtTime(0, t);
-          channelGain.disconnect();
         } catch {}
-      }
+        cleanup();
+      },
+      cleanup,
     };
 
+    const targetVoiceList = (customBus && customBus === this.backingGain) ? this.activeBackingVoices : this.activeVoices;
+
+    // 複音數上限保護 (Max 32 Polyphony Capping)：避免密集副歌時爆音與 CPU 量子超時
+    const MAX_POLYPHONY = 32;
+    if (targetVoiceList.length >= MAX_POLYPHONY) {
+      let candidateIdx = -1;
+      let earliestTime = Infinity;
+      for (let i = 0; i < targetVoiceList.length; i++) {
+        const v = targetVoiceList[i];
+        if (!v.isDrum && v.endTime < earliestTime) {
+          earliestTime = v.endTime;
+          candidateIdx = i;
+        }
+      }
+      if (candidateIdx === -1) candidateIdx = 0;
+      const stolenVoice = targetVoiceList.splice(candidateIdx, 1)[0];
+      stolenVoice.stop(ctx.currentTime);
+    }
+
+    targetVoiceList.push(voiceEntry);
+
+    // 自然斷開計時器 (保證在聲音尾音結束後立即從 Web Audio 圖譜中斷開)
+    const cleanupDelayMs = Math.max(0, (endTime - ctx.currentTime) * 1000 + 40);
+    const cleanupTimer = setTimeout(() => {
+      cleanup();
+    }, cleanupDelayMs);
+
     if (customBus && customBus === this.backingGain) {
-      this.activeBackingVoices.push(voiceEntry);
+      this.backingTimerIds.push(cleanupTimer);
     } else {
-      this.activeVoices.push(voiceEntry);
+      this.scheduledTimerIds.push(cleanupTimer);
     }
   }
 
@@ -1388,6 +1469,19 @@ export class AudioEngine {
       const relTick = Math.min(secondsToTicks(cycleElapsedSec, bpm, division), totalTicks);
       const currentTick = gridStartTick + relTick;
       const progress = Math.max(0, Math.min(1, relTick / totalTicks));
+
+      const now = this.ctx.currentTime;
+      if (this.activeVoices.length > 0) {
+        const remaining: ActiveVoiceHandle[] = [];
+        for (const v of this.activeVoices) {
+          if (v.endTime <= now) {
+            v.cleanup();
+          } else {
+            remaining.push(v);
+          }
+        }
+        this.activeVoices = remaining;
+      }
 
       const currentBar = Math.floor(relTick / ticksPerBar) + 1;
       const tickInBar = relTick % ticksPerBar;
