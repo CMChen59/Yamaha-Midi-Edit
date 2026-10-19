@@ -1097,9 +1097,10 @@
               <span id="style-sampler-playback-time-badge" class="badge" style="background: #0f172a; color: #38bdf8; border: 1px solid #1e293b; font-size: 0.75rem; padding: 3px 10px; font-family: monospace;">⏱ 00:00 / 00:00 (停止)</span>
             </div>
 
-            <!-- 切片樂句循環試聽按鈕 -->
-            <div style="display: flex; align-items: center; gap: 6px;">
-              <button type="button" id="btn-style-audition-all" class="toggle-btn" style="padding: 4px 12px; font-size: 0.78rem; font-weight: 700; background: #0284c7; color: #fff; border: 1px solid #38bdf8;" title="僅循環試聽所選的小節區間 (套用 C 根音校正)">🎧 循環試聽採集樂句</button>
+            <!-- 切片樂句雙循環試聽按鈕群組 -->
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <button type="button" id="btn-style-audition-full-slice" class="toggle-btn" style="padding: 4px 12px; font-size: 0.78rem; font-weight: 700; background: #0284c7; color: #fff; border: 1px solid #38bdf8;" title="以原曲全部音軌 (含主旋律與所有幾十軌樂器) 循環試聽所選小節區間，樂器一件不少">🎧 區間全樂器循環</button>
+              <button type="button" id="btn-style-audition-all" class="toggle-btn" style="padding: 4px 12px; font-size: 0.78rem; font-weight: 700; background: #4f46e5; color: #fff; border: 1px solid #818cf8;" title="循環試聽即將寫入 STY 伴奏檔的 8 伴奏聲部 (純伴奏，無主旋律，已套用 C 根音校正)">🎹 STY 伴奏預覽</button>
             </div>
           </div>
 
