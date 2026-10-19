@@ -2627,6 +2627,7 @@ function updateAuditionAllButtonText() {
 
 let isStyleFullMidiPlaying: boolean = false;
 let currentFullMidiPlaybackBar: number = 1;
+let lastTaggedEndBar: number = 0;
 let sectionStampToastTimeout: any = null;
 
 function showSectionStampToast(msg: string) {
@@ -2823,6 +2824,7 @@ function stopFullMidi(resetPlayhead: boolean = false) {
   const timeBadge = document.getElementById('style-sampler-playback-time-badge');
   if (resetPlayhead) {
     currentFullMidiPlaybackBar = 1;
+    lastTaggedEndBar = 0;
     if (playhead) playhead.style.display = 'none';
     if (timeBadge) timeBadge.textContent = '⏱ 00:00 / 00:00 (停止)';
   } else {
@@ -2902,6 +2904,7 @@ function applySectionRange(startBar: number, endBar: number, targetSectionName?:
   const endBarInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
   if (startBarInput) startBarInput.value = `${s}`;
   if (endBarInput) endBarInput.value = `${e}`;
+  lastTaggedEndBar = e;
 
   if (targetSectionName) {
     const targetSectionSel = document.getElementById('style-import-inject-target-section') as HTMLSelectElement | null;
@@ -2985,6 +2988,7 @@ function openStyleImportModal(bytes: Uint8Array, fileName: string) {
 
   try {
     currentStyleAnalysis = StyleImporter.analyzeForStyle(bytes, fileName);
+    lastTaggedEndBar = 0;
   } catch (err: any) {
     alert(`分析外部 MIDI 伴奏結構失敗: ${err.message}`);
     return;
@@ -3651,7 +3655,7 @@ function initStyleImportModal() {
     btn.addEventListener('click', (e) => {
       const target = e.currentTarget as HTMLElement;
       const sec = target.getAttribute('data-section') || 'Main A';
-      const bars = parseInt(target.getAttribute('data-bars') || '4', 10);
+      const defaultBars = parseInt(target.getAttribute('data-bars') || '4', 10);
       const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
       const curStart = parseInt(startBarInput?.value || '1', 10);
       const tot = currentStyleAnalysis?.totalMeasures || 16;
@@ -3660,22 +3664,51 @@ function initStyleImportModal() {
         : curStart;
 
       let effectiveStart = playBar;
-      let effectiveEnd = Math.min(tot, playBar + bars - 1);
+      let effectiveEnd = Math.min(tot, playBar + defaultBars - 1);
+      let stampTypeDescription = '';
 
-      // 智慧前奏判定：前奏必定由第 1 小節開始。
-      // 若使用者在播放或暫停於第 2 小節以上時點擊【前奏 (Intro)】，代表使用者剛聽完前奏，自動將「第 1 小節 ~ 當前小節」設為前奏！
-      if (sec.startsWith('Intro') && playBar > 1) {
+      // 智慧段落判定：
+      if (sec.startsWith('Intro')) {
+        // 1. 前奏必定由第 1 小節開始
         effectiveStart = 1;
-        effectiveEnd = playBar;
-      } else if (sec.startsWith('Ending') && playBar > 1) {
-        // 尾奏判定：若在後段點擊尾奏，自動延伸至歌曲結束
-        effectiveStart = playBar;
+        effectiveEnd = playBar > 1 ? playBar : Math.min(tot, defaultBars);
+        stampTypeDescription = `前奏 (從第 1 節至當前第 ${effectiveEnd} 節)`;
+      } else if (sec.startsWith('Ending') && (playBar > 1 || lastTaggedEndBar > 0)) {
+        // 2. 尾奏判定：若前方已有標記過段落，自上一段結尾接續並延伸至歌曲結尾
+        if (lastTaggedEndBar > 0 && playBar > lastTaggedEndBar && playBar <= lastTaggedEndBar + 32) {
+          effectiveStart = lastTaggedEndBar + 1;
+        } else {
+          effectiveStart = playBar;
+        }
         effectiveEnd = tot;
+        stampTypeDescription = `尾奏 (從第 ${effectiveStart} 節至全曲結尾第 ${tot} 節)`;
+      } else if (lastTaggedEndBar > 0 && playBar > lastTaggedEndBar && playBar <= lastTaggedEndBar + 32) {
+        // 3. 連續接續聽音抓段模式 (Chained Section Mode)：
+        // 使用者心智模型：聽完一段音樂到達結尾交界處時按鈕標記
+        // 例如使用者在第 8 節按了 Intro A (記錄 lastTaggedEndBar = 8)，
+        // 接著播放到第 16 節主歌唱完時按下 Main A：
+        // 系統自動判定上一段在第 8 節結束，當前在第 16 節，立即標記為【第 9 ～ 16 小節】！
+        if (playBar === lastTaggedEndBar + 1 && defaultBars > 1) {
+          // 使用者是在段落開頭第一拍按下，往後推算預設長度
+          effectiveStart = playBar;
+          effectiveEnd = Math.min(tot, playBar + defaultBars - 1);
+          stampTypeDescription = `接續起點 (第 ${effectiveStart} ~ ${effectiveEnd} 節)`;
+        } else {
+          // 使用者在段落結束處按下（聽完打卡）
+          effectiveStart = lastTaggedEndBar + 1;
+          effectiveEnd = playBar;
+          stampTypeDescription = `接續打卡 (接續上一段第 ${lastTaggedEndBar} 節後，第 ${effectiveStart} ~ ${effectiveEnd} 節)`;
+        }
+      } else {
+        // 4. 獨立模式：以當前播放頭位置為起點，往後算預設小節數
+        effectiveStart = playBar;
+        effectiveEnd = Math.min(tot, playBar + defaultBars - 1);
+        stampTypeDescription = `獨立選取 (第 ${effectiveStart} ~ ${effectiveEnd} 節)`;
       }
 
       applySectionRange(effectiveStart, effectiveEnd, sec);
 
-      showSectionStampToast(`🏷️ 已標記第 ${effectiveStart} ~ ${effectiveEnd} 節 (共 ${effectiveEnd - effectiveStart + 1} 節) 為 [${sec}]！注入目標已同步切換，點擊下方【📥 注入當前伴奏段落】即可寫入！`);
+      showSectionStampToast(`🏷️ [${sec}] ${stampTypeDescription}，共 ${effectiveEnd - effectiveStart + 1} 小節！已同步設定注入目標。`);
     });
   });
 
@@ -3692,6 +3725,7 @@ function initStyleImportModal() {
 
     if (startBarInput) startBarInput.value = `${playBar}`;
     if (endBarInput) endBarInput.value = `${curEnd}`;
+    lastTaggedEndBar = playBar - 1;
     updateSamplerHighlightBar();
     showSectionStampToast(`📍 已將【第 ${playBar} 小節】設為採集起點！`);
   });
@@ -3708,6 +3742,7 @@ function initStyleImportModal() {
 
     if (startBarInput) startBarInput.value = `${curStart}`;
     if (endBarInput) endBarInput.value = `${playBar}`;
+    lastTaggedEndBar = playBar;
     updateSamplerHighlightBar();
     showSectionStampToast(`📍 已將【第 ${playBar} 小節】設為採集終點 (當前區間: 第 ${curStart} ~ ${playBar} 節，共 ${playBar - curStart + 1} 節)！`);
   });
