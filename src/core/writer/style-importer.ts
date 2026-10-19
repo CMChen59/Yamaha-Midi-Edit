@@ -71,10 +71,22 @@ export const ROOT_TO_C_SHIFT: Record<string, number> = {
   'B': 1,
 };
 
+export interface SectionScoutResult {
+  firstDrumBar: number | null;
+  introRange: { start: number; end: number; bars: number };
+  mainRange: { start: number; end: number; bars: number };
+  chorusRange: { start: number; end: number; bars: number };
+  endingRange: { start: number; end: number; bars: number };
+  drumEntryDescription: string;
+  chorusDescription: string;
+  summary: string;
+}
+
 export interface StyleSourceAnalysis extends MidiSourceAnalysis {
   styleTracks: StyleTrackAnalysis[];
   autoMapping: Partial<Record<StylePartId, number>>;
   detectedKey?: KeyDetectionResult;
+  scoutResult?: SectionScoutResult;
 }
 
 export interface StylePartMappingItem {
@@ -156,12 +168,15 @@ export class StyleImporter {
     // 執行全曲調性偵測 (Krumhansl-Schmuckler Key-Finding Algorithm)
     const detectedKey = StyleImporter.detectKeySignature(baseAnalysis.tracks, baseAnalysis.division);
 
-    return {
+    const result: StyleSourceAnalysis = {
       ...baseAnalysis,
       styleTracks,
       autoMapping,
       detectedKey,
     };
+
+    result.scoutResult = StyleImporter.detectSongStructureScout(result);
+    return result;
   }
 
   /**
@@ -885,6 +900,153 @@ export class StyleImporter {
       id: poolId || `pool-sample-${Date.now()}`,
       name: `${options.projectName || 'Sampled Groove'}.sty`,
       parsed: style,
+    };
+  }
+
+  /**
+   * 整合包 2: 智慧段落嗅探 (Section Scout)
+   * 自動偵測鼓組進場小節、能量密度高潮區間與結尾，推測 Intro, Main A, Chorus (Main B) 及 Ending
+   */
+  public static detectSongStructureScout(analysis: StyleSourceAnalysis): SectionScoutResult {
+    const totalMeasures = Math.max(1, analysis.totalMeasures || 1);
+    const division = analysis.division || 480;
+    const timeSig = analysis.timeSignature || { numerator: 4, denominator: 4 };
+    const ticksPerMeasure = Math.max(1, Math.round(division * timeSig.numerator * (4 / timeSig.denominator)));
+
+    // 1. 偵測打擊樂軌道 (Channel 10 / drums 或 category=drums/percussion)
+    const drumNotes: { startTick: number; note: number; velocity: number }[] = [];
+    if (analysis.tracks) {
+      for (const track of analysis.tracks) {
+        const styleTrack = analysis.styleTracks?.find((st) => st.trackIndex === track.trackIndex);
+        const isDrum = track.channel === 9 || styleTrack?.detectedCategory === 'drums' || styleTrack?.detectedCategory === 'percussion';
+        if (isDrum && track.notes) {
+          for (const n of track.notes) {
+            drumNotes.push(n);
+          }
+        }
+      }
+    }
+
+    drumNotes.sort((a, b) => a.startTick - b.startTick);
+    const firstDrumTick = drumNotes.length > 0 ? drumNotes[0].startTick : null;
+    const firstDrumBar = firstDrumTick !== null ? Math.min(totalMeasures, Math.floor(firstDrumTick / ticksPerMeasure) + 1) : null;
+
+    // 2. 推測 Intro (前奏) 與 Main A (主歌)
+    let introRange: { start: number; end: number; bars: number };
+    let mainRange: { start: number; end: number; bars: number };
+    let drumEntryDescription = '';
+
+    if (firstDrumBar !== null && firstDrumBar > 1) {
+      // 典型流行歌結構：前奏無鼓或輕擊，第 firstDrumBar 小節敲下大鼓/小鼓進主歌
+      const introEnd = firstDrumBar - 1;
+      introRange = {
+        start: 1,
+        end: introEnd,
+        bars: introEnd,
+      };
+      const mainStart = firstDrumBar;
+      const mainEnd = Math.min(totalMeasures, mainStart + 7);
+      mainRange = {
+        start: mainStart,
+        end: mainEnd,
+        bars: mainEnd - mainStart + 1,
+      };
+      drumEntryDescription = `鼓組於第 ${firstDrumBar} 小節進場，前奏推測為第 1 ~ ${introEnd} 小節 (${introEnd} 小節)，主歌 Main A 自第 ${mainStart} 小節展開`;
+    } else if (firstDrumBar === 1) {
+      // 開頭即有鼓組
+      const introBars = totalMeasures >= 16 ? 8 : (totalMeasures >= 8 ? 4 : Math.min(4, totalMeasures));
+      introRange = {
+        start: 1,
+        end: introBars,
+        bars: introBars,
+      };
+      const mainStart = Math.min(totalMeasures, introBars + 1);
+      const mainEnd = Math.min(totalMeasures, mainStart + 7);
+      mainRange = {
+        start: mainStart,
+        end: mainEnd,
+        bars: mainEnd - mainStart + 1,
+      };
+      drumEntryDescription = `開頭即有鼓組節奏，標準前奏推測為第 1 ~ ${introBars} 小節，主歌推測為第 ${mainStart} ~ ${mainEnd} 小節`;
+    } else {
+      // 無打擊樂軌道
+      const introBars = Math.min(4, totalMeasures);
+      introRange = {
+        start: 1,
+        end: introBars,
+        bars: introBars,
+      };
+      const mainStart = Math.min(totalMeasures, introBars + 1);
+      const mainEnd = Math.min(totalMeasures, mainStart + 7);
+      mainRange = {
+        start: mainStart,
+        end: mainEnd,
+        bars: mainEnd - mainStart + 1,
+      };
+      drumEntryDescription = `未偵測到鼓組軌道，採用流行曲式推薦：前奏第 1 ~ ${introBars} 小節，主歌第 ${mainStart} ~ ${mainEnd} 小節`;
+    }
+
+    // 3. 計算各小節音符能量密度 (Note Energy Density) 尋找副歌高潮 (Chorus)
+    const barEnergy = new Array(totalMeasures + 1).fill(0);
+    if (analysis.tracks) {
+      for (const track of analysis.tracks) {
+        if (!track.notes) continue;
+        for (const n of track.notes) {
+          const bar = Math.floor(n.startTick / ticksPerMeasure) + 1;
+          if (bar >= 1 && bar <= totalMeasures) {
+            barEnergy[bar] += (n.velocity / 127);
+          }
+        }
+      }
+    }
+
+    // 副歌通常在 Main A 之後 (例如第 9 或 17 小節後)，計算 4 或 8 小節滑動窗口最高能量
+    const searchStartBar = Math.min(totalMeasures, Math.max(5, (firstDrumBar || 5) + 4));
+    const searchEndBar = Math.min(totalMeasures, Math.max(searchStartBar, Math.floor(totalMeasures * 0.85)));
+
+    let bestChorusStart = searchStartBar;
+    let maxEnergy = -1;
+    const windowSize = 4;
+
+    for (let b = searchStartBar; b <= searchEndBar - windowSize + 1; b++) {
+      let winSum = 0;
+      for (let k = 0; k < windowSize; k++) {
+        winSum += barEnergy[b + k];
+      }
+      if (winSum > maxEnergy) {
+        maxEnergy = winSum;
+        bestChorusStart = b;
+      }
+    }
+
+    const chorusLen = Math.min(8, totalMeasures - bestChorusStart + 1);
+    const chorusRange = {
+      start: bestChorusStart,
+      end: Math.min(totalMeasures, bestChorusStart + chorusLen - 1),
+      bars: chorusLen,
+    };
+    const chorusDescription = `全曲音符能量高潮位於第 ${chorusRange.start} ~ ${chorusRange.end} 小節附近，推薦作為副歌 (Main B 或 Main C)`;
+
+    // 4. 尾奏 (Ending)
+    const endingBars = Math.min(4, totalMeasures);
+    const endingStart = Math.max(1, totalMeasures - endingBars + 1);
+    const endingRange = {
+      start: endingStart,
+      end: totalMeasures,
+      bars: totalMeasures - endingStart + 1,
+    };
+
+    const summary = `${drumEntryDescription}；副歌高潮位於第 ${chorusRange.start}~${chorusRange.end} 節`;
+
+    return {
+      firstDrumBar,
+      introRange,
+      mainRange,
+      chorusRange,
+      endingRange,
+      drumEntryDescription,
+      chorusDescription,
+      summary,
     };
   }
 }

@@ -144,4 +144,112 @@ describe('整合包 2: 外部 MIDI 樂句採集器與 C 根音校正 (MIDI Secti
     expect(musicalSections.length).toBe(1);
     expect(musicalSections[0].name).toBe('Main A');
   });
+
+  it('5. 智慧段落嗅探 (Section Scout)：能精準偵測鼓組進場小節並正確推測前奏 (Intro) 與主歌 (Main A)', () => {
+    const analysis = StyleImporter.analyzeForStyle(demoBytes, 'demo_groove.mid');
+    const scout = StyleImporter.detectSongStructureScout(analysis);
+
+    expect(scout).toBeDefined();
+    expect(scout.introRange).toBeDefined();
+    expect(scout.introRange.start).toBe(1);
+    expect(scout.introRange.bars).toBeGreaterThanOrEqual(1);
+
+    expect(scout.mainRange).toBeDefined();
+    expect(scout.mainRange.start).toBe(scout.introRange.end + 1);
+
+    expect(scout.drumEntryDescription).toBeDefined();
+    expect(scout.drumEntryDescription.length).toBeGreaterThan(0);
+    expect(scout.summary).toBeDefined();
+  });
+
+  it('6. 智慧段落嗅探 (Section Scout)：當鼓組延遲至第 5 小節進場時，正確判定 Intro 為 1~4 節、Main A 為 5~12 節', () => {
+    const division = 480;
+    const ticksPerMeasure = division * 4; // 1920 ticks/bar
+
+    // 構建一個模擬 83 小節歌曲，鼓組在第 5 小節 (tick 4 * 1920 = 7680) 進場
+    const mockAnalysis: any = {
+      fileName: 'hotel_sorrow.mid',
+      division: 480,
+      bpm: 88,
+      timeSignature: { numerator: 4, denominator: 4 },
+      totalMeasures: 83,
+      totalTicks: 83 * ticksPerMeasure,
+      tracks: [
+        {
+          trackIndex: 0,
+          trackName: 'Drums',
+          channel: 9,
+          noteCount: 100,
+          totalTicks: 83 * ticksPerMeasure,
+          notes: [
+            // 第一顆大鼓在第 5 小節 (tick 7680)
+            { note: 36, velocity: 110, startTick: 7680, durationTick: 240 },
+            { note: 38, velocity: 105, startTick: 8160, durationTick: 240 },
+          ],
+        },
+        {
+          trackIndex: 1,
+          trackName: 'Intro Accordion',
+          channel: 0,
+          noteCount: 20,
+          totalTicks: 83 * ticksPerMeasure,
+          notes: [
+            // 前奏手風琴第 1~4 小節
+            { note: 60, velocity: 80, startTick: 0, durationTick: 960 },
+            { note: 64, velocity: 80, startTick: 960, durationTick: 960 },
+          ],
+        },
+      ],
+      styleTracks: [
+        { trackIndex: 0, detectedCategory: 'drums' },
+        { trackIndex: 1, detectedCategory: 'reed' },
+      ],
+    };
+
+    const scout = StyleImporter.detectSongStructureScout(mockAnalysis);
+    expect(scout.firstDrumBar).toBe(5);
+    expect(scout.introRange.start).toBe(1);
+    expect(scout.introRange.end).toBe(4);
+    expect(scout.introRange.bars).toBe(4);
+
+    expect(scout.mainRange.start).toBe(5);
+    expect(scout.mainRange.end).toBe(12);
+    expect(scout.mainRange.bars).toBe(8);
+
+    expect(scout.drumEntryDescription).toContain('第 5 小節進場');
+    expect(scout.drumEntryDescription).toContain('前奏推測為第 1 ~ 4 小節');
+  });
+
+  it('7. 邊界與無打擊樂容錯：純鋼琴獨奏無鼓軌時，安全回退標準 4 小節前奏與 8 小節主歌', () => {
+    const mockPianoAnalysis: any = {
+      fileName: 'piano_solo.mid',
+      division: 480,
+      bpm: 100,
+      timeSignature: { numerator: 4, denominator: 4 },
+      totalMeasures: 32,
+      totalTicks: 32 * 1920,
+      tracks: [
+        {
+          trackIndex: 0,
+          trackName: 'Piano',
+          channel: 0,
+          noteCount: 50,
+          totalTicks: 32 * 1920,
+          notes: [
+            { note: 60, velocity: 80, startTick: 0, durationTick: 480 },
+          ],
+        },
+      ],
+      styleTracks: [{ trackIndex: 0, detectedCategory: 'piano' }],
+    };
+
+    const scout = StyleImporter.detectSongStructureScout(mockPianoAnalysis);
+    expect(scout.firstDrumBar).toBeNull();
+    expect(scout.introRange.start).toBe(1);
+    expect(scout.introRange.end).toBe(4);
+    expect(scout.mainRange.start).toBe(5);
+    expect(scout.mainRange.end).toBe(12);
+    expect(scout.endingRange.end).toBe(32);
+    expect(scout.summary.length).toBeGreaterThan(0);
+  });
 });

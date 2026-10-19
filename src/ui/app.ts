@@ -11,6 +11,7 @@ import {
   StyleImporter,
   type StyleSourceAnalysis,
   type StylePartMappingItem,
+  type SectionScoutResult,
   ROOT_TO_C_SHIFT,
 } from '../core/writer/style-importer';
 import { YamahaStyleSynthesizer } from '../core/writer/style-synthesizer';
@@ -2583,6 +2584,17 @@ function updateSamplerHighlightBar() {
     const widthPct = Math.max(2, (bars / totalMeasures) * 100);
     highlightBar.style.left = `${leftPct}%`;
     highlightBar.style.width = `${widthPct}%`;
+
+    const highlightText = document.getElementById('style-sampler-highlight-text');
+    if (highlightText) {
+      if (widthPct < 8) {
+        highlightText.textContent = `🎯 ${sBar}~${eBar}m`;
+      } else if (widthPct < 15) {
+        highlightText.textContent = `🎯 採集 ${sBar}~${eBar} 節`;
+      } else {
+        highlightText.textContent = `🎯 當前採集樂句 (${sBar}~${eBar} 節)`;
+      }
+    }
   }
 
   updateCNormUI();
@@ -2609,6 +2621,220 @@ function updateAuditionAllButtonText() {
   btnAll.style.borderColor = '#38bdf8';
   btnAll.innerHTML = `🎧 循環試聽採集樂句 (${sBar}~${eBar} 節)`;
   btnAll.title = `點擊循環試聽採集樂句 (第 ${sBar} ~ ${eBar} 小節) 之多軌伴奏合奏 (非打擊樂聲部已套用 C 根音校正)`;
+}
+
+// --- 整合包 2: 整曲 MIDI 試聽與智慧段落嗅探 (Full MIDI Player & Section Scout) ---
+
+let isStyleFullMidiPlaying: boolean = false;
+
+function playFullMidi(startFromBar: number = 1) {
+  if (!currentStyleAnalysis) return;
+
+  // 1. 若當前正在進行切片樂句試聽或單軌試聽，先停止
+  if (isStyleEnsemblePlaying) {
+    audioEngine.stopBackingTrack();
+    isStyleEnsemblePlaying = false;
+    updateAuditionAllButtonText();
+  }
+  if (currentStyleAuditionTrackIndex !== null) {
+    audioEngine.stop();
+    currentStyleAuditionTrackIndex = null;
+    renderStyleSourceTracksList();
+    renderStylePartMappingsGrid();
+  }
+
+  const validTracks = currentStyleAnalysis.tracks.filter((t) => t.notes && t.notes.length > 0);
+  if (validTracks.length === 0) {
+    alert('此 MIDI 檔案無有效音符軌道！');
+    return;
+  }
+
+  const division = currentStyleAnalysis.division || 480;
+  const timeSig = currentStyleAnalysis.timeSignature || { numerator: 4, denominator: 4 };
+  const ticksPerMeasure = Math.max(1, Math.round(division * timeSig.numerator * (4 / timeSig.denominator)));
+  const totalMeasures = Math.max(1, currentStyleAnalysis.totalMeasures);
+  const totalTicks = currentStyleAnalysis.totalTicks || (totalMeasures * ticksPerMeasure);
+  const startBar = Math.max(1, Math.min(totalMeasures, startFromBar));
+  const startOffsetTick = (startBar - 1) * ticksPerMeasure;
+
+  // 封裝所有音軌為 BackingTrackItem (整曲試聽維持原汁原味原曲音高，不移調至 C)
+  const backingTracks: BackingTrackItem[] = validTracks.map((t, idx) => {
+    const styleTrack = currentStyleAnalysis?.styleTracks.find((st) => st.trackIndex === t.trackIndex);
+    const cat = styleTrack?.detectedCategory || 'other';
+    const isDrum = cat === 'drums' || cat === 'percussion' || t.channel === 9;
+
+    let instrumentId = 'grand-piano';
+    if (cat === 'bass') instrumentId = 'bass';
+    else if (cat === 'guitar') instrumentId = 'guitar';
+    else if (cat === 'strings' || cat === 'pad') instrumentId = 'strings';
+    else if (cat === 'brass') instrumentId = 'brass';
+    else if (cat === 'reed') instrumentId = 'flute';
+
+    return {
+      padNum: idx + 1,
+      notes: t.notes,
+      totalTicks: totalTicks,
+      channelParams: {
+        msb: isDrum ? 127 : (t.bankMsb ?? 0),
+        lsb: isDrum ? 0 : (t.bankLsb ?? 0),
+        pc: t.programChange ?? 0,
+        channel: t.channel !== undefined ? t.channel : (idx % 16),
+        isDrum,
+        instrumentId,
+      },
+    };
+  });
+
+  isStyleFullMidiPlaying = true;
+  updateFullMidiPlayButtons(true);
+
+  const playhead = document.getElementById('style-sampler-playhead');
+  const timeBadge = document.getElementById('style-sampler-playback-time-badge');
+  const totalSec = ticksToSeconds(totalTicks, currentStyleAnalysis.bpm, division);
+
+  if (playhead) {
+    playhead.style.display = 'block';
+    const initialPct = (startOffsetTick / totalTicks) * 100;
+    playhead.style.left = `${initialPct}%`;
+  }
+
+  audioEngine.startBackingTrack(backingTracks, {
+    bpm: currentStyleAnalysis.bpm,
+    division: currentStyleAnalysis.division,
+    beatsPerBar: timeSig.numerator,
+    loop: false,
+    volumeRatio: 0.85,
+    startOffsetTick: startOffsetTick,
+    onProgress: (state: PlaybackState) => {
+      if (!isStyleFullMidiPlaying) return;
+      const curTick = state.currentTick;
+      const curSec = ticksToSeconds(curTick, currentStyleAnalysis!.bpm, division);
+      const curBar = Math.min(totalMeasures, Math.floor(curTick / ticksPerMeasure) + 1);
+      const curPct = Math.max(0, Math.min(100, (curTick / totalTicks) * 100));
+
+      if (playhead) {
+        playhead.style.display = 'block';
+        playhead.style.left = `${curPct}%`;
+      }
+      if (timeBadge) {
+        const m1 = Math.floor(curSec / 60);
+        const s1 = Math.floor(curSec % 60);
+        const m2 = Math.floor(totalSec / 60);
+        const s2 = Math.floor(totalSec % 60);
+        const fmtCur = `${m1.toString().padStart(2, '0')}:${s1.toString().padStart(2, '0')}`;
+        const fmtTot = `${m2.toString().padStart(2, '0')}:${s2.toString().padStart(2, '0')}`;
+        timeBadge.textContent = `⏱ ${fmtCur} / ${fmtTot} (第 ${curBar} / ${totalMeasures} 節)`;
+      }
+    },
+    onEnded: () => {
+      stopFullMidi(false);
+    },
+  });
+}
+
+function stopFullMidi(resetPlayhead: boolean = false) {
+  if (isStyleFullMidiPlaying) {
+    audioEngine.stopBackingTrack();
+    isStyleFullMidiPlaying = false;
+  }
+  updateFullMidiPlayButtons(false);
+  const playhead = document.getElementById('style-sampler-playhead');
+  const timeBadge = document.getElementById('style-sampler-playback-time-badge');
+  if (resetPlayhead) {
+    if (playhead) playhead.style.display = 'none';
+    if (timeBadge) timeBadge.textContent = '⏱ 00:00 / 00:00 (停止)';
+  } else {
+    if (timeBadge && currentStyleAnalysis) {
+      const curText = timeBadge.textContent || '';
+      if (!curText.includes('(已暫停)') && !curText.includes('(停止)')) {
+        timeBadge.textContent = curText.replace(/\([^)]*\)/, '(已暫停)');
+      }
+    }
+  }
+}
+
+function updateFullMidiPlayButtons(isPlaying: boolean) {
+  const btnPlay = document.getElementById('btn-style-play-full-midi');
+  const btnStop = document.getElementById('btn-style-stop-full-midi');
+  if (btnPlay) {
+    if (isPlaying) {
+      btnPlay.innerHTML = '⏸ 暫停整曲播放';
+      btnPlay.style.background = '#dc2626';
+      btnPlay.style.borderColor = '#ef4444';
+    } else {
+      btnPlay.innerHTML = '▶ 播放整曲 MIDI';
+      btnPlay.style.background = '#059669';
+      btnPlay.style.borderColor = '#10b981';
+    }
+  }
+  if (btnStop) {
+    if (isPlaying) {
+      btnStop.style.opacity = '1';
+      btnStop.style.borderColor = '#71717a';
+    } else {
+      btnStop.style.opacity = '0.7';
+    }
+  }
+}
+
+function renderSectionScoutUI() {
+  if (!currentStyleAnalysis) return;
+  const scout: SectionScoutResult =
+    currentStyleAnalysis.scoutResult || StyleImporter.detectSongStructureScout(currentStyleAnalysis);
+
+  const summaryEl = document.getElementById('style-sampler-scout-summary');
+  if (summaryEl) {
+    summaryEl.textContent = scout.summary;
+  }
+
+  const btnIntro = document.getElementById('btn-scout-apply-intro');
+  const btnMain = document.getElementById('btn-scout-apply-main');
+  const btnChorus = document.getElementById('btn-scout-apply-chorus');
+  const btnEnding = document.getElementById('btn-scout-apply-ending');
+
+  if (btnIntro) {
+    btnIntro.textContent = `🎵 前奏 (${scout.introRange.start}~${scout.introRange.end}m)`;
+    btnIntro.title = `一鍵採集推測前奏 (第 ${scout.introRange.start} ~ ${scout.introRange.end} 小節) 並將目標設為 Intro A`;
+  }
+  if (btnMain) {
+    btnMain.textContent = `🎹 主歌 (${scout.mainRange.start}~${scout.mainRange.end}m)`;
+    btnMain.title = `一鍵採集推測主歌 (第 ${scout.mainRange.start} ~ ${scout.mainRange.end} 小節) 並將目標設為 Main A`;
+  }
+  if (btnChorus) {
+    btnChorus.textContent = `🔥 副歌 (${scout.chorusRange.start}~${scout.chorusRange.end}m)`;
+    btnChorus.title = `一鍵採集推測副歌 (第 ${scout.chorusRange.start} ~ ${scout.chorusRange.end} 小節) 並將目標設為 Main B`;
+  }
+  if (btnEnding) {
+    btnEnding.textContent = `🛑 尾奏 (${scout.endingRange.start}~${scout.endingRange.end}m)`;
+    btnEnding.title = `一鍵採集推測尾奏 (第 ${scout.endingRange.start} ~ ${scout.endingRange.end} 小節) 並將目標設為 Ending A`;
+  }
+}
+
+function applySectionRange(startBar: number, endBar: number, targetSectionName?: string) {
+  if (!currentStyleAnalysis) return;
+  const totalMeasures = Math.max(1, currentStyleAnalysis.totalMeasures);
+  const s = Math.max(1, Math.min(totalMeasures, startBar));
+  const e = Math.max(s, Math.min(totalMeasures, endBar));
+
+  const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
+  const endBarInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
+  if (startBarInput) startBarInput.value = `${s}`;
+  if (endBarInput) endBarInput.value = `${e}`;
+
+  if (targetSectionName) {
+    const targetSectionSel = document.getElementById('style-import-inject-target-section') as HTMLSelectElement | null;
+    if (targetSectionSel) {
+      // 檢查是否包含該選項，若有則直接選定
+      for (let i = 0; i < targetSectionSel.options.length; i++) {
+        if (targetSectionSel.options[i].value === targetSectionName) {
+          targetSectionSel.selectedIndex = i;
+          break;
+        }
+      }
+    }
+  }
+
+  updateSamplerHighlightBar();
 }
 
 function updateCNormUI() {
@@ -2701,17 +2927,21 @@ function openStyleImportModal(bytes: Uint8Array, fileName: string) {
   if (bpmInput) {
     bpmInput.value = `${currentStyleAnalysis.bpm}`;
   }
-  if (startBarInput) {
-    startBarInput.value = '1';
-  }
-  if (endBarInput) {
-    endBarInput.value = `${Math.min(4, Math.max(1, currentStyleAnalysis.totalMeasures))}`;
+  // 3. 智慧段落分析 (Section Scout) 與預設選取
+  renderSectionScoutUI();
+  const scout = currentStyleAnalysis.scoutResult;
+  if (scout && scout.introRange) {
+    if (startBarInput) startBarInput.value = `${scout.introRange.start}`;
+    if (endBarInput) endBarInput.value = `${scout.introRange.end}`;
+  } else {
+    if (startBarInput) startBarInput.value = '1';
+    if (endBarInput) endBarInput.value = `${Math.min(4, Math.max(1, currentStyleAnalysis.totalMeasures))}`;
   }
 
-  // 3. 套用 8 聲部初始推薦映射
+  // 3.1 套用 8 聲部初始推薦映射
   resetStyleMappingsToSmartRecommendation();
 
-  // 3.1 載入目標段落清單 (若是工作區開啟了 STY 專案)
+  // 3.2 載入目標段落清單 (若是工作區開啟了 STY 專案)
   const injectContainer = document.getElementById('style-import-inject-container');
   const injectSectionSelect = document.getElementById('style-import-inject-target-section') as HTMLSelectElement | null;
   const btnInjectCurrent = document.getElementById('btn-style-import-inject-current') as HTMLButtonElement | null;
@@ -2734,6 +2964,14 @@ function openStyleImportModal(bytes: Uint8Array, fileName: string) {
           <option value="Ending A">Ending A</option>
         `;
       }
+      if (scout && scout.introRange) {
+        for (let i = 0; i < injectSectionSelect.options.length; i++) {
+          if (injectSectionSelect.options[i].value === 'Intro A') {
+            injectSectionSelect.selectedIndex = i;
+            break;
+          }
+        }
+      }
     }
   } else {
     if (injectContainer) injectContainer.style.display = 'none';
@@ -2743,8 +2981,9 @@ function openStyleImportModal(bytes: Uint8Array, fileName: string) {
     }
   }
 
-  // 3.2 初始化採集小節高亮條、調性偵測與試聽文字
+  // 3.3 初始化採集小節高亮條、調性偵測與試聽文字
   updateSamplerHighlightBar();
+  stopFullMidi(true);
 
   // 4. 渲染左側來源音軌特徵與右側 8 聲部映射網格
   renderStyleSourceTracksList();
@@ -2761,6 +3000,7 @@ function closeStyleImportModal() {
   const modal = document.getElementById('style-import-modal');
   if (modal) modal.style.display = 'none';
 
+  stopFullMidi(true);
   audioEngine.stopBackingTrack();
   audioEngine.stop();
   currentStyleAuditionTrackIndex = null;
@@ -2866,6 +3106,11 @@ function toggleStyleTrackAudition(trackIndex: number) {
   const track = currentStyleAnalysis.tracks.find((t) => t.trackIndex === trackIndex);
   if (!track || track.noteCount === 0) return;
 
+  // 停止整曲試聽
+  if (isStyleFullMidiPlaying) {
+    stopFullMidi(false);
+  }
+
   // 停止合奏試聽
   if (isStyleEnsemblePlaying) {
     audioEngine.stopBackingTrack();
@@ -2965,6 +3210,11 @@ function toggleStyleEnsembleAudition() {
     isStyleEnsemblePlaying = false;
     updateAuditionAllButtonText();
     return;
+  }
+
+  // 停止整曲試聽
+  if (isStyleFullMidiPlaying) {
+    stopFullMidi(false);
   }
 
   // 停止單軌試聽
@@ -3247,20 +3497,82 @@ function initStyleImportModal() {
     });
   });
 
-  const btnChorus = document.getElementById('btn-quick-sample-chorus');
-  btnChorus?.addEventListener('click', () => {
-    document.querySelectorAll('.btn-quick-sample-bars').forEach((b) => b.classList.remove('active-rp'));
-    const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
-    const endBarInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
-    const tot = currentStyleAnalysis?.totalMeasures || 16;
-    const s = Math.min(tot, 9);
-    const e = Math.min(tot, 16);
-    if (startBarInput) startBarInput.value = `${s}`;
-    if (endBarInput) endBarInput.value = `${e}`;
-    updateSamplerHighlightBar();
+  // 展開/收合段落定義教學手冊
+  const btnGuideToggle = document.getElementById('btn-style-section-guide-toggle');
+  btnGuideToggle?.addEventListener('click', () => {
+    const guideBox = document.getElementById('style-sampler-guide-box');
+    if (!guideBox) return;
+    const isHidden = guideBox.style.display === 'none';
+    guideBox.style.display = isHidden ? 'block' : 'none';
+    btnGuideToggle.classList.toggle('active-rp', isHidden);
   });
 
-  // 時間軸長條點擊即時移動採集區間
+  // 整曲 MIDI 播放器控制項
+  const btnPlayFullMidi = document.getElementById('btn-style-play-full-midi');
+  btnPlayFullMidi?.addEventListener('click', () => {
+    if (isStyleFullMidiPlaying) {
+      stopFullMidi(false);
+    } else {
+      playFullMidi(1);
+    }
+  });
+
+  const btnPlayFromSel = document.getElementById('btn-style-play-from-selection');
+  btnPlayFromSel?.addEventListener('click', () => {
+    const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
+    const sBar = Math.max(1, parseInt(startBarInput?.value || '1', 10));
+    playFullMidi(sBar);
+  });
+
+  const btnStopFullMidi = document.getElementById('btn-style-stop-full-midi');
+  btnStopFullMidi?.addEventListener('click', () => {
+    stopFullMidi(true);
+  });
+
+  // 智慧段落推測 (Section Scout) 一鍵套用
+  const btnScoutIntro = document.getElementById('btn-scout-apply-intro');
+  btnScoutIntro?.addEventListener('click', () => {
+    if (!currentStyleAnalysis) return;
+    const scout = currentStyleAnalysis.scoutResult || StyleImporter.detectSongStructureScout(currentStyleAnalysis);
+    applySectionRange(scout.introRange.start, scout.introRange.end, 'Intro A');
+  });
+
+  const btnScoutMain = document.getElementById('btn-scout-apply-main');
+  btnScoutMain?.addEventListener('click', () => {
+    if (!currentStyleAnalysis) return;
+    const scout = currentStyleAnalysis.scoutResult || StyleImporter.detectSongStructureScout(currentStyleAnalysis);
+    applySectionRange(scout.mainRange.start, scout.mainRange.end, 'Main A');
+  });
+
+  const btnScoutChorus = document.getElementById('btn-scout-apply-chorus');
+  btnScoutChorus?.addEventListener('click', () => {
+    if (!currentStyleAnalysis) return;
+    const scout = currentStyleAnalysis.scoutResult || StyleImporter.detectSongStructureScout(currentStyleAnalysis);
+    applySectionRange(scout.chorusRange.start, scout.chorusRange.end, 'Main B');
+  });
+
+  const btnScoutEnding = document.getElementById('btn-scout-apply-ending');
+  btnScoutEnding?.addEventListener('click', () => {
+    if (!currentStyleAnalysis) return;
+    const scout = currentStyleAnalysis.scoutResult || StyleImporter.detectSongStructureScout(currentStyleAnalysis);
+    applySectionRange(scout.endingRange.start, scout.endingRange.end, 'Ending A');
+  });
+
+  // 聽音快速標記按鈕 (Section Stamps)
+  document.querySelectorAll('.btn-stamp-section').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      const target = e.currentTarget as HTMLElement;
+      const sec = target.getAttribute('data-section') || 'Main A';
+      const bars = parseInt(target.getAttribute('data-bars') || '4', 10);
+      const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
+      const curStart = parseInt(startBarInput?.value || '1', 10);
+      const tot = currentStyleAnalysis?.totalMeasures || 16;
+      const newEnd = Math.min(tot, curStart + bars - 1);
+      applySectionRange(curStart, newEnd, sec);
+    });
+  });
+
+  // 時間軸長條點擊：非播放時移動採集區間；整曲播放時直接 Seek 跳轉！
   const timelineTrack = document.getElementById('style-sampler-timeline-track');
   timelineTrack?.addEventListener('click', (e) => {
     if (!currentStyleAnalysis) return;
@@ -3269,6 +3581,12 @@ function initStyleImportModal() {
     const pct = Math.max(0, Math.min(1, clickX / rect.width));
     const totalMeasures = Math.max(1, currentStyleAnalysis.totalMeasures);
     const clickedBar = Math.min(totalMeasures, Math.floor(pct * totalMeasures) + 1);
+
+    if (isStyleFullMidiPlaying) {
+      // 整曲正在播放中：立即 Seek 跳轉至該小節接續播放
+      playFullMidi(clickedBar);
+      return;
+    }
 
     const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
     const endBarInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
