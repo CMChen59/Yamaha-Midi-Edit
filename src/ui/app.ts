@@ -12,6 +12,7 @@ import {
   type StyleSourceAnalysis,
   type StylePartMappingItem,
   type SectionScoutResult,
+  type StyleSectionSliceConfig,
   ROOT_TO_C_SHIFT,
 } from '../core/writer/style-importer';
 import { YamahaStyleSynthesizer } from '../core/writer/style-synthesizer';
@@ -2645,6 +2646,80 @@ let isStyleFullMidiPlaying: boolean = false;
 let currentFullMidiPlaybackBar: number = 1;
 let lastTaggedEndBar: number = 0;
 let sectionStampToastTimeout: any = null;
+const capturedSectionsMap = new Map<string, { startBar: number; endBar: number }>();
+
+function renderCapturedSectionsBadgeList() {
+  const listEl = document.getElementById('style-captured-sections-list');
+  const countEl = document.getElementById('style-captured-sections-count');
+  const btnConfirm = document.getElementById('btn-confirm-style-import');
+  if (!listEl || !countEl) return;
+
+  countEl.textContent = `${capturedSectionsMap.size}`;
+
+  if (capturedSectionsMap.size === 0) {
+    listEl.innerHTML = `<span style="font-size: 0.7rem; color: #64748b; font-style: italic;">尚未收錄段落 (點擊上方段落按鈕即可自動加入收錄清單)</span>`;
+    if (btnConfirm) btnConfirm.innerHTML = '✨ 建立全新 Style 專案';
+    return;
+  }
+
+  if (btnConfirm) {
+    btnConfirm.innerHTML = `✨ 建立全新 Style 專案 (打包 ${capturedSectionsMap.size} 個段落)`;
+  }
+
+  listEl.innerHTML = '';
+  const badgeColors: Record<string, { bg: string; border: string; text: string }> = {
+    Intro: { bg: 'rgba(16, 185, 129, 0.15)', border: '#10b981', text: '#34d399' },
+    Main: { bg: 'rgba(56, 189, 248, 0.15)', border: '#0284c7', text: '#38bdf8' },
+    Fill: { bg: 'rgba(167, 139, 250, 0.15)', border: '#8b5cf6', text: '#a78bfa' },
+    Break: { bg: 'rgba(245, 158, 11, 0.15)', border: '#f59e0b', text: '#fbbf24' },
+    Ending: { bg: 'rgba(239, 68, 68, 0.15)', border: '#ef4444', text: '#f87171' },
+  };
+
+  for (const [secName, range] of capturedSectionsMap.entries()) {
+    let colorKey = 'Main';
+    if (secName.startsWith('Intro')) colorKey = 'Intro';
+    else if (secName.startsWith('Fill')) colorKey = 'Fill';
+    else if (secName.startsWith('Break')) colorKey = 'Break';
+    else if (secName.startsWith('Ending')) colorKey = 'Ending';
+
+    const c = badgeColors[colorKey] || badgeColors.Main;
+    const badge = document.createElement('div');
+    badge.style.display = 'inline-flex';
+    badge.style.alignItems = 'center';
+    badge.style.gap = '4px';
+    badge.style.background = c.bg;
+    badge.style.border = `1px solid ${c.border}`;
+    badge.style.borderRadius = '4px';
+    badge.style.padding = '2px 8px';
+    badge.style.fontSize = '0.72rem';
+    badge.style.color = c.text;
+    badge.style.cursor = 'pointer';
+    badge.title = `點擊切換預覽此段落 (第 ${range.startBar} ~ ${range.endBar} 節)`;
+
+    const barsCount = range.endBar - range.startBar + 1;
+    badge.innerHTML = `
+      <span style="font-weight: 700;">${secName}</span>
+      <span style="font-size: 0.68rem; opacity: 0.85;">(${range.startBar}~${range.endBar}節，共${barsCount}節)</span>
+      <span class="remove-captured-btn" style="margin-left: 3px; font-weight: 700; cursor: pointer; opacity: 0.7; font-size: 0.8rem;" title="移除此段落">&times;</span>
+    `;
+
+    // 點擊膠囊：跳回該段落區間預覽
+    badge.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).classList.contains('remove-captured-btn')) return;
+      applySectionRange(range.startBar, range.endBar, secName);
+    });
+
+    // 點擊移除按鈕
+    const removeBtn = badge.querySelector('.remove-captured-btn');
+    removeBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      capturedSectionsMap.delete(secName);
+      renderCapturedSectionsBadgeList();
+    });
+
+    listEl.appendChild(badge);
+  }
+}
 
 function showSectionStampToast(msg: string) {
   const el = document.getElementById('style-sampler-stamp-toast');
@@ -3014,6 +3089,8 @@ function openStyleImportModal(bytes: Uint8Array, fileName: string) {
   try {
     currentStyleAnalysis = StyleImporter.analyzeForStyle(bytes, fileName);
     lastTaggedEndBar = 0;
+    capturedSectionsMap.clear();
+    renderCapturedSectionsBadgeList();
   } catch (err: any) {
     alert(`分析外部 MIDI 伴奏結構失敗: ${err.message}`);
     return;
@@ -3876,7 +3953,9 @@ function initStyleImportModal() {
     if (!currentStyleAnalysis) return;
     const scout = currentStyleAnalysis.scoutResult || StyleImporter.detectSongStructureScout(currentStyleAnalysis);
     applySectionRange(scout.introRange.start, scout.introRange.end, 'Intro A');
-    showSectionStampToast(`💡 已套用 AI 推測前奏 (第 ${scout.introRange.start} ~ ${scout.introRange.end} 節)，目標已切換為 Intro A！`);
+    capturedSectionsMap.set('Intro A', { startBar: scout.introRange.start, endBar: scout.introRange.end });
+    renderCapturedSectionsBadgeList();
+    showSectionStampToast(`💡 已套用 AI 推測前奏 (第 ${scout.introRange.start} ~ ${scout.introRange.end} 節)，已加入收錄清單！`);
   });
 
   const btnScoutMain = document.getElementById('btn-scout-apply-main');
@@ -3884,7 +3963,9 @@ function initStyleImportModal() {
     if (!currentStyleAnalysis) return;
     const scout = currentStyleAnalysis.scoutResult || StyleImporter.detectSongStructureScout(currentStyleAnalysis);
     applySectionRange(scout.mainRange.start, scout.mainRange.end, 'Main A');
-    showSectionStampToast(`💡 已套用 AI 推測主歌 (第 ${scout.mainRange.start} ~ ${scout.mainRange.end} 節)，目標已切換為 Main A！`);
+    capturedSectionsMap.set('Main A', { startBar: scout.mainRange.start, endBar: scout.mainRange.end });
+    renderCapturedSectionsBadgeList();
+    showSectionStampToast(`💡 已套用 AI 推測主歌 (第 ${scout.mainRange.start} ~ ${scout.mainRange.end} 節)，已加入收錄清單！`);
   });
 
   const btnScoutChorus = document.getElementById('btn-scout-apply-chorus');
@@ -3892,7 +3973,9 @@ function initStyleImportModal() {
     if (!currentStyleAnalysis) return;
     const scout = currentStyleAnalysis.scoutResult || StyleImporter.detectSongStructureScout(currentStyleAnalysis);
     applySectionRange(scout.chorusRange.start, scout.chorusRange.end, 'Main B');
-    showSectionStampToast(`💡 已套用 AI 推測副歌 (第 ${scout.chorusRange.start} ~ ${scout.chorusRange.end} 節)，目標已切換為 Main B！`);
+    capturedSectionsMap.set('Main B', { startBar: scout.chorusRange.start, endBar: scout.chorusRange.end });
+    renderCapturedSectionsBadgeList();
+    showSectionStampToast(`💡 已套用 AI 推測副歌 (第 ${scout.chorusRange.start} ~ ${scout.chorusRange.end} 節)，已加入收錄清單！`);
   });
 
   const btnScoutEnding = document.getElementById('btn-scout-apply-ending');
@@ -3900,7 +3983,9 @@ function initStyleImportModal() {
     if (!currentStyleAnalysis) return;
     const scout = currentStyleAnalysis.scoutResult || StyleImporter.detectSongStructureScout(currentStyleAnalysis);
     applySectionRange(scout.endingRange.start, scout.endingRange.end, 'Ending A');
-    showSectionStampToast(`💡 已套用 AI 推測尾奏 (第 ${scout.endingRange.start} ~ ${scout.endingRange.end} 節)，目標已切換為 Ending A！`);
+    capturedSectionsMap.set('Ending A', { startBar: scout.endingRange.start, endBar: scout.endingRange.end });
+    renderCapturedSectionsBadgeList();
+    showSectionStampToast(`💡 已套用 AI 推測尾奏 (第 ${scout.endingRange.start} ~ ${scout.endingRange.end} 節)，已加入收錄清單！`);
   });
 
   // 聽音快速標記按鈕 (Section Stamps)
@@ -3963,8 +4048,36 @@ function initStyleImportModal() {
 
       applySectionRange(effectiveStart, effectiveEnd, sec);
 
-      showSectionStampToast(`🏷️ [${sec}] ${stampTypeDescription}，共 ${effectiveEnd - effectiveStart + 1} 小節！已同步設定注入目標。`);
+      // 自動收錄至待建立段落清單 (Captured Sections Basket)
+      capturedSectionsMap.set(sec, { startBar: effectiveStart, endBar: effectiveEnd });
+      renderCapturedSectionsBadgeList();
+
+      showSectionStampToast(`🏷️ [${sec}] ${stampTypeDescription}，共 ${effectiveEnd - effectiveStart + 1} 小節！已加入收錄清單並同步設定注入目標。`);
     });
+  });
+
+  // 手動「＋ 收錄當前區間」按鈕
+  const btnAddCurrentToCaptured = document.getElementById('btn-add-current-selection-to-captured');
+  btnAddCurrentToCaptured?.addEventListener('click', () => {
+    if (!currentStyleAnalysis) return;
+    const sInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
+    const eInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
+    const sBar = Math.max(1, parseInt(sInput?.value || '1', 10));
+    const eBar = Math.max(sBar, parseInt(eInput?.value || '4', 10));
+    const targetSectionSel = document.getElementById('style-import-inject-target-section') as HTMLSelectElement | null;
+    const targetSec = targetSectionSel?.value || 'Main A';
+
+    capturedSectionsMap.set(targetSec, { startBar: sBar, endBar: eBar });
+    renderCapturedSectionsBadgeList();
+    showSectionStampToast(`📌 已將第 ${sBar} ~ ${eBar} 小節收錄為 [${targetSec}]！`);
+  });
+
+  // 「清空清單」按鈕
+  const btnClearCaptured = document.getElementById('btn-clear-captured-sections');
+  btnClearCaptured?.addEventListener('click', () => {
+    capturedSectionsMap.clear();
+    renderCapturedSectionsBadgeList();
+    showSectionStampToast('🗑️ 已清空待打包段落清單。');
   });
 
   // Mark In (設為起點) 與 Mark Out (設為終點) 快速打卡
@@ -4175,28 +4288,62 @@ function initStyleImportModal() {
     const normalizeToCRoot = cNormEnableInput ? cNormEnableInput.checked : true;
     const rootKeyOverride = keyOverrideSel && keyOverrideSel.value !== 'auto' ? keyOverrideSel.value : undefined;
 
+    const targetSectionSel = document.getElementById('style-import-inject-target-section') as HTMLSelectElement | null;
+    const targetSection = (targetSectionSel?.value || 'Main A') as StyleSectionType;
+
     showStatus(`正在將外部 MIDI 採集樂句合成為全新 Yamaha Style: ${projectName}...`);
 
     try {
-      const styleProject = StyleImporter.synthesizeStyleFromImport(currentStyleAnalysis, {
-        projectName,
-        bpm,
-        timeSignature: currentStyleAnalysis.timeSignature,
-        startBar,
-        endBar,
-        targetSection: 'Main A',
-        partMappings: currentStyleMappings,
-        normalizeToCRoot,
-        rootKeyOverride,
-      });
+      let styleProject: any;
+      let summaryText = '';
+
+      if (capturedSectionsMap.size > 0) {
+        // 多段落批量打包模式：依小節起點依序排列合成
+        const sections: StyleSectionSliceConfig[] = Array.from(capturedSectionsMap.entries())
+          .map(([sectionName, range]) => ({
+            sectionName: sectionName as StyleSectionType,
+            startBar: range.startBar,
+            endBar: range.endBar,
+          }))
+          .sort((a, b) => a.startBar - b.startBar);
+
+        styleProject = StyleImporter.synthesizeStyleFromImport(currentStyleAnalysis, {
+          projectName,
+          bpm,
+          timeSignature: currentStyleAnalysis.timeSignature,
+          sections,
+          partMappings: currentStyleMappings,
+          normalizeToCRoot,
+          rootKeyOverride,
+        });
+
+        summaryText = sections.map((s) => `${s.sectionName} (${s.startBar}~${s.endBar}節)`).join('、');
+      } else {
+        // 相容單段落模式：以當前選區與指定目標段落建立
+        styleProject = StyleImporter.synthesizeStyleFromImport(currentStyleAnalysis, {
+          projectName,
+          bpm,
+          timeSignature: currentStyleAnalysis.timeSignature,
+          startBar,
+          endBar,
+          targetSection,
+          partMappings: currentStyleMappings,
+          normalizeToCRoot,
+          rootKeyOverride,
+        });
+
+        summaryText = `${targetSection} (${startBar}~${endBar}節)`;
+      }
 
       closeStyleImportModal();
 
       const binaryBytes = YamahaStyleSynthesizer.serializeToStyleFile(styleProject);
       renderParsed(binaryBytes, `${projectName}.sty`, 'STY');
-      markModified(`從外部 MIDI [${currentStyleAnalysis.fileName}] 採集樂句 (${startBar}~${endBar} 小節) 成功合成 Yamaha SFF2 Style 伴奏專案`);
+      markModified(`從外部 MIDI [${currentStyleAnalysis.fileName}] 採集段落 [${summaryText}] 成功合成 Yamaha SFF2 Style 伴奏專案`);
 
-      showStatus(`✨ 成功將採集樂句合成為全新 Yamaha Style 伴奏專案: ${projectName}.sty！`);
+      showStatus(`✨ 成功將採集樂句打包合成為全新 Yamaha Style 伴奏專案: ${projectName}.sty！(包含: ${summaryText})`);
+      capturedSectionsMap.clear();
+      renderCapturedSectionsBadgeList();
     } catch (err: any) {
       alert(`合成 Yamaha Style 專案失敗: ${err.message}`);
       showStatus(`合成失敗: ${err.message}`, true);
