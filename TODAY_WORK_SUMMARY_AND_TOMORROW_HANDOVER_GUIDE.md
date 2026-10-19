@@ -6,9 +6,9 @@
 > - [`PROJECT_PROGRESS_CHECKPOINT.md`](file:///d:/Vibe%20Coding/MIDI/PROJECT_PROGRESS_CHECKPOINT.md)（總體進度檢查點）
 > - [`PENDING_EXECUTION_PLANS.md`](file:///d:/Vibe%20Coding/MIDI/PENDING_EXECUTION_PLANS.md)（4 大主題式整合執行包）
 > - [`PSR_SX920_LIVE_RECORDING_VERIFICATION_GUIDE.md`](file:///d:/Vibe%20Coding/MIDI/PSR_SX920_LIVE_RECORDING_VERIFICATION_GUIDE.md)（實機驗收指引手冊）  
-> **最新備份檔**：`d:\Vibe Coding\MIDI-20261019-pack1.zip` (整合包 1 完工全量備份)  
+> **最新備份檔**：`d:\Vibe Coding\MIDI-20261019-pack2.zip` (整合包 2 完工全量備份)  
 > **程式碼倉庫**：`https://github.com/CMChen59/Yamaha-Midi-Edit.git`（分支: `main`）  
-> **測試覆蓋**：28 個測試套件、160 / 160 項單元測試 100% 通過；TypeScript 編譯 0 錯誤；生產環境打包正常。
+> **測試覆蓋**：29 個測試套件、164 / 164 項單元測試 100% 通過；TypeScript 編譯 0 錯誤；生產環境打包正常。
 
 ---
 
@@ -59,10 +59,14 @@
 1. **【整合包 1】伴奏樣式庫抽屜與跨風格混血拼貼 (Multi-Style Pool & Cross-Style Remixing) — 🎉【✅ 100% 完工】**
    - 擴充樣式庫多檔拖曳暫存抽屜，跨檔案自由抽件組裝（如 A 風格鼓 + B 風格貝斯 + C 風格吉他），速度/拍號智慧對齊與跨風格拼裝預覽試聽。
    - ⚡ *新增單元測試，全專案 160 / 160 項測試 100% 通過。*
-2. **【整合包 2】外部 MIDI 樂句採集器與 C 根音校正 (MIDI Section Sampler & C-Root Normalizer) — 🎯【下一步待執行】**
-   - 載入外部 MIDI 歌曲，時間軸精準圈選 2~8 小節，關鍵「C 根音校正」演算法自動將原曲移調為 C 調基準，徹底解決 Yamaha 琴端左手換和弦走音打架問題。
-   - 🎯 *徹底打破外部 MIDI 走音宿命。*
-3. **【整合包 3】STY 伴奏聲部琴端即時跟彈錄音 (STY Live Metronome Overdub Recorder)**
+2. **【整合包 2】外部 MIDI 樂句採集器與 C 根音校正 (MIDI Section Sampler & C-Root Normalizer) — 🎉【✅ 100% 完工】**
+   - 取代全曲切片猜測，由製作人精準圈選 2~8 小節樂句。
+   - 專屬小節區間調性分析與 C 根音校正，**爵士鼓組強制鎖定固定音高絕對不轉調**，非打擊樂聲部平移至 C 根音。
+   - 循環試聽支援 C 根音移調即時發聲預覽。
+   - 提供三重出口：直接注入當前 STY 指定段落、加入伴奏庫抽屜、建立全新 Style 專案。
+   - STY 工作台段落結構面板新增直達按鈕，一鍵讀取外部 MIDI 檔案彈出採集器。
+   - ⚡ *新增單元測試 `tests/midi-section-sampler.test.ts`，全專案 164 / 164 項測試 100% 通過。*
+3. **【整合包 3】STY 伴奏聲部琴端即時跟彈錄音 (STY Live Metronome Overdub Recorder) — 🎯【下一步待執行】**
    - 將 Multi Pad 成熟的跟彈錄音、4 拍預備拍節拍器、1/16 與 1/8 智慧量化、多軌背景伴奏疊錄監聽完整移植至 STY 伴奏各聲部。
    - 🎹 *實時手彈原創演奏核心。*
 4. **【整合包 4】Yamaha 出廠規格封裝與高級轉調試聽 (CASM NTR/NTT + OTS 1~4 + 虛擬和弦測試條)**

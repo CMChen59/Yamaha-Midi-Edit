@@ -11,7 +11,6 @@ import {
   StyleImporter,
   type StyleSourceAnalysis,
   type StylePartMappingItem,
-  type StyleSectionSliceConfig,
   ROOT_TO_C_SHIFT,
 } from '../core/writer/style-importer';
 import { YamahaStyleSynthesizer } from '../core/writer/style-synthesizer';
@@ -2544,101 +2543,72 @@ const STYLE_PART_ORDER: { id: StylePartId; title: string; defaultCh: number; col
   { id: 'Phrase2', title: 'Phrase 2 (副裝飾旋律)', defaultCh: 16, color: '#14b8a6', icon: '🎵' },
 ];
 
-let currentSlicerMode: 'multi' | 'single' = 'multi';
-let currentStyleSlices: StyleSectionSliceConfig[] = [];
-let currentAuditionSliceIndex: number | null = null;
-let currentFocusedSliceIndex: number = 0;
 let isCNormEnabled: boolean = true;
 let selectedKeyOverride: string = 'auto';
+let currentCNormEffectiveShift: number = 0;
 
-function updateSlicerCardFocusUI() {
-  document.querySelectorAll('.slicer-section-card').forEach((card, idx) => {
-    if (idx === currentFocusedSliceIndex) {
-      card.classList.add('active');
-    } else {
-      card.classList.remove('active');
-    }
-  });
+function updateSamplerHighlightBar() {
+  if (!currentStyleAnalysis) return;
+  const totalMeasures = Math.max(1, currentStyleAnalysis.totalMeasures);
+  const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
+  const endBarInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
+  const lengthBadge = document.getElementById('style-sampler-length-badge');
+  const centerLabel = document.getElementById('style-sampler-timeline-center-label');
+  const totalBarsLabel = document.getElementById('style-sampler-timeline-total-bars');
+  const highlightBar = document.getElementById('style-sampler-highlight-bar');
+
+  let sBar = Math.max(1, Math.min(totalMeasures, parseInt(startBarInput?.value || '1', 10)));
+  let eBar = Math.max(sBar, Math.min(totalMeasures, parseInt(endBarInput?.value || '4', 10)));
+
+  if (startBarInput && parseInt(startBarInput.value, 10) !== sBar) startBarInput.value = `${sBar}`;
+  if (endBarInput && parseInt(endBarInput.value, 10) !== eBar) endBarInput.value = `${eBar}`;
+
+  const bars = eBar - sBar + 1;
+  const timeSig = currentStyleAnalysis.timeSignature || { numerator: 4, denominator: 4 };
+  const beatsPerMeasure = timeSig.numerator * (4 / timeSig.denominator);
+  const totalBeats = Math.round(bars * beatsPerMeasure);
+
+  if (lengthBadge) {
+    lengthBadge.textContent = `共 ${bars} 小節 (${totalBeats} 拍)`;
+  }
+  if (centerLabel) {
+    centerLabel.textContent = `採集區間: 第 ${sBar} ~ ${eBar} 小節 (長度 ${bars} 小節)`;
+  }
+  if (totalBarsLabel) {
+    totalBarsLabel.textContent = `共 ${totalMeasures} 小節`;
+  }
+
+  if (highlightBar) {
+    const leftPct = ((sBar - 1) / totalMeasures) * 100;
+    const widthPct = Math.max(2, (bars / totalMeasures) * 100);
+    highlightBar.style.left = `${leftPct}%`;
+    highlightBar.style.width = `${widthPct}%`;
+  }
+
+  updateCNormUI();
+  updateAuditionAllButtonText();
 }
 
 function updateAuditionAllButtonText() {
   const btnAll = document.getElementById('btn-style-audition-all');
   if (!btnAll) return;
 
+  const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
+  const endBarInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
+  const sBar = startBarInput?.value || '1';
+  const eBar = endBarInput?.value || '4';
+
   if (isStyleEnsemblePlaying) {
-    const targetSectionSelect = document.getElementById('style-import-target-section') as HTMLSelectElement | null;
-    const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
-    const endBarInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
-    const secName = targetSectionSelect?.value || 'Main A';
-    const sBar = startBarInput?.value || '1';
-    const eBar = endBarInput?.value || '4';
-    btnAll.innerHTML = `⏹ 停止 ${secName} (第 ${sBar}~${eBar} 節) 試聽`;
+    btnAll.innerHTML = `⏹ 停止第 ${sBar}~${eBar} 節試聽`;
     btnAll.style.background = '#dc2626';
     btnAll.style.borderColor = '#ef4444';
     return;
   }
 
-  if (currentAuditionSliceIndex !== null && currentStyleSlices[currentAuditionSliceIndex]) {
-    const slice = currentStyleSlices[currentAuditionSliceIndex];
-    btnAll.innerHTML = `⏹ 停止 ${slice.sectionName} (第 ${slice.startBar}~${slice.endBar} 節) 試聽`;
-    btnAll.style.background = '#dc2626';
-    btnAll.style.borderColor = '#ef4444';
-    return;
-  }
-
-  btnAll.style.background = '';
-  btnAll.style.borderColor = '';
-
-  if (currentSlicerMode === 'multi') {
-    const slice = currentStyleSlices[currentFocusedSliceIndex] || currentStyleSlices[0];
-    if (slice) {
-      btnAll.innerHTML = `🎧 試聽 ${slice.sectionName} (第 ${slice.startBar}~${slice.endBar} 節) 合奏`;
-      btnAll.title = `點擊循環試聽目前選定段落 [${slice.sectionName}] (第 ${slice.startBar} ~ ${slice.endBar} 小節) 之多軌伴奏合奏`;
-    } else {
-      btnAll.innerHTML = `🎧 試聽所選段落合奏`;
-      btnAll.title = `點擊試聽伴奏段落合奏`;
-    }
-  } else {
-    const targetSectionSelect = document.getElementById('style-import-target-section') as HTMLSelectElement | null;
-    const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
-    const endBarInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
-    const secName = targetSectionSelect?.value || 'Main A';
-    const sBar = startBarInput?.value || '1';
-    const eBar = endBarInput?.value || '4';
-    btnAll.innerHTML = `🎧 試聽 ${secName} (第 ${sBar}~${eBar} 節) 合奏`;
-    btnAll.title = `點擊循環試聽單一段落 [${secName}] (第 ${sBar} ~ ${eBar} 小節) 之多軌伴奏合奏`;
-  }
-}
-
-function initDefaultStyleSlices(totalMeasures: number): StyleSectionSliceConfig[] {
-  const tot = Math.max(4, totalMeasures);
-  if (tot <= 8) {
-    return [
-      { id: 'sec-1', sectionName: 'Intro A', startBar: 1, endBar: Math.min(2, tot) },
-      { id: 'sec-2', sectionName: 'Main A', startBar: Math.min(3, tot), endBar: Math.min(6, tot) },
-      { id: 'sec-3', sectionName: 'Fill In AA', startBar: Math.min(7, tot), endBar: Math.min(7, tot) },
-      { id: 'sec-4', sectionName: 'Ending A', startBar: Math.min(8, tot), endBar: tot },
-    ];
-  } else if (tot <= 24) {
-    const mainBars = Math.max(4, Math.floor((tot - 4) / 2));
-    return [
-      { id: 'sec-1', sectionName: 'Intro A', startBar: 1, endBar: 4 },
-      { id: 'sec-2', sectionName: 'Main A', startBar: 5, endBar: 4 + mainBars },
-      { id: 'sec-3', sectionName: 'Fill In AA', startBar: 5 + mainBars, endBar: 5 + mainBars },
-      { id: 'sec-4', sectionName: 'Main B', startBar: 6 + mainBars, endBar: Math.min(tot - 4, 5 + mainBars * 2) },
-      { id: 'sec-5', sectionName: 'Ending A', startBar: Math.max(6 + mainBars, tot - 3), endBar: tot },
-    ];
-  } else {
-    return [
-      { id: 'sec-1', sectionName: 'Intro A', startBar: 1, endBar: 4 },
-      { id: 'sec-2', sectionName: 'Main A', startBar: 5, endBar: 12 },
-      { id: 'sec-3', sectionName: 'Fill In AA', startBar: 13, endBar: 13 },
-      { id: 'sec-4', sectionName: 'Main B', startBar: 14, endBar: 21 },
-      { id: 'sec-5', sectionName: 'Fill In BB', startBar: 22, endBar: 22 },
-      { id: 'sec-6', sectionName: 'Main C', startBar: 23, endBar: 30 },
-      { id: 'sec-7', sectionName: 'Ending A', startBar: 31, endBar: 34 },
-    ];
-  }
+  btnAll.style.background = '#0284c7';
+  btnAll.style.borderColor = '#38bdf8';
+  btnAll.innerHTML = `🎧 循環試聽採集樂句 (${sBar}~${eBar} 節)`;
+  btnAll.title = `點擊循環試聽採集樂句 (第 ${sBar} ~ ${eBar} 小節) 之多軌伴奏合奏 (非打擊樂聲部已套用 C 根音校正)`;
 }
 
 function updateCNormUI() {
@@ -2649,11 +2619,28 @@ function updateCNormUI() {
 
   if (!currentStyleAnalysis) return;
 
-  const detected = currentStyleAnalysis.detectedKey || StyleImporter.detectKeySignature(currentStyleAnalysis.tracks, currentStyleAnalysis.division);
+  const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
+  const endBarInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
+  const sBar = Math.max(1, parseInt(startBarInput?.value || '1', 10));
+  const eBar = Math.max(sBar, parseInt(endBarInput?.value || '4', 10));
+
+  const division = currentStyleAnalysis.division || 480;
+  const timeSig = currentStyleAnalysis.timeSignature || { numerator: 4, denominator: 4 };
+  const ticksPerMeasure = Math.round(division * timeSig.numerator * (4 / timeSig.denominator));
+  const startTick = (sBar - 1) * ticksPerMeasure;
+  const endTick = eBar * ticksPerMeasure;
+
+  // 針對選定採樣小節區間偵測調性
+  const detected = StyleImporter.detectKeySignature(
+    currentStyleAnalysis.tracks,
+    division,
+    startTick,
+    endTick
+  );
 
   if (keyText) {
     const shiftSign = detected.semitonesToC > 0 ? '+' : '';
-    keyText.textContent = `✨ 偵測調性: ${detected.key} (移調 ${shiftSign}${detected.semitonesToC} 半音至 C 基準)`;
+    keyText.textContent = `✨ 採樣小節調性: ${detected.key} (移調 ${shiftSign}${detected.semitonesToC} 半音至 C 基準)`;
   }
 
   isCNormEnabled = checkbox ? checkbox.checked : true;
@@ -2667,331 +2654,18 @@ function updateCNormUI() {
       effectiveShift = ROOT_TO_C_SHIFT[selectedKeyOverride] ?? 0;
     }
   }
+  currentCNormEffectiveShift = effectiveShift;
 
   if (badge) {
     const shiftSign = effectiveShift > 0 ? '+' : '';
     badge.textContent = isCNormEnabled
-      ? `移調: ${shiftSign}${effectiveShift} 半音`
+      ? `🔄 移調: ${shiftSign}${effectiveShift} 半音`
       : '未啟用 (保留原曲音高)';
     badge.style.background = isCNormEnabled ? '#0284c7' : '#64748b';
   }
 }
 
-function renderStyleSlicerUI() {
-  const track = document.getElementById('style-slicer-timeline-track');
-  const cardsContainer = document.getElementById('style-slicer-cards-container');
-  const summaryBadge = document.getElementById('style-slicer-summary-badge');
-  const totalBarsLabel = document.getElementById('style-slicer-timeline-total-bars');
-  if (!currentStyleAnalysis) return;
 
-  const totalMeasures = Math.max(1, currentStyleAnalysis.totalMeasures);
-  if (totalBarsLabel) totalBarsLabel.textContent = `共 ${totalMeasures} 小節`;
-  if (summaryBadge) summaryBadge.textContent = `${currentStyleSlices.length} 個切片段落`;
-
-  // 1. 渲染時間軸彩色區塊
-  if (track) {
-    track.innerHTML = '';
-    currentStyleSlices.forEach((slice, idx) => {
-      const bars = Math.max(1, slice.endBar - slice.startBar + 1);
-      const widthPct = Math.max(3, (bars / totalMeasures) * 100);
-      const leftPct = ((slice.startBar - 1) / totalMeasures) * 100;
-
-      const block = document.createElement('div');
-      const lower = slice.sectionName.toLowerCase();
-      let colorClass = 'slicer-main';
-      if (lower.includes('intro')) colorClass = 'slicer-intro';
-      else if (lower.includes('fill')) colorClass = 'slicer-fill';
-      else if (lower.includes('ending')) colorClass = 'slicer-ending';
-      else if (lower.includes('break')) colorClass = 'slicer-break';
-
-      block.className = `slicer-timeline-block ${colorClass}`;
-      block.style.width = `${widthPct}%`;
-      block.style.marginLeft = idx === 0 ? `${leftPct}%` : '0';
-      block.title = `${slice.sectionName}: 小節 ${slice.startBar} ~ ${slice.endBar} (${bars} 小節)`;
-      block.textContent = `${slice.sectionName} (${bars}m)`;
-
-      block.addEventListener('click', () => {
-        currentFocusedSliceIndex = idx;
-        const card = document.getElementById(`slicer-card-${idx}`);
-        if (card && cardsContainer) {
-          card.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
-          document.querySelectorAll('.slicer-section-card').forEach(c => c.classList.remove('active'));
-          card.classList.add('active');
-        }
-        updateAuditionAllButtonText();
-      });
-
-      track.appendChild(block);
-    });
-  }
-
-  // 2. 渲染下方切片卡片列表
-  if (cardsContainer) {
-    cardsContainer.innerHTML = '';
-    const sectionTypes: StyleSectionType[] = [
-      'Intro A', 'Intro B', 'Intro C',
-      'Main A', 'Main B', 'Main C', 'Main D',
-      'Fill In AA', 'Fill In BB', 'Fill In CC', 'Fill In DD', 'Fill In BA',
-      'Ending A', 'Ending B', 'Ending C',
-      'Break'
-    ];
-
-    currentStyleSlices.forEach((slice, idx) => {
-      const card = document.createElement('div');
-      card.id = `slicer-card-${idx}`;
-      const isFocused = currentFocusedSliceIndex === idx;
-      card.className = `slicer-section-card ${isFocused ? 'active' : ''}`;
-
-      const bars = Math.max(1, slice.endBar - slice.startBar + 1);
-      const isAuditioning = currentAuditionSliceIndex === idx;
-
-      // 計算該段落切片中的鼓組音符數與總音符數
-      const division = currentStyleAnalysis?.division || 480;
-      const timeSig = currentStyleAnalysis?.timeSignature || { numerator: 4, denominator: 4 };
-      const ticksPerMeasure = Math.round(division * timeSig.numerator * (4 / timeSig.denominator));
-      const sliceStartTick = (slice.startBar - 1) * ticksPerMeasure;
-      const sliceEndTick = slice.endBar * ticksPerMeasure;
-
-      let sliceDrumNotesCount = 0;
-      let hasDrumTrackAssigned = false;
-      currentStyleMappings.forEach((m) => {
-        if (m.partId === 'Rhythm1' || m.partId === 'Rhythm2') {
-          if (m.sourceTrackIndex !== null && m.sourceTrackIndex !== undefined) {
-            hasDrumTrackAssigned = true;
-            const trk = currentStyleAnalysis?.tracks.find((t) => t.trackIndex === m.sourceTrackIndex);
-            if (trk) {
-              for (const n of trk.notes) {
-                if (n.startTick >= sliceStartTick && n.startTick < sliceEndTick) {
-                  sliceDrumNotesCount++;
-                }
-              }
-            }
-          }
-        }
-      });
-
-      let drumBadgeHtml = '';
-      if (hasDrumTrackAssigned) {
-        if (sliceDrumNotesCount > 0) {
-          drumBadgeHtml = `<span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); font-size: 0.68rem; padding: 1px 5px;" title="此小節區間內包含 ${sliceDrumNotesCount} 顆鼓組/打擊音符">🥁 ${sliceDrumNotesCount} 鼓音符</span>`;
-        } else {
-          drumBadgeHtml = `<span class="badge" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); font-size: 0.68rem; padding: 1px 5px;" title="注意：原曲在此小節區間內無鼓組音符 (原曲鼓組可能在後續小節進場)">⚠️ 無鼓聲 (原曲無鼓)</span>`;
-        }
-      }
-
-      const typeOptions = sectionTypes.map(st =>
-        `<option value="${st}" ${st === slice.sectionName ? 'selected' : ''}>${st}</option>`
-      ).join('');
-
-      card.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: center; gap: 6px;">
-          <select class="slicer-sec-name-select" data-idx="${idx}" style="background: #11131a; border: 1px solid #3d4660; border-radius: 4px; color: #38bdf8; font-weight: 700; font-size: 0.8rem; padding: 2px 6px;">
-            ${typeOptions}
-          </select>
-          <button type="button" class="btn-slicer-del" data-idx="${idx}" style="background: transparent; border: none; color: #ef4444; cursor: pointer; font-size: 0.85rem; padding: 0 4px;" title="刪除此段落切片">&times;</button>
-        </div>
-        <div style="display: flex; align-items: center; gap: 4px; font-size: 0.76rem; color: #cbd5e1; flex-wrap: wrap;">
-          <span>小節:</span>
-          <input type="number" class="slicer-start-bar" data-idx="${idx}" min="1" max="${totalMeasures}" value="${slice.startBar}" style="width: 44px; background: #11131a; border: 1px solid #333846; border-radius: 3px; color: #fff; padding: 2px 4px; font-size: 0.76rem; text-align: center;" />
-          <span style="color: #64748b;">~</span>
-          <input type="number" class="slicer-end-bar" data-idx="${idx}" min="1" max="${totalMeasures}" value="${slice.endBar}" style="width: 44px; background: #11131a; border: 1px solid #333846; border-radius: 3px; color: #fff; padding: 2px 4px; font-size: 0.76rem; text-align: center;" />
-          <span class="badge" style="background: #1e293b; color: #94a3b8; font-size: 0.7rem; padding: 1px 6px;">${bars}m</span>
-          ${drumBadgeHtml}
-        </div>
-        <div style="display: flex; justify-content: flex-end; margin-top: 2px;">
-          <button type="button" class="btn-audition btn-slicer-audition ${isAuditioning ? 'playing' : ''}" data-idx="${idx}" style="padding: 2px 8px; font-size: 0.72rem;">
-            ${isAuditioning ? '⏹ 停止' : '▶ 試聽段落'}
-          </button>
-        </div>
-      `;
-
-      // 點擊卡片本體聚焦此段落
-      card.addEventListener('click', (e) => {
-        const tag = (e.target as HTMLElement).tagName;
-        if (tag !== 'BUTTON' && tag !== 'INPUT' && tag !== 'SELECT') {
-          currentFocusedSliceIndex = idx;
-          updateSlicerCardFocusUI();
-          updateAuditionAllButtonText();
-        }
-      });
-
-      // 監聽段落名稱變更
-      const nameSelect = card.querySelector('.slicer-sec-name-select') as HTMLSelectElement | null;
-      nameSelect?.addEventListener('change', () => {
-        slice.sectionName = nameSelect.value;
-        currentFocusedSliceIndex = idx;
-        renderStyleSlicerUI();
-      });
-
-      // 監聽小節變更 (input 即時連動頂部按鈕，change 觸發整塊重繪)
-      const startInput = card.querySelector('.slicer-start-bar') as HTMLInputElement | null;
-      const endInput = card.querySelector('.slicer-end-bar') as HTMLInputElement | null;
-      startInput?.addEventListener('input', () => {
-        const val = Math.max(1, Math.min(totalMeasures, parseInt(startInput.value || '1', 10)));
-        slice.startBar = val;
-        if (slice.endBar < val) slice.endBar = val;
-        currentFocusedSliceIndex = idx;
-        updateSlicerCardFocusUI();
-        updateAuditionAllButtonText();
-      });
-      startInput?.addEventListener('change', () => {
-        renderStyleSlicerUI();
-      });
-
-      endInput?.addEventListener('input', () => {
-        const val = Math.max(slice.startBar, Math.min(totalMeasures, parseInt(endInput.value || '1', 10)));
-        slice.endBar = val;
-        currentFocusedSliceIndex = idx;
-        updateSlicerCardFocusUI();
-        updateAuditionAllButtonText();
-      });
-      endInput?.addEventListener('change', () => {
-        renderStyleSlicerUI();
-      });
-
-      // 監聽刪除
-      const btnDel = card.querySelector('.btn-slicer-del') as HTMLButtonElement | null;
-      btnDel?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (currentStyleSlices.length <= 1) {
-          alert('請至少保留一個伴奏段落！');
-          return;
-        }
-        currentStyleSlices.splice(idx, 1);
-        if (currentFocusedSliceIndex >= currentStyleSlices.length) {
-          currentFocusedSliceIndex = Math.max(0, currentStyleSlices.length - 1);
-        }
-        renderStyleSlicerUI();
-      });
-
-      // 監聽段落試聽
-      const btnAudition = card.querySelector('.btn-slicer-audition') as HTMLButtonElement | null;
-      btnAudition?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleStyleSliceAudition(idx);
-      });
-
-      cardsContainer.appendChild(card);
-    });
-  }
-
-  updateAuditionAllButtonText();
-}
-
-function toggleStyleSliceAudition(sliceIdx: number) {
-  if (!currentStyleAnalysis) return;
-
-  currentFocusedSliceIndex = sliceIdx;
-
-  if (currentAuditionSliceIndex === sliceIdx && (audioEngine.isPlaying() || audioEngine.isBackingTrackPlaying())) {
-    audioEngine.stopBackingTrack();
-    audioEngine.stop();
-    currentAuditionSliceIndex = null;
-    renderStyleSlicerUI();
-    updateAuditionAllButtonText();
-    showStatus('已停止段落試聽');
-    return;
-  }
-
-  audioEngine.stopBackingTrack();
-  audioEngine.stop();
-  currentStyleAuditionTrackIndex = null;
-  isStyleEnsemblePlaying = false;
-
-  const slice = currentStyleSlices[sliceIdx];
-  if (!slice) return;
-
-  const activeMappings = currentStyleMappings.filter((m) => m.sourceTrackIndex !== null);
-  if (activeMappings.length === 0) {
-    showStatus('請至少指派一個伴奏聲部以供試聽', true);
-    return;
-  }
-
-  const division = currentStyleAnalysis.division || 480;
-  const timeSig = currentStyleAnalysis.timeSignature || { numerator: 4, denominator: 4 };
-  const ticksPerBeat = division;
-  const beatsPerMeasure = timeSig.numerator * (4 / timeSig.denominator);
-  const ticksPerMeasure = Math.round(ticksPerBeat * beatsPerMeasure);
-
-  const startBar = Math.max(1, slice.startBar);
-  const endBar = Math.max(startBar, slice.endBar);
-  const startTick = (startBar - 1) * ticksPerMeasure;
-  const endTick = endBar * ticksPerMeasure;
-  const totalTicks = (endBar - startBar + 1) * ticksPerMeasure;
-
-  const backingItems: BackingTrackItem[] = [];
-
-  for (const mapping of activeMappings) {
-    const track = currentStyleAnalysis.tracks.find((t) => t.trackIndex === mapping.sourceTrackIndex);
-    if (!track || track.notes.length === 0) continue;
-
-    const sliceNotes: NoteEvent[] = [];
-    for (const n of track.notes) {
-      if (n.startTick >= startTick && n.startTick < endTick) {
-        sliceNotes.push({
-          note: n.note,
-          velocity: n.velocity,
-          startTick: n.startTick - startTick,
-          durationTick: n.durationTick,
-        });
-      }
-    }
-
-    if (sliceNotes.length > 0) {
-      const isDrum = mapping.partId === 'Rhythm1' || mapping.partId === 'Rhythm2';
-      backingItems.push({
-        padNum: DEFAULT_STYLE_PARTS[mapping.partId].channel,
-        notes: sliceNotes,
-        totalTicks,
-        channelParams: {
-          instrumentId: isDrum ? 'standard-drum-kit' : 'grand-piano',
-          channel: DEFAULT_STYLE_PARTS[mapping.partId].channel,
-          isDrum,
-          msb: isDrum ? 127 : 0,
-          lsb: 0,
-          pc: track.programChange ?? 0,
-          volume: isDrum ? 110 : 95,
-        },
-      });
-    }
-  }
-
-  if (backingItems.length === 0) {
-    showStatus(`段落 [${slice.sectionName}] 在小節 ${startBar}~${endBar} 區間內無音符可供試聽`, false);
-    return;
-  }
-
-  currentAuditionSliceIndex = sliceIdx;
-  renderStyleSlicerUI();
-  updateAuditionAllButtonText();
-
-  const bpmInput = document.getElementById('style-import-bpm') as HTMLInputElement | null;
-  const bpm = Math.max(30, Math.min(300, parseInt(bpmInput?.value || '120', 10)));
-
-  audioEngine.startBackingTrack(backingItems, {
-    bpm,
-    division,
-    beatsPerBar: timeSig.numerator,
-    volumeRatio: 1.0,
-    loop: true,
-    onEnded: () => {
-      currentAuditionSliceIndex = null;
-      renderStyleSlicerUI();
-      updateAuditionAllButtonText();
-    },
-  });
-
-  const hasDrumInAudition = backingItems.some((b) => b.channelParams?.isDrum);
-  const drumNoteCountInAudition = backingItems
-    .filter((b) => b.channelParams?.isDrum)
-    .reduce((sum, b) => sum + b.notes.length, 0);
-
-  const drumNoteTip = hasDrumInAudition
-    ? `(含 ${drumNoteCountInAudition} 顆鼓組音符)`
-    : `(⚠️ 提示：此段落小節區間內原曲無鼓聲)`;
-
-  showStatus(`▶ 正在試聽切片段落: [${slice.sectionName}] (小節 ${startBar}~${endBar}) ${drumNoteTip}...`);
-}
 
 function openStyleImportModal(bytes: Uint8Array, fileName: string) {
   pendingMidiBytes = bytes;
@@ -3022,7 +2696,7 @@ function openStyleImportModal(bytes: Uint8Array, fileName: string) {
 
   if (projNameInput) {
     const baseName = fileName.replace(/\.[^/.]+$/, '');
-    projNameInput.value = `${baseName} Style`;
+    projNameInput.value = `${baseName} Groove`;
   }
   if (bpmInput) {
     bpmInput.value = `${currentStyleAnalysis.bpm}`;
@@ -3031,31 +2705,46 @@ function openStyleImportModal(bytes: Uint8Array, fileName: string) {
     startBarInput.value = '1';
   }
   if (endBarInput) {
-    endBarInput.value = `${Math.min(8, Math.max(4, currentStyleAnalysis.totalMeasures))}`;
+    endBarInput.value = `${Math.min(4, Math.max(1, currentStyleAnalysis.totalMeasures))}`;
   }
 
   // 3. 套用 8 聲部初始推薦映射
   resetStyleMappingsToSmartRecommendation();
 
-  // 3.1 初始化多段落切片與 C 調基準校正 (Phase 3.3)
-  currentStyleSlices = initDefaultStyleSlices(currentStyleAnalysis.totalMeasures);
-  currentSlicerMode = 'multi';
-  currentFocusedSliceIndex = 0;
-  currentAuditionSliceIndex = null;
-  renderStyleSlicerUI();
-  updateCNormUI();
+  // 3.1 載入目標段落清單 (若是工作區開啟了 STY 專案)
+  const injectContainer = document.getElementById('style-import-inject-container');
+  const injectSectionSelect = document.getElementById('style-import-inject-target-section') as HTMLSelectElement | null;
+  const btnInjectCurrent = document.getElementById('btn-style-import-inject-current') as HTMLButtonElement | null;
 
-  // 同步切換按鈕視覺
-  const btnMulti = document.getElementById('btn-slicer-mode-multi');
-  const btnSingle = document.getElementById('btn-slicer-mode-single');
-  const slicerPanel = document.getElementById('style-slicer-panel');
-  const singlePanel = document.getElementById('style-single-section-panel');
-  if (btnMulti && btnSingle && slicerPanel && singlePanel) {
-    btnMulti.classList.add('active-rp');
-    btnSingle.classList.remove('active-rp');
-    slicerPanel.style.display = 'flex';
-    singlePanel.style.display = 'none';
+  if (currentParsed && currentParsed.format === 'STY') {
+    if (injectContainer) injectContainer.style.display = 'flex';
+    if (btnInjectCurrent) {
+      btnInjectCurrent.style.display = 'inline-flex';
+      btnInjectCurrent.disabled = false;
+    }
+    if (injectSectionSelect) {
+      const musicalSecs = YamahaStyleSynthesizer.getMusicalSections(currentParsed);
+      if (musicalSecs.length > 0) {
+        injectSectionSelect.innerHTML = musicalSecs.map((s) => `<option value="${s.name}">${s.name}</option>`).join('');
+      } else {
+        injectSectionSelect.innerHTML = `
+          <option value="Main A">Main A</option>
+          <option value="Main B">Main B</option>
+          <option value="Fill In AA">Fill In AA</option>
+          <option value="Ending A">Ending A</option>
+        `;
+      }
+    }
+  } else {
+    if (injectContainer) injectContainer.style.display = 'none';
+    if (btnInjectCurrent) {
+      btnInjectCurrent.style.display = 'none';
+      btnInjectCurrent.disabled = true;
+    }
   }
+
+  // 3.2 初始化採集小節高亮條、調性偵測與試聽文字
+  updateSamplerHighlightBar();
 
   // 4. 渲染左側來源音軌特徵與右側 8 聲部映射網格
   renderStyleSourceTracksList();
@@ -3064,10 +2753,7 @@ function openStyleImportModal(bytes: Uint8Array, fileName: string) {
   // 5. 同步發聲路由與實體琴連線控制項
   refreshMidiControlsUI();
 
-  // 6. 同步頂部試聽按鈕文字
-  updateAuditionAllButtonText();
-
-  // 7. 顯示彈窗
+  // 6. 顯示彈窗
   modal.style.display = 'flex';
 }
 
@@ -3078,7 +2764,6 @@ function closeStyleImportModal() {
   audioEngine.stopBackingTrack();
   audioEngine.stop();
   currentStyleAuditionTrackIndex = null;
-  currentAuditionSliceIndex = null;
   isStyleEnsemblePlaying = false;
   updateAuditionAllButtonText();
 
@@ -3275,13 +2960,6 @@ function toggleStyleTrackAudition(trackIndex: number) {
 function toggleStyleEnsembleAudition() {
   if (!currentStyleAnalysis) return;
 
-  if (currentSlicerMode === 'multi') {
-    // 多段落模式下，點擊頂部按鈕直接觸發目前選定段落的試聽/停止
-    const targetIdx = currentFocusedSliceIndex < currentStyleSlices.length ? currentFocusedSliceIndex : 0;
-    toggleStyleSliceAudition(targetIdx);
-    return;
-  }
-
   if (isStyleEnsemblePlaying) {
     audioEngine.stopBackingTrack();
     isStyleEnsemblePlaying = false;
@@ -3302,11 +2980,12 @@ function toggleStyleEnsembleAudition() {
   const startBar = Math.max(1, parseInt(startBarInput?.value || '1', 10));
   const endBar = Math.max(startBar, parseInt(endBarInput?.value || '4', 10));
 
-  const division = currentStyleAnalysis.division;
-  const ticksPerBar = division * 4;
-  const sliceStartTick = (startBar - 1) * ticksPerBar;
-  const sliceEndTick = endBar * ticksPerBar;
-  const sliceTotalTicks = (endBar - startBar + 1) * ticksPerBar;
+  const division = currentStyleAnalysis.division || 480;
+  const timeSig = currentStyleAnalysis.timeSignature || { numerator: 4, denominator: 4 };
+  const ticksPerMeasure = Math.round(division * timeSig.numerator * (4 / timeSig.denominator));
+  const sliceStartTick = (startBar - 1) * ticksPerMeasure;
+  const sliceEndTick = endBar * ticksPerMeasure;
+  const sliceTotalTicks = (endBar - startBar + 1) * ticksPerMeasure;
 
   const backingTracks: BackingTrackItem[] = [];
 
@@ -3320,17 +2999,21 @@ function toggleStyleEnsembleAudition() {
     const sliceNotes = track.notes.filter((n) => n.startTick >= sliceStartTick && n.startTick < sliceEndTick);
     if (sliceNotes.length === 0) continue;
 
-    const shift = mapping.transposeShift || 0;
+    const styleTrack = currentStyleAnalysis.styleTracks.find((st) => st.trackIndex === mapping.sourceTrackIndex);
+    const cat = styleTrack?.detectedCategory || 'other';
+    const isDrum = mapping.partId === 'Rhythm1' || mapping.partId === 'Rhythm2' || cat === 'drums' || cat === 'percussion' || track.channel === 9;
+
+    // C 根音校正移調量：打擊樂絕對不移調，非打擊樂聲部疊加 currentCNormEffectiveShift
+    const cNormShift = (!isDrum && isCNormEnabled) ? currentCNormEffectiveShift : 0;
+    const manualShift = mapping.transposeShift || 0;
+    const totalShift = manualShift + cNormShift;
+
     const relNotes: NoteEvent[] = sliceNotes.map((n) => ({
-      note: Math.min(127, Math.max(0, n.note + shift)),
+      note: Math.min(127, Math.max(0, n.note + totalShift)),
       velocity: n.velocity,
       startTick: Math.max(0, n.startTick - sliceStartTick),
       durationTick: n.durationTick,
     }));
-
-    const styleTrack = currentStyleAnalysis.styleTracks.find((st) => st.trackIndex === mapping.sourceTrackIndex);
-    const cat = styleTrack?.detectedCategory || 'other';
-    const isDrum = cat === 'drums' || cat === 'percussion' || track.channel === 9;
 
     let instrumentId = 'grand-piano';
     if (cat === 'bass') instrumentId = 'bass';
@@ -3368,6 +3051,7 @@ function toggleStyleEnsembleAudition() {
   audioEngine.startBackingTrack(backingTracks, {
     bpm: currentStyleAnalysis.bpm,
     division: currentStyleAnalysis.division,
+    beatsPerBar: timeSig.numerator,
     loop: true,
     volumeRatio: 0.8,
     onEnded: () => {
@@ -3541,131 +3225,195 @@ function initStyleImportModal() {
     showStatus('🔄 已清空所有聲部來源映射。');
   });
 
-  // Phase 3.3 切片模式切換 (多段落 vs 單一段落)
-  const btnMulti = document.getElementById('btn-slicer-mode-multi');
-  const btnSingle = document.getElementById('btn-slicer-mode-single');
-  const slicerPanel = document.getElementById('style-slicer-panel');
-  const singlePanel = document.getElementById('style-single-section-panel');
-
-  btnMulti?.addEventListener('click', () => {
-    currentSlicerMode = 'multi';
-    btnMulti.classList.add('active-rp');
-    btnSingle?.classList.remove('active-rp');
-    if (slicerPanel) slicerPanel.style.display = 'flex';
-    if (singlePanel) singlePanel.style.display = 'none';
-    updateAuditionAllButtonText();
-  });
-
-  btnSingle?.addEventListener('click', () => {
-    currentSlicerMode = 'single';
-    btnSingle.classList.add('active-rp');
-    btnMulti?.classList.remove('active-rp');
-    if (slicerPanel) slicerPanel.style.display = 'none';
-    if (singlePanel) singlePanel.style.display = 'flex';
-    updateAuditionAllButtonText();
-  });
-
-  // 單一段落模式輸入框即時連動頂部試聽按鈕文字
-  const singleSecSelect = document.getElementById('style-import-target-section');
-  const singleStartInput = document.getElementById('style-import-start-bar');
-  const singleEndInput = document.getElementById('style-import-end-bar');
-  singleSecSelect?.addEventListener('change', updateAuditionAllButtonText);
-  singleStartInput?.addEventListener('input', updateAuditionAllButtonText);
-  singleEndInput?.addEventListener('input', updateAuditionAllButtonText);
-
-  // Phase 3.3 快速曲式範本
-  const btnTplSingle = document.getElementById('btn-slicer-template-single');
-  const btnTplClassic4 = document.getElementById('btn-slicer-template-classic4');
-  const btnTplFull = document.getElementById('btn-slicer-template-full');
-  const btnAddSection = document.getElementById('btn-slicer-add-section');
-
-  btnTplSingle?.addEventListener('click', () => {
-    const tot = currentStyleAnalysis?.totalMeasures || 8;
-    currentStyleSlices = [
-      { id: 'sec-1', sectionName: 'Main A', startBar: 1, endBar: Math.min(4, tot) }
-    ];
-    currentFocusedSliceIndex = 0;
-    renderStyleSlicerUI();
-    updateAuditionAllButtonText();
-    showStatus('⚡ 已套用「單段 Main A」切片範本');
-  });
-
-  btnTplClassic4?.addEventListener('click', () => {
-    const tot = currentStyleAnalysis?.totalMeasures || 8;
-    const m = Math.max(1, Math.floor(tot / 4));
-    currentStyleSlices = [
-      { id: 'sec-1', sectionName: 'Main A', startBar: 1, endBar: Math.min(tot, m) },
-      { id: 'sec-2', sectionName: 'Fill In AA', startBar: Math.min(tot, m + 1), endBar: Math.min(tot, m + 1) },
-      { id: 'sec-3', sectionName: 'Main B', startBar: Math.min(tot, m + 2), endBar: Math.min(tot, m * 2 + 1) },
-      { id: 'sec-4', sectionName: 'Ending A', startBar: Math.min(tot, m * 2 + 2), endBar: tot },
-    ];
-    currentFocusedSliceIndex = 0;
-    renderStyleSlicerUI();
-    updateAuditionAllButtonText();
-    showStatus('⚡ 已套用「經典 4 段 (Main A/B + Fill + Ending)」切片範本');
-  });
-
-  btnTplFull?.addEventListener('click', () => {
-    const tot = currentStyleAnalysis?.totalMeasures || 16;
-    currentStyleSlices = [
-      { id: 'sec-1', sectionName: 'Intro A', startBar: 1, endBar: Math.min(tot, 4) },
-      { id: 'sec-2', sectionName: 'Main A', startBar: Math.min(tot, 5), endBar: Math.min(tot, 8) },
-      { id: 'sec-3', sectionName: 'Fill In AA', startBar: Math.min(tot, 9), endBar: Math.min(tot, 9) },
-      { id: 'sec-4', sectionName: 'Main B', startBar: Math.min(tot, 10), endBar: Math.min(tot, 13) },
-      { id: 'sec-5', sectionName: 'Fill In BB', startBar: Math.min(tot, 14), endBar: Math.min(tot, 14) },
-      { id: 'sec-6', sectionName: 'Main C', startBar: Math.min(tot, 15), endBar: Math.min(tot, 18) },
-      { id: 'sec-7', sectionName: 'Ending A', startBar: Math.min(tot, 19), endBar: Math.min(tot, 22) },
-    ];
-    currentFocusedSliceIndex = 0;
-    renderStyleSlicerUI();
-    updateAuditionAllButtonText();
-    showStatus('⚡ 已套用「完整曲式 (Intro + 3 Main + 2 Fills + Ending)」切片範本');
-  });
-
-  btnAddSection?.addEventListener('click', () => {
-    const tot = currentStyleAnalysis?.totalMeasures || 8;
-    const lastSlice = currentStyleSlices[currentStyleSlices.length - 1];
-    let nextStart = lastSlice ? lastSlice.endBar + 1 : 1;
-    if (nextStart > tot) nextStart = 1;
-    const nextEnd = Math.min(tot, nextStart + 3);
-    const names: StyleSectionType[] = ['Main B', 'Main C', 'Main D', 'Fill In BB', 'Fill In CC', 'Ending B', 'Break'];
-    const usedNames = new Set(currentStyleSlices.map(s => s.sectionName));
-    const nextName = names.find(n => !usedNames.has(n)) || 'Main B';
-
-    currentStyleSlices.push({
-      id: `sec-${Date.now()}`,
-      sectionName: nextName,
-      startBar: nextStart,
-      endBar: nextEnd,
+  // 樂句採集快捷區段按鈕
+  document.querySelectorAll<HTMLButtonElement>('.btn-quick-sample-bars').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.btn-quick-sample-bars').forEach((b) => b.classList.remove('active-rp'));
+      btn.classList.add('active-rp');
+      const bars = parseInt(btn.dataset.bars || '4', 10);
+      const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
+      const endBarInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
+      const s = Math.max(1, parseInt(startBarInput?.value || '1', 10));
+      const tot = currentStyleAnalysis?.totalMeasures || 999;
+      const e = s + bars - 1;
+      if (e > tot && s > 1) {
+        const newS = Math.max(1, tot - bars + 1);
+        if (startBarInput) startBarInput.value = `${newS}`;
+        if (endBarInput) endBarInput.value = `${tot}`;
+      } else {
+        if (endBarInput) endBarInput.value = `${Math.min(tot, e)}`;
+      }
+      updateSamplerHighlightBar();
     });
-    currentFocusedSliceIndex = currentStyleSlices.length - 1;
-    renderStyleSlicerUI();
-    updateAuditionAllButtonText();
-    showStatus(`➕ 已新增段落切片: [${nextName}] (小節 ${nextStart} ~ ${nextEnd})`);
   });
 
-  // Phase 3.3 C 調基準自動校正監聽
+  const btnChorus = document.getElementById('btn-quick-sample-chorus');
+  btnChorus?.addEventListener('click', () => {
+    document.querySelectorAll('.btn-quick-sample-bars').forEach((b) => b.classList.remove('active-rp'));
+    const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
+    const endBarInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
+    const tot = currentStyleAnalysis?.totalMeasures || 16;
+    const s = Math.min(tot, 9);
+    const e = Math.min(tot, 16);
+    if (startBarInput) startBarInput.value = `${s}`;
+    if (endBarInput) endBarInput.value = `${e}`;
+    updateSamplerHighlightBar();
+  });
+
+  // 時間軸長條點擊即時移動採集區間
+  const timelineTrack = document.getElementById('style-sampler-timeline-track');
+  timelineTrack?.addEventListener('click', (e) => {
+    if (!currentStyleAnalysis) return;
+    const rect = timelineTrack.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const pct = Math.max(0, Math.min(1, clickX / rect.width));
+    const totalMeasures = Math.max(1, currentStyleAnalysis.totalMeasures);
+    const clickedBar = Math.min(totalMeasures, Math.floor(pct * totalMeasures) + 1);
+
+    const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
+    const endBarInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
+    const curS = parseInt(startBarInput?.value || '1', 10);
+    const curE = parseInt(endBarInput?.value || '4', 10);
+    const curLen = Math.max(1, curE - curS + 1);
+
+    let newS = clickedBar;
+    let newE = Math.min(totalMeasures, newS + curLen - 1);
+    if (newE - newS + 1 < curLen && newS > 1) {
+      newS = Math.max(1, newE - curLen + 1);
+    }
+
+    if (startBarInput) startBarInput.value = `${newS}`;
+    if (endBarInput) endBarInput.value = `${newE}`;
+    updateSamplerHighlightBar();
+  });
+
+  // 小節起訖輸入監聽
+  const startBarInput = document.getElementById('style-import-start-bar');
+  const endBarInput = document.getElementById('style-import-end-bar');
+  startBarInput?.addEventListener('input', updateSamplerHighlightBar);
+  startBarInput?.addEventListener('change', updateSamplerHighlightBar);
+  endBarInput?.addEventListener('input', updateSamplerHighlightBar);
+  endBarInput?.addEventListener('change', updateSamplerHighlightBar);
+
+  // C 調基準自動校正監聽
   const cNormCheckbox = document.getElementById('style-import-c-norm-enable') as HTMLInputElement | null;
   const keyOverrideSelect = document.getElementById('style-import-key-override') as HTMLSelectElement | null;
   cNormCheckbox?.addEventListener('change', updateCNormUI);
   keyOverrideSelect?.addEventListener('change', updateCNormUI);
 
+  // 出口動作 1: 📥 注入當前伴奏段落 (Inject into current STY)
+  const btnInjectCurrent = document.getElementById('btn-style-import-inject-current');
+  btnInjectCurrent?.addEventListener('click', () => {
+    if (!currentStyleAnalysis) return;
+    if (!currentParsed || currentParsed.format !== 'STY') {
+      alert('工作區目前尚未開啟 STY 伴奏！請先載入一份 STY 伴奏，或使用【✨ 建立全新 Style 專案】/【📂 加入伴奏庫抽屜】。');
+      return;
+    }
+
+    const activeAssignments = currentStyleMappings.filter((m) => m.sourceTrackIndex !== null);
+    if (activeAssignments.length === 0) {
+      alert('請至少為一個伴奏聲部指派來源 MIDI 軌道！');
+      return;
+    }
+
+    const targetSectionSel = document.getElementById('style-import-inject-target-section') as HTMLSelectElement | null;
+    const targetSection = (targetSectionSel?.value || 'Main A') as StyleSectionType;
+    const replaceCheckbox = document.getElementById('style-import-replace-mode') as HTMLInputElement | null;
+    const replaceExistingPart = replaceCheckbox ? replaceCheckbox.checked : true;
+
+    const sInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
+    const eInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
+    const sBar = Math.max(1, parseInt(sInput?.value || '1', 10));
+    const eBar = Math.max(sBar, parseInt(eInput?.value || '4', 10));
+
+    const cNormEnableInput = document.getElementById('style-import-c-norm-enable') as HTMLInputElement | null;
+    const keyOverrideSel = document.getElementById('style-import-key-override') as HTMLSelectElement | null;
+    const normalizeToCRoot = cNormEnableInput ? cNormEnableInput.checked : true;
+    const rootKeyOverride = keyOverrideSel && keyOverrideSel.value !== 'auto' ? keyOverrideSel.value : undefined;
+
+    try {
+      const res = StyleImporter.injectSampledSectionIntoStyle(currentParsed, targetSection, currentStyleAnalysis, {
+        startBar: sBar,
+        endBar: eBar,
+        partMappings: currentStyleMappings,
+        copyMode: replaceExistingPart ? 'replace' : 'merge',
+        normalizeToCRoot,
+        rootKeyOverride,
+      });
+
+      if (!res.success) {
+        alert(res.message);
+        return;
+      }
+
+      closeStyleImportModal();
+      handleAssemblySuccess(res.message);
+      markModified(`已將採集樂句 (${sBar}~${eBar} 小節) 注入段落 [${targetSection}]`);
+    } catch (err: any) {
+      alert(`注入段落失敗: ${err.message}`);
+    }
+  });
+
+  // 出口動作 2: 📂 加入伴奏庫抽屜 (Add to Style Pool Drawer)
+  const btnAddPool = document.getElementById('btn-style-import-add-pool');
+  btnAddPool?.addEventListener('click', () => {
+    if (!currentStyleAnalysis) return;
+    const activeAssignments = currentStyleMappings.filter((m) => m.sourceTrackIndex !== null);
+    if (activeAssignments.length === 0) {
+      alert('請至少為一個伴奏聲部指派來源 MIDI 軌道！');
+      return;
+    }
+
+    const projNameInput = document.getElementById('style-import-proj-name') as HTMLInputElement | null;
+    const bpmInput = document.getElementById('style-import-bpm') as HTMLInputElement | null;
+    const projectName = projNameInput?.value.trim() || 'Sampled Groove';
+    const bpm = Math.max(30, Math.min(300, parseInt(bpmInput?.value || '120', 10)));
+
+    const sInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
+    const eInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
+    const sBar = Math.max(1, parseInt(sInput?.value || '1', 10));
+    const eBar = Math.max(sBar, parseInt(eInput?.value || '4', 10));
+
+    const cNormEnableInput = document.getElementById('style-import-c-norm-enable') as HTMLInputElement | null;
+    const keyOverrideSel = document.getElementById('style-import-key-override') as HTMLSelectElement | null;
+    const normalizeToCRoot = cNormEnableInput ? cNormEnableInput.checked : true;
+    const rootKeyOverride = keyOverrideSel && keyOverrideSel.value !== 'auto' ? keyOverrideSel.value : undefined;
+
+    try {
+      const entry = StyleImporter.createStylePoolEntryFromSample(currentStyleAnalysis, {
+        projectName,
+        bpm,
+        startBar: sBar,
+        endBar: eBar,
+        targetSection: 'Main A',
+        partMappings: currentStyleMappings,
+        normalizeToCRoot,
+        rootKeyOverride,
+      });
+
+      remixerPool.push(entry);
+      syncAllStylePoolUIs();
+      closeStyleImportModal();
+      showStatus(`📂 成功將採集樂句封裝為伴奏風格 [${entry.name}] 並加入伴奏庫抽屜！`);
+    } catch (err: any) {
+      alert(`加入伴奏庫抽屜失敗: ${err.message}`);
+    }
+  });
+
+  // 出口動作 3: ✨ 建立全新 Style 專案 (Create New Style Project)
   btnConfirm?.addEventListener('click', () => {
     if (!currentStyleAnalysis) return;
 
     const projNameInput = document.getElementById('style-import-proj-name') as HTMLInputElement | null;
     const bpmInput = document.getElementById('style-import-bpm') as HTMLInputElement | null;
-    const targetSectionSelect = document.getElementById('style-import-target-section') as HTMLSelectElement | null;
     const startBarInput = document.getElementById('style-import-start-bar') as HTMLInputElement | null;
     const endBarInput = document.getElementById('style-import-end-bar') as HTMLInputElement | null;
 
     const projectName = projNameInput?.value.trim() || 'My Style';
     const bpm = Math.max(30, Math.min(300, parseInt(bpmInput?.value || '120', 10)));
-    const targetSection = (targetSectionSelect?.value || 'Main A') as StyleSectionType;
     const startBar = Math.max(1, parseInt(startBarInput?.value || '1', 10));
     const endBar = Math.max(startBar, parseInt(endBarInput?.value || '4', 10));
 
-    // 檢查是否有至少一個聲部有指派
     const activeAssignments = currentStyleMappings.filter((m) => m.sourceTrackIndex !== null);
     if (activeAssignments.length === 0) {
       alert('請至少為一個伴奏聲部指派來源 MIDI 軌道！');
@@ -3677,7 +3425,7 @@ function initStyleImportModal() {
     const normalizeToCRoot = cNormEnableInput ? cNormEnableInput.checked : true;
     const rootKeyOverride = keyOverrideSel && keyOverrideSel.value !== 'auto' ? keyOverrideSel.value : undefined;
 
-    showStatus(`正在將外部 MIDI 8 聲部合成為 Yamaha Style: ${projectName}...`);
+    showStatus(`正在將外部 MIDI 採集樂句合成為全新 Yamaha Style: ${projectName}...`);
 
     try {
       const styleProject = StyleImporter.synthesizeStyleFromImport(currentStyleAnalysis, {
@@ -3686,8 +3434,7 @@ function initStyleImportModal() {
         timeSignature: currentStyleAnalysis.timeSignature,
         startBar,
         endBar,
-        targetSection,
-        sections: currentSlicerMode === 'multi' ? currentStyleSlices : undefined,
+        targetSection: 'Main A',
         partMappings: currentStyleMappings,
         normalizeToCRoot,
         rootKeyOverride,
@@ -3695,16 +3442,46 @@ function initStyleImportModal() {
 
       closeStyleImportModal();
 
-      // 序列化為 .sty 二進位 Uint8Array 並載入至工作區
       const binaryBytes = YamahaStyleSynthesizer.serializeToStyleFile(styleProject);
       renderParsed(binaryBytes, `${projectName}.sty`, 'STY');
-      markModified(`從外部 MIDI [${currentStyleAnalysis.fileName}] 成功合成 Yamaha SFF2 Style 伴奏專案 (含 ${styleProject.sections.length} 個曲式段落)`);
+      markModified(`從外部 MIDI [${currentStyleAnalysis.fileName}] 採集樂句 (${startBar}~${endBar} 小節) 成功合成 Yamaha SFF2 Style 伴奏專案`);
 
-      showStatus(`✨ 成功將外部 MIDI 合成為 Yamaha Style 伴奏專案: ${projectName}.sty (${styleProject.sections.length} 個段落)`);
+      showStatus(`✨ 成功將採集樂句合成為全新 Yamaha Style 伴奏專案: ${projectName}.sty！`);
     } catch (err: any) {
       alert(`合成 Yamaha Style 專案失敗: ${err.message}`);
       showStatus(`合成失敗: ${err.message}`, true);
     }
+  });
+
+  // 主畫面段落結構面板直達按鈕: 📥 採集外部 MIDI 樂句
+  const btnOpenSampler = document.getElementById('btn-open-midi-sampler-for-sty');
+  btnOpenSampler?.addEventListener('click', () => {
+    let fileInput = document.getElementById('style-sampler-midi-file-input') as HTMLInputElement | null;
+    if (!fileInput) {
+      fileInput = document.createElement('input');
+      fileInput.type = 'file';
+      fileInput.id = 'style-sampler-midi-file-input';
+      fileInput.accept = '.mid,.midi';
+      fileInput.style.display = 'none';
+      document.body.appendChild(fileInput);
+
+      const inputElem = fileInput;
+      inputElem.addEventListener('change', () => {
+        const file = inputElem.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const buf = e.target?.result as ArrayBuffer;
+          if (buf) {
+            const bytes = new Uint8Array(buf);
+            openStyleImportModal(bytes, file.name);
+          }
+        };
+        reader.readAsArrayBuffer(file);
+        inputElem.value = '';
+      });
+    }
+    fileInput.click();
   });
 }
 
@@ -8577,6 +8354,11 @@ function renderSections(parsed: YamahaFileParsed) {
   const btnToggleStyleAssembly = document.getElementById('btn-toggle-style-assembly');
   if (btnToggleStyleAssembly) {
     btnToggleStyleAssembly.style.display = isPad ? 'none' : 'inline-flex';
+  }
+
+  const btnOpenMidiSampler = document.getElementById('btn-open-midi-sampler-for-sty');
+  if (btnOpenMidiSampler) {
+    btnOpenMidiSampler.style.display = isPad ? 'none' : 'inline-flex';
   }
 
   const matrixContainer = document.getElementById('sty-part-matrix-container');

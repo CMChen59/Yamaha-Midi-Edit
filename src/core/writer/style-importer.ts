@@ -5,6 +5,8 @@
 
 import { MidiImporter, type MidiSourceAnalysis, type MidiSourceTrackSummary } from './midi-importer';
 import { YamahaStyleSynthesizer } from './style-synthesizer';
+import { YamahaStyleAssembly } from './style-assembly';
+import { type StylePoolEntry } from './style-remixer';
 import {
   DEFAULT_STYLE_PARTS,
   type StylePartId,
@@ -111,6 +113,27 @@ export interface StyleImportOptions {
   rootKeyOverride?: string;   // 手動指定原曲調性 (例如 'G', 'F', 'D')
   manualChordShift?: number;  // 手動覆寫和弦移調半音數
 }
+
+export interface SampleInjectionOptions {
+  startBar: number;
+  endBar: number;
+  partMappings: StylePartMappingItem[];
+  normalizeToCRoot?: boolean;
+  rootKeyOverride?: string;
+  manualChordShift?: number;
+  copyMode?: 'replace' | 'merge';
+  bpm?: number;
+}
+
+export interface SampleInjectionResult {
+  success: boolean;
+  destSection: string;
+  notesInjected: number;
+  sampledBars: number;
+  partsUpdated: StylePartId[];
+  message: string;
+}
+
 
 export class StyleImporter {
   /**
@@ -488,7 +511,9 @@ export class StyleImporter {
    */
   public static detectKeySignature(
     tracks: MidiSourceTrackSummary[],
-    division: number = 480
+    division: number = 480,
+    startTick?: number,
+    endTick?: number
   ): KeyDetectionResult {
     const pitchWeights = new Float64Array(12);
     let totalWeight = 0;
@@ -498,6 +523,11 @@ export class StyleImporter {
       if (track.channel === 9) continue;
 
       for (const note of track.notes) {
+        if (startTick !== undefined && endTick !== undefined) {
+          if (note.startTick < startTick || note.startTick >= endTick) {
+            continue;
+          }
+        }
         const pc = ((note.note % 12) + 12) % 12;
         const durWeight = Math.max(1, note.durationTick / Math.max(1, division / 2));
         // 低音域 (Bass 音域 < 55) 給予 2.5 倍權重，因為低音根音對調性具有決定性引導作用
@@ -509,6 +539,10 @@ export class StyleImporter {
     }
 
     if (totalWeight === 0) {
+      if (startTick !== undefined && endTick !== undefined) {
+        // 若指定小節區間內無非打擊樂音符，自動回退至全曲調性偵測
+        return StyleImporter.detectKeySignature(tracks, division);
+      }
       return {
         key: 'C Major',
         root: 'C',
@@ -732,4 +766,126 @@ export class StyleImporter {
       parts: partsConfig,
     });
   }
+
+  /**
+   * 整合包 2: 將外部 MIDI 採集小節樂句 (含 C 根音校正) 精準注入至現有 Yamaha Style 的指定段落
+   */
+  public static injectSampledSectionIntoStyle(
+    destParsed: YamahaFileParsed,
+    destSectionName: string,
+    analysis: StyleSourceAnalysis,
+    options: SampleInjectionOptions
+  ): SampleInjectionResult {
+    if (!destParsed || !destParsed.tracks || destParsed.tracks.length === 0) {
+      return {
+        success: false,
+        destSection: destSectionName,
+        notesInjected: 0,
+        sampledBars: 0,
+        partsUpdated: [],
+        message: '目標伴奏檔結構無效',
+      };
+    }
+
+    const startBar = Math.max(1, options.startBar);
+    const endBar = Math.max(startBar, options.endBar);
+    const sampledBars = endBar - startBar + 1;
+
+    // 1. 若目標伴奏尚未包含該段落，自動為其擴充新增段落
+    const existingSection = destParsed.sections?.find((s) => s.name === destSectionName);
+    if (!existingSection) {
+      const addRes = YamahaStyleAssembly.addNewSection(destParsed, {
+        sectionName: destSectionName,
+        bars: sampledBars,
+      });
+      if (!addRes.success) {
+        return {
+          success: false,
+          destSection: destSectionName,
+          notesInjected: 0,
+          sampledBars,
+          partsUpdated: [],
+          message: `新增段落失敗: ${addRes.message}`,
+        };
+      }
+    }
+
+    // 2. 將選取的小節採樣合成為內存臨時 SFF2 Style (自動完成 C 根音校正、鼓組鎖定與 Yamaha 通道對齊)
+    const tempStyle = StyleImporter.synthesizeStyleFromImport(analysis, {
+      projectName: 'MidiSampleTemp',
+      bpm: options.bpm || destParsed.bpm || analysis.bpm || 120,
+      timeSignature: destParsed.timeSignature || analysis.timeSignature || { numerator: 4, denominator: 4 },
+      startBar,
+      endBar,
+      targetSection: destSectionName as any,
+      partMappings: options.partMappings,
+      normalizeToCRoot: options.normalizeToCRoot !== false,
+      rootKeyOverride: options.rootKeyOverride,
+      manualChordShift: options.manualChordShift,
+    });
+
+    let totalNotesInjected = 0;
+    const partsUpdated: StylePartId[] = [];
+
+    // 3. 逐一呼叫 YamahaStyleAssembly.assemblePart 進行無損聲部注入
+    for (const mapping of options.partMappings) {
+      if (mapping.sourceTrackIndex === null || mapping.sourceTrackIndex === undefined) continue;
+      const partDef = DEFAULT_STYLE_PARTS[mapping.partId];
+      if (!partDef) continue;
+
+      const standardCh = partDef.channel;
+      let destCh = standardCh;
+      if (destParsed.parts) {
+        const destPartEntry = destParsed.parts.find((p) =>
+          p.partName.toLowerCase().replace(/\s+/g, '').includes(mapping.partId.toLowerCase())
+        );
+        if (destPartEntry) {
+          destCh = destPartEntry.channel;
+        }
+      }
+
+      const res = YamahaStyleAssembly.assemblePart({
+        destParsed,
+        destSection: destSectionName,
+        destChannel: destCh,
+        srcParsed: tempStyle,
+        srcSection: destSectionName,
+        srcChannel: standardCh,
+        copyMode: options.copyMode || 'replace',
+        loopMode: 'loop',
+        copyVoiceParams: true,
+      });
+
+      if (res.success) {
+        totalNotesInjected += res.notesCopied;
+        partsUpdated.push(mapping.partId);
+      }
+    }
+
+    return {
+      success: true,
+      destSection: destSectionName,
+      notesInjected: totalNotesInjected,
+      sampledBars,
+      partsUpdated,
+      message: `成功將 ${partsUpdated.length} 個聲部 (${totalNotesInjected} 顆音符) 注入至段落 [${destSectionName}]！`,
+    };
+  }
+
+  /**
+   * 整合包 2: 將外部 MIDI 採集小節樂句封裝為樣式庫條目 (Style Pool Entry)
+   */
+  public static createStylePoolEntryFromSample(
+    analysis: StyleSourceAnalysis,
+    options: StyleImportOptions,
+    poolId?: string
+  ): StylePoolEntry {
+    const style = StyleImporter.synthesizeStyleFromImport(analysis, options);
+    return {
+      id: poolId || `pool-sample-${Date.now()}`,
+      name: `${options.projectName || 'Sampled Groove'}.sty`,
+      parsed: style,
+    };
+  }
 }
+
