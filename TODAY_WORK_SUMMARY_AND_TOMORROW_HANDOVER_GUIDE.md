@@ -4,9 +4,9 @@
 > **更新日期**：2026-10-19  
 > **關聯核心文件**：
 > - [`PROJECT_PROGRESS_CHECKPOINT.md`](file:///d:/Vibe%20Coding/MIDI/PROJECT_PROGRESS_CHECKPOINT.md)（總體進度檢查點）
-> - [`PENDING_EXECUTION_PLANS.md`](file:///d:/Vibe%20Coding/MIDI/PENDING_EXECUTION_PLANS.md)（6 大後續待執行計畫清單）
+> - [`PENDING_EXECUTION_PLANS.md`](file:///d:/Vibe%20Coding/MIDI/PENDING_EXECUTION_PLANS.md)（4 大主題式整合執行包）
 > - [`PSR_SX920_LIVE_RECORDING_VERIFICATION_GUIDE.md`](file:///d:/Vibe%20Coding/MIDI/PSR_SX920_LIVE_RECORDING_VERIFICATION_GUIDE.md)（實機驗收指引手冊）  
-> **最新備份檔**：`d:\Vibe Coding\MIDI-20261019.zip` (約 499 KB)  
+> **最新備份檔**：`d:\Vibe Coding\MIDI-20261019.zip` (約 503 KB)  
 > **程式碼倉庫**：`https://github.com/CMChen59/Yamaha-Midi-Edit.git`（分支: `main`）  
 > **測試覆蓋**：26 個測試套件、153 / 153 項單元測試 100% 通過；TypeScript 編譯 0 錯誤；生產環境打包正常。
 
@@ -44,26 +44,25 @@
 
 ---
 
-## 二、 待辦事項與後續推進計畫 (Pending Backlog & Next Roadmap)
+## 二、 2026-10-19 收斂盤點後的「4 大主題式整合執行包」
 
-後續工作目前規劃為 **「6 大進階計畫」** 與 **「3 個優化議題庫」**，隨時可依據需求啟動：
+經過深入盤點，前期攻堅已實質解決 **BACKLOG-01（Pad 3 走帶以第 1 小節對齊與休止標註化解並歸檔）**，WebMIDI 實體琴發聲與伴奏組裝核心亦已打通 80% 以上。剩餘需求正式整合成 4 個高價值、可獨立落地的執行包：
 
-### 🎯 6 大待執行進階計畫（詳見 `PENDING_EXECUTION_PLANS.md`）：
+### 🚀 4 大主題式整合執行包（詳見 `PENDING_EXECUTION_PLANS.md`）：
 
-1. **📌 計畫 1：CASM 和弦轉調規則視覺化檢視與微調 (CASM / NTR & NTT Editor)**
-   - 檢視與調整各聲部之 NTR（Root Trans / Root Fixed）與 NTT（Bypass, Melody, Chord, Bass 等），控制伴奏左手換和弦時的行為。
-2. **📌 計畫 2：樣式庫多檔批次載入與跨風格混搭抽件 (Multi-Style Library Pool)**
-   - 一次拖入多個 `.sty` 檔案，建立樣式庫抽屜面板，自由抽取「A 風格鼓組 + B 風格貝斯 + C 風格吉他」組裝新風格。
-3. **📌 計畫 3：外部標準 MIDI 音軌直接匯入至指定段落聲部 (MIDI Loop / Clip to Style Part)**
-   - 將外部 DAW 匯出的 4~8 小節 MIDI 鼓圈或琶音旋律直接注入伴奏風格指定聲部與段落。
-4. **📌 計畫 4：風格標頭中繼資料與 OTS (One Touch Setting) 檢視編輯 (Style Header & OTS Editor)**
-   - 伴奏名稱、樂風、Tempo、拍號編輯，以及 4 組 OTS 關聯音色檢視調整。
-5. **📌 計畫 5：WebMIDI 琴端直連與實體 SX900/920 伴奏即時監聽 (Hardware Direct Audition via WebMIDI)**
-   - 網頁播放伴奏時直接由 PSR-SX920 實體琴喇叭發出原廠頂級 S.Art 音色與 DSP 效果。
-6. **📌 計畫 6：STY 伴奏聲部琴端即時跟彈錄音與疊錄監聽 (STY Live Metronome Overdub Recorder)**
-   - 將 Multi Pad 成熟的跟彈錄音、預備拍節拍器、智慧量化與疊錄伴奏監聽完整移植至 STY 伴奏各聲部。
+1. **【整合包 1】伴奏樣式庫抽屜與跨風格混血拼貼 (Multi-Style Pool & Cross-Style Remixing)**
+   - 擴充樣式庫多檔拖曳暫存抽屜，跨檔案自由抽件組裝（如 A 風格鼓 + B 風格貝斯 + C 風格吉他），速度/拍號智慧對齊。
+   - ⚡ *開發成本低、最快見效、原廠頂級音質 100% 完美。*
+2. **【整合包 2】外部 MIDI 樂句採集器與 C 根音校正 (MIDI Section Sampler & C-Root Normalizer)**
+   - 載入外部 MIDI 歌曲，時間軸精準圈選 2~8 小節，關鍵「C 根音校正」演算法自動將原曲移調為 C 調基準，徹底解決 Yamaha 琴端左手換和弦走音打架問題。
+   - 🎯 *徹底打破外部 MIDI 走音宿命。*
+3. **【整合包 3】STY 伴奏聲部琴端即時跟彈錄音 (STY Live Metronome Overdub Recorder)**
+   - 將 Multi Pad 成熟的跟彈錄音、4 拍預備拍節拍器、1/16 與 1/8 智慧量化、多軌背景伴奏疊錄監聽完整移植至 STY 伴奏各聲部。
+   - 🎹 *實時手彈原創演奏核心。*
+4. **【整合包 4】Yamaha 出廠規格封裝與高級轉調試聽 (CASM NTR/NTT + OTS 1~4 + 虛擬和弦測試條)**
+   - CASM 轉調規則編輯（Root Trans / Fixed）、風格標頭與 OTS 1~4 右手音色設定、畫面虛擬和弦測試條（C, F, G7, Am 模擬琴端轉調聽感）。
+   - 📦 *出廠販售級規格完備度封裝。*
 
-### 📌 3 大待討論優化議題庫（詳見 `PROJECT_PROGRESS_CHECKPOINT.md` 第六節）：
-- **BACKLOG-01**：多 Pad 合奏播放時非第 1 小節進場 Pad 之視覺等待狀態呈現優化（方案 A/B/C）。
-- **BACKLOG-02**：選取音符批次搬移/複製至其他 Pad 換音色（雙樂器對位流）。
+### 📌 附屬擴充包：鋼琴卷軸多音符批次進階工具
+- **BACKLOG-02**：選取音符跨 Pad 搬移/複製換音色（雙樂器立體聲對位）。
 - **BACKLOG-03**：打擊樂軌道 (Drum Kit) 選取音符批次替換樂器打擊聲音。
