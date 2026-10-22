@@ -141,6 +141,26 @@ export class DrumStepGrid {
   }
 
   /**
+   * 取得當前完整的鼓點 Pattern 狀態副本 (供段落切換儲存)
+   */
+  public getPatternData(): Map<number, boolean[]> {
+    const copy = new Map<number, boolean[]>();
+    this.pattern.forEach((arr, note) => copy.set(note, [...arr]));
+    return copy;
+  }
+
+  /**
+   * 載入指定的鼓點 Pattern 狀態 (供段落切換恢復)
+   */
+  public setPatternData(data: Map<number, boolean[]>): void {
+    this.pattern = new Map();
+    data.forEach((arr, note) => this.pattern.set(note, [...arr]));
+    this.initPattern();
+    this.render();
+    this.onPatternChange?.();
+  }
+
+  /**
    * 更換指定行的打擊樂器
    */
   public changeRowVoice(rowIndex: number, newNote: number) {

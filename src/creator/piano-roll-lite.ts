@@ -146,6 +146,22 @@ export class PianoRollLite {
   }
 
   /**
+   * 取得當前貝斯 Pattern 狀態副本 (供段落切換儲存)
+   */
+  public getPatternData(): Map<number, number> {
+    return new Map(this.pattern);
+  }
+
+  /**
+   * 載入指定的貝斯 Pattern 狀態 (供段落切換恢復)
+   */
+  public setPatternData(data: Map<number, number>): void {
+    this.pattern = new Map(data);
+    this.render();
+    this.onPatternChange?.();
+  }
+
+  /**
    * 一鍵將第 1 小節的貝斯律動複製鋪滿全部小節
    */
   public cloneFirstBar() {
