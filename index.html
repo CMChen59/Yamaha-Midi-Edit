@@ -676,12 +676,38 @@
       transform: translateY(-1px);
     }
 
+    /* 8分音符主幹格 (第1、3格) 視覺清晰強化 */
+    .step-cell.eighth-cell {
+      background: #1e293b;
+      border: 1px solid rgba(148, 163, 184, 0.28);
+    }
+
+    /* 正拍 (第1格)：頂部與左側帶微金指示 */
     .step-cell.beat-start {
-      border-left: 2px solid rgba(255, 255, 255, 0.35);
+      border-left: 2px solid rgba(245, 158, 11, 0.6);
+      border-top: 2px solid rgba(245, 158, 11, 0.45);
+    }
+
+    /* 8分反拍 (第3格)：頂部帶微青指示，一眼辨識 8 拍後半 */
+    .step-cell.eighth-offbeat {
+      border-top: 2px solid rgba(56, 189, 248, 0.5);
+      border-left: 1px solid rgba(56, 189, 248, 0.25);
+    }
+
+    /* 16分細分格 (第2、4格)：微弱化背景與虛線邊框，突出 8 分拍骨架 */
+    .step-cell.sixteenth-cell {
+      background: rgba(15, 23, 42, 0.55);
+      border: 1px dashed rgba(148, 163, 184, 0.14);
+    }
+
+    .step-cell.sixteenth-cell:hover {
+      background: rgba(56, 189, 248, 0.08);
+      border: 1px solid var(--accent);
     }
 
     .step-cell.step-active {
       border-color: transparent !important;
+      border-style: solid !important;
     }
 
     .step-cell.active-playhead,
@@ -704,13 +730,20 @@
     }
 
     .step-header-cell.beat-start .beat-num {
-      color: #cbd5e1;
+      color: #fbbf24;
+      font-weight: 800;
+    }
+
+    .step-header-cell .eighth-num {
+      color: #38bdf8;
+      font-size: 0.72rem;
       font-weight: 700;
+      opacity: 0.9;
     }
 
     .step-header-cell .sub-dot {
       color: #475569;
-      font-size: 0.8rem;
+      font-size: 0.75rem;
     }
 
     /* 貝斯鋼琴捲軸樣式 */

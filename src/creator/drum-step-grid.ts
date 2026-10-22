@@ -417,11 +417,14 @@ export class DrumStepGrid {
         for (let sub = 0; sub < stepsPerBeat; sub++) {
           const stepIdx = bar * stepsPerBar + beat * stepsPerBeat + sub;
           const stepHeader = document.createElement('div');
-          stepHeader.className = `step-header-cell ${sub === 0 ? 'beat-start' : ''}`;
+          const subClass = sub === 0 ? 'beat-start eighth-cell' : (sub === 2 && stepsPerBeat === 4 ? 'eighth-offbeat eighth-cell' : (stepsPerBeat === 4 ? 'sixteenth-cell' : ''));
+          stepHeader.className = `step-header-cell ${subClass}`;
           stepHeader.dataset.step = `${stepIdx}`;
 
           if (sub === 0) {
             stepHeader.innerHTML = `<span class="beat-num">${beat + 1}</span>`;
+          } else if (sub === 2 && stepsPerBeat === 4) {
+            stepHeader.innerHTML = `<span class="eighth-num">&</span>`;
           } else {
             stepHeader.innerHTML = `<span class="sub-dot">·</span>`;
           }
@@ -512,7 +515,8 @@ export class DrumStepGrid {
             const isFilled = stepsData[stepIdx];
 
             const cell = document.createElement('div');
-            cell.className = `step-cell ${isFilled ? 'step-active' : ''} ${sub === 0 ? 'beat-start' : ''}`;
+            const subClass = sub === 0 ? 'beat-start eighth-cell' : (sub === 2 && stepsPerBeat === 4 ? 'eighth-offbeat eighth-cell' : (stepsPerBeat === 4 ? 'sixteenth-cell' : ''));
+            cell.className = `step-cell ${isFilled ? 'step-active' : ''} ${subClass}`;
             cell.dataset.step = `${stepIdx}`;
             cell.dataset.note = `${inst.note}`;
 
