@@ -724,6 +724,14 @@
       gap: 12px;
       box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
       margin-top: 16px;
+      overflow-x: auto;
+    }
+
+    .piano-roll-scroll-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: max-content;
     }
 
     .c-chord-guardrail-badge {
@@ -740,20 +748,25 @@
     }
 
     .piano-roll-body {
-      max-height: 380px;
+      max-height: 420px;
       overflow-y: auto;
       overflow-x: hidden;
       border: 1px solid rgba(148, 163, 184, 0.15);
       border-radius: 6px;
       background: rgba(15, 23, 42, 0.4);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
     }
 
     .piano-pitch-row {
-      height: 24px;
-      min-height: 24px;
-      padding: 0 4px;
-      gap: 8px;
-      border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+      height: 28px;
+      min-height: 28px;
+      padding: 2px 8px;
+      gap: 16px;
+      display: flex;
+      align-items: center;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.06);
     }
 
     .piano-pitch-row:hover {
@@ -761,18 +774,23 @@
     }
 
     .pitch-row-root {
-      background: rgba(245, 158, 11, 0.07);
+      background: rgba(245, 158, 11, 0.08);
+      border-left: 3px solid #f59e0b;
     }
 
     .pitch-row-fifth {
-      background: rgba(56, 189, 248, 0.05);
+      background: rgba(56, 189, 248, 0.06);
+      border-left: 3px solid #38bdf8;
     }
 
     .pitch-row-third {
-      background: rgba(52, 211, 153, 0.05);
+      background: rgba(52, 211, 153, 0.06);
+      border-left: 3px solid #34d399;
     }
 
     .piano-key-label {
+      width: 210px;
+      min-width: 210px;
       height: 24px;
       padding: 0 8px;
       border-radius: 4px;
@@ -781,6 +799,8 @@
       align-items: center;
       justify-content: space-between;
       transition: all 0.15s;
+      flex-shrink: 0;
+      user-select: none;
     }
 
     .piano-white-key {

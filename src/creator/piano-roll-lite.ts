@@ -3,6 +3,7 @@
  * 輕量貝斯鋼琴捲軸元件 (Piano Roll Lite - Bass)
  * 專為 PSR-SX920 伴奏風格 SFF2 CASM 轉調規則量身打造
  * 包含 C 大調和弦安全導引防呆機制 (C 根音、G 五度音、E 三度音高亮徽章)
+ * 網格容器架構與鼓組步進器 (steps-container / bar-group / beat-group) 100% 像素級對齊！
  */
 
 import { bassSynth } from './bass-synth';
@@ -25,10 +26,9 @@ export class PianoRollLite {
   // 貝斯音域：C1 (36) 至 C3 (60) 共 25 個半音，由高至低排列
   private pitches: BassPitchInfo[] = [];
 
-  // 音符狀態：stepIndex -> number (MIDI note) | null (單音模式)
+  // 音符狀態：stepIndex -> number (MIDI note)
   private pattern: Map<number, number> = new Map();
 
-  private playheadStep: number | null = null;
   private onPatternChange?: () => void;
   private onTriggerNote?: (note: number, velocity: number) => void;
 
@@ -209,17 +209,13 @@ export class PianoRollLite {
     return note !== undefined ? [note] : [];
   }
 
-  public setPlayheadStep(step: number | null) {
-    if (this.playheadStep === step) return;
-    this.playheadStep = step;
+  public setPlayheadStep(stepIndex: number | null): void {
+    const prev = this.container.querySelectorAll('.step-cell.active-playhead, .step-header-cell.active-playhead');
+    prev.forEach(el => el.classList.remove('active-playhead'));
 
-    // 更新畫面上目前走帶高亮格
-    const allPlayheadCells = this.container.querySelectorAll('.bass-cell.playing, .bass-header-cell.playing');
-    allPlayheadCells.forEach(el => el.classList.remove('playing'));
-
-    if (step !== null) {
-      const activeCells = this.container.querySelectorAll(`[data-step="${step}"]`);
-      activeCells.forEach(el => el.classList.add('playing'));
+    if (stepIndex !== null && stepIndex >= 0) {
+      const current = this.container.querySelectorAll(`[data-step="${stepIndex}"]`);
+      current.forEach(el => el.classList.add('active-playhead'));
     }
   }
 
@@ -257,6 +253,7 @@ export class PianoRollLite {
 
   /**
    * 繪製完整貝斯鋼琴捲軸介面
+   * 採用與鼓組完全一致的 steps-container -> bar-group -> beat-group 橫向流式排版
    */
   public render() {
     this.container.innerHTML = '';
@@ -264,7 +261,6 @@ export class PianoRollLite {
     const stepsPerBar = this.getStepsPerBar();
     const stepsPerBeat = this.getStepsPerBeat();
     const beatsPerBar = this.getBeatsPerBar();
-    const totalSteps = this.getTotalSteps();
 
     // 1. 捲軸頂部輔助工具列
     const toolbar = document.createElement('div');
@@ -301,51 +297,52 @@ export class PianoRollLite {
     const scrollWrap = document.createElement('div');
     scrollWrap.className = 'grid-scroll-wrapper piano-roll-scroll-wrapper';
 
-    // 3. 頂部小節與拍子標記列
+    // 3. 頂部小節與拍子標記列 (Header Row)
     const headerRow = document.createElement('div');
     headerRow.className = 'grid-row grid-header-row';
 
     const headerCorner = document.createElement('div');
     headerCorner.className = 'row-header-label';
-    headerCorner.style.width = '180px';
-    headerCorner.style.minWidth = '180px';
     headerCorner.innerHTML = `
-      <span style="font-size: 0.78rem; font-weight: 700; color: #94a3b8; display: flex; align-items: center; gap: 4px;">
-        🎹 琴鍵音高 / 拍子
+      <span style="font-size: 0.82rem; font-weight: 700; color: #38bdf8; display: flex; align-items: center; gap: 6px;">
+        🎹 貝斯音高 / 拍子
       </span>
     `;
     headerRow.appendChild(headerCorner);
 
-    const stepHeadersWrap = document.createElement('div');
-    stepHeadersWrap.className = 'step-cells-wrap';
+    const headerStepsContainer = document.createElement('div');
+    headerStepsContainer.className = 'steps-container';
 
     for (let bar = 0; bar < this.totalBars; bar++) {
+      const barGroup = document.createElement('div');
+      barGroup.className = 'bar-group';
+
       for (let beat = 0; beat < beatsPerBar; beat++) {
+        const beatGroup = document.createElement('div');
+        beatGroup.className = 'beat-group';
+
         for (let sub = 0; sub < stepsPerBeat; sub++) {
-          const globalStep = (bar * beatsPerBar + beat) * stepsPerBeat + sub;
-          const isBarStart = beat === 0 && sub === 0;
-          const isBeatStart = sub === 0;
+          const stepIdx = bar * stepsPerBar + beat * stepsPerBeat + sub;
+          const stepHeader = document.createElement('div');
+          stepHeader.className = `step-header-cell ${sub === 0 ? 'beat-start' : ''}`;
+          stepHeader.dataset.step = `${stepIdx}`;
 
-          const cell = document.createElement('div');
-          cell.className = `step-header-cell bass-header-cell ${isBarStart ? 'bar-start' : ''} ${isBeatStart ? 'beat-start' : ''}`;
-          cell.setAttribute('data-step', globalStep.toString());
-
-          if (isBarStart && this.totalBars > 1) {
-            cell.innerHTML = `<span class="bar-num" style="color: #38bdf8; font-weight: 800;">M${bar + 1}</span>`;
-          } else if (isBeatStart) {
-            cell.innerHTML = `<span class="beat-num">${beat + 1}</span>`;
+          if (sub === 0) {
+            stepHeader.innerHTML = `<span class="beat-num">${beat + 1}</span>`;
           } else {
-            cell.innerHTML = `<span class="sub-dot">·</span>`;
+            stepHeader.innerHTML = `<span class="sub-dot">·</span>`;
           }
 
-          stepHeadersWrap.appendChild(cell);
+          beatGroup.appendChild(stepHeader);
         }
+        barGroup.appendChild(beatGroup);
       }
+      headerStepsContainer.appendChild(barGroup);
     }
-    headerRow.appendChild(stepHeadersWrap);
+    headerRow.appendChild(headerStepsContainer);
     scrollWrap.appendChild(headerRow);
 
-    // 4. 捲軸內容區 (可限制高度並捲動，預設直接精準顯示 C1 ~ C3)
+    // 4. 捲軸內容區 (可限制高度並垂直捲動)
     const rollBody = document.createElement('div');
     rollBody.className = 'piano-roll-body';
 
@@ -359,11 +356,9 @@ export class PianoRollLite {
 
       pitchRow.className = `grid-row piano-pitch-row ${rowRoleClass}`;
 
-      // 左側鋼琴琴鍵
+      // 左側鋼琴琴鍵 (固定 210px 與上方鼓組標籤對齊)
       const keyLabel = document.createElement('div');
       keyLabel.className = `row-header-label piano-key-label ${pitch.isBlack ? 'piano-black-key' : 'piano-white-key'}`;
-      keyLabel.style.width = '180px';
-      keyLabel.style.minWidth = '180px';
       keyLabel.setAttribute('title', `點擊試聽 ${pitch.name} (MIDI ${pitch.note})`);
 
       let badgeHtml = '';
@@ -378,7 +373,7 @@ export class PianoRollLite {
 
       keyLabel.innerHTML = `
         <div class="piano-key-content">
-          <span class="pitch-name ${pitch.role === 'root' ? 'root-text' : ''}">${pitch.name}</span>
+          <span class="pitch-name ${pitch.role === 'root' ? 'root-text' : ''}">🎹 ${pitch.name}</span>
           ${badgeHtml}
         </div>
       `;
@@ -390,52 +385,65 @@ export class PianoRollLite {
 
       pitchRow.appendChild(keyLabel);
 
-      // 右側步進格子清單
-      const cellsWrap = document.createElement('div');
-      cellsWrap.className = 'step-cells-wrap';
+      // 右側步進格子容器
+      const stepsContainer = document.createElement('div');
+      stepsContainer.className = 'steps-container';
 
-      for (let s = 0; s < totalSteps; s++) {
-        const subInBeat = s % stepsPerBeat;
-        const isBarStart = (s % stepsPerBar) === 0;
-        const isBeatStart = subInBeat === 0;
+      for (let bar = 0; bar < this.totalBars; bar++) {
+        const barGroup = document.createElement('div');
+        barGroup.className = 'bar-group';
 
-        const cell = document.createElement('div');
-        const isActive = this.pattern.get(s) === pitch.note;
+        for (let beat = 0; beat < beatsPerBar; beat++) {
+          const beatGroup = document.createElement('div');
+          beatGroup.className = `beat-group ${beat % 2 === 0 ? 'beat-even' : 'beat-odd'}`;
 
-        let activeColorClass = '';
-        if (isActive) {
-          if (pitch.role === 'root') activeColorClass = 'active-root';
-          else if (pitch.role === 'fifth') activeColorClass = 'active-fifth';
-          else if (pitch.role === 'third') activeColorClass = 'active-third';
-          else activeColorClass = 'active-scale';
-        }
+          for (let sub = 0; sub < stepsPerBeat; sub++) {
+            const stepIdx = bar * stepsPerBar + beat * stepsPerBeat + sub;
+            const cell = document.createElement('div');
+            const isActive = this.pattern.get(stepIdx) === pitch.note;
 
-        cell.className = `step-cell bass-cell ${isBarStart ? 'bar-start' : ''} ${isBeatStart ? 'beat-start' : ''} ${pitch.isBlack ? 'black-key-row' : ''} ${isActive ? 'active ' + activeColorClass : ''}`;
-        cell.setAttribute('data-step', s.toString());
-        cell.setAttribute('data-note', pitch.note.toString());
+            let activeColorClass = '';
+            if (isActive) {
+              if (pitch.role === 'root') activeColorClass = 'active-root';
+              else if (pitch.role === 'fifth') activeColorClass = 'active-fifth';
+              else if (pitch.role === 'third') activeColorClass = 'active-third';
+              else activeColorClass = 'active-scale';
+            }
 
-        // 點擊格子切換該步音符 (單音模式：同一步只能有一個貝斯音符)
-        cell.addEventListener('click', () => {
-          if (this.pattern.get(s) === pitch.note) {
-            // 已啟用則關閉
-            this.pattern.delete(s);
-          } else {
-            // 啟用新音符並自動替換同一步的其他舊音
-            this.pattern.set(s, pitch.note);
-            this.playNoteSound(pitch.note, 100);
+            cell.className = `step-cell bass-cell ${sub === 0 ? 'beat-start' : ''} ${pitch.isBlack ? 'black-key-row' : ''} ${isActive ? 'step-active ' + activeColorClass : ''}`;
+            cell.dataset.step = `${stepIdx}`;
+            cell.dataset.note = `${pitch.note}`;
+
+            cell.addEventListener('click', () => {
+              if (this.pattern.get(stepIdx) === pitch.note) {
+                // 已啟用則關閉
+                this.pattern.delete(stepIdx);
+              } else {
+                // 啟用新音符並自動替換同一步的其他舊音 (單音低音模式)
+                this.pattern.set(stepIdx, pitch.note);
+                this.playNoteSound(pitch.note, 100);
+              }
+              this.render();
+              this.onPatternChange?.();
+            });
+
+            beatGroup.appendChild(cell);
           }
-          this.render();
-          this.onPatternChange?.();
-        });
-
-        cellsWrap.appendChild(cell);
+          barGroup.appendChild(beatGroup);
+        }
+        stepsContainer.appendChild(barGroup);
       }
 
-      pitchRow.appendChild(cellsWrap);
+      pitchRow.appendChild(stepsContainer);
       rollBody.appendChild(pitchRow);
     }
 
     scrollWrap.appendChild(rollBody);
     this.container.appendChild(scrollWrap);
+
+    // 捲動至最常用的低音核心區段 (C1 ~ C2)
+    setTimeout(() => {
+      rollBody.scrollTop = Math.round(rollBody.scrollHeight * 0.45);
+    }, 10);
   }
 }
