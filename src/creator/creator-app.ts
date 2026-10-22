@@ -102,7 +102,9 @@ export class CreatorApp {
         drumContainer,
         this.state.totalBars,
         () => this.onPatternModified(),
-        (note, vel) => this.sendMidiDrumTrigger(note, vel)
+        (note, vel) => this.sendMidiDrumTrigger(note, vel),
+        (res) => this.onGlobalResolutionChange(res),
+        (sig) => this.onGlobalTimeSignatureChange(sig)
       );
     }
 
@@ -393,6 +395,30 @@ export class CreatorApp {
     } else {
       this.setStatus(`✓ 已將【${this.state.currentSection}】複製到【${targetSectionName}】`);
     }
+  }
+
+  /**
+   * 當使用者切換網格解析度 (1/16 vs 1/8) 時，全曲（鼓組與貝斯）同步更新
+   */
+  private onGlobalResolutionChange(res: import('./drum-step-grid').GridResolution) {
+    this.bassRoll?.setResolution(res);
+    if (this.state.isPlaying) {
+      this.restartPlaybackTimer();
+    }
+    this.saveCurrentSectionToStore();
+    this.setStatus(`✓ 全曲（鼓組與貝斯）網格解析度已同步切換為【${res === '1/16' ? '1/16 (16分音符，細緻)' : '1/8 (8分音符，簡潔)'}】`);
+  }
+
+  /**
+   * 當使用者切換拍號 (4/4, 3/4, 6/8) 時，全曲（鼓組與貝斯）同步更新
+   */
+  private onGlobalTimeSignatureChange(sig: import('./drum-step-grid').TimeSignatureType) {
+    this.bassRoll?.setTimeSignature(sig);
+    if (this.state.isPlaying) {
+      this.restartPlaybackTimer();
+    }
+    this.saveCurrentSectionToStore();
+    this.setStatus(`✓ 全曲（鼓組與貝斯）拍號已同步切換為【${sig} 拍】`);
   }
 
   /**

@@ -52,17 +52,23 @@ export class DrumStepGrid {
   private pattern: Map<number, boolean[]> = new Map();
   private onPatternChange?: () => void;
   private onTriggerNote?: (note: number, velocity: number) => void;
+  private onResolutionChange?: (res: GridResolution) => void;
+  private onTimeSignatureChange?: (sig: TimeSignatureType) => void;
 
   constructor(
     container: HTMLElement,
     totalBars: number = 4,
     onPatternChange?: () => void,
-    onTriggerNote?: (note: number, velocity: number) => void
+    onTriggerNote?: (note: number, velocity: number) => void,
+    onResolutionChange?: (res: GridResolution) => void,
+    onTimeSignatureChange?: (sig: TimeSignatureType) => void
   ) {
     this.container = container;
     this.totalBars = totalBars;
     this.onPatternChange = onPatternChange;
     this.onTriggerNote = onTriggerNote;
+    this.onResolutionChange = onResolutionChange;
+    this.onTimeSignatureChange = onTimeSignatureChange;
 
     this.initPattern();
     this.render();
@@ -128,7 +134,30 @@ export class DrumStepGrid {
 
   public setResolution(res: GridResolution) {
     if (this.resolution === res) return;
+    const oldRes = this.resolution;
     this.resolution = res;
+
+    // 智能轉換音符位置 (1/16 <-> 1/8)，不遺失已編好的鼓點
+    const newTotalSteps = this.totalBars * this.getStepsPerBar();
+    const newPattern = new Map<number, boolean[]>();
+
+    this.pattern.forEach((arr, note) => {
+      const newArr = new Array(newTotalSteps).fill(false);
+      for (let s = 0; s < arr.length; s++) {
+        if (arr[s]) {
+          if (oldRes === '1/16' && res === '1/8') {
+            const mappedStep = Math.round(s / 2);
+            if (mappedStep < newTotalSteps) newArr[mappedStep] = true;
+          } else if (oldRes === '1/8' && res === '1/16') {
+            const mappedStep = s * 2;
+            if (mappedStep < newTotalSteps) newArr[mappedStep] = true;
+          }
+        }
+      }
+      newPattern.set(note, newArr);
+    });
+
+    this.pattern = newPattern;
     this.initPattern();
     this.render();
   }
@@ -342,10 +371,18 @@ export class DrumStepGrid {
 
     // 綁定工具列事件
     const selectSig = toolbar.querySelector('#grid-time-sig-select') as HTMLSelectElement | null;
-    selectSig?.addEventListener('change', () => this.setTimeSignature(selectSig.value as TimeSignatureType));
+    selectSig?.addEventListener('change', () => {
+      const sig = selectSig.value as TimeSignatureType;
+      this.setTimeSignature(sig);
+      this.onTimeSignatureChange?.(sig);
+    });
 
     const selectRes = toolbar.querySelector('#grid-res-select') as HTMLSelectElement | null;
-    selectRes?.addEventListener('change', () => this.setResolution(selectRes.value as GridResolution));
+    selectRes?.addEventListener('change', () => {
+      const res = selectRes.value as GridResolution;
+      this.setResolution(res);
+      this.onResolutionChange?.(res);
+    });
 
     const btnAdd = toolbar.querySelector('#btn-add-drum-row') as HTMLButtonElement | null;
     btnAdd?.addEventListener('click', () => this.openAddVoiceModal());

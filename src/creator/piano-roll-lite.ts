@@ -126,8 +126,29 @@ export class PianoRollLite {
   }
 
   public setResolution(res: GridResolution) {
+    if (this.resolution === res) return;
+    const oldRes = this.resolution;
     this.resolution = res;
-    this.pattern.clear();
+
+    // 智能轉換貝斯音符位置 (1/16 <-> 1/8)，不遺失已編好的音符
+    const newPattern = new Map<number, number>();
+    const newTotalSteps = this.totalBars * this.getStepsPerBar();
+
+    this.pattern.forEach((note, s) => {
+      if (oldRes === '1/16' && res === '1/8') {
+        const mappedStep = Math.round(s / 2);
+        if (mappedStep < newTotalSteps && !newPattern.has(mappedStep)) {
+          newPattern.set(mappedStep, note);
+        }
+      } else if (oldRes === '1/8' && res === '1/16') {
+        const mappedStep = s * 2;
+        if (mappedStep < newTotalSteps) {
+          newPattern.set(mappedStep, note);
+        }
+      }
+    });
+
+    this.pattern = newPattern;
     this.render();
     this.onPatternChange?.();
   }
