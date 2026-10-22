@@ -243,18 +243,18 @@ export class DrumStepGrid {
 
   /**
    * 核心功能：將第 1 小節一鍵鋪滿至後續所有小節
+   * 嚴格覆蓋式複製，確保後續小節與第 1 小節 100% 完全一致
    */
   public cloneFirstBar(): void {
     const stepsPerBar = this.getStepsPerBar();
-    for (const inst of this.activeVoices) {
-      const steps = this.pattern.get(inst.note)!;
+    this.pattern.forEach((steps) => {
       const bar1 = steps.slice(0, stepsPerBar);
       for (let bar = 1; bar < this.totalBars; bar++) {
         for (let s = 0; s < stepsPerBar; s++) {
           steps[bar * stepsPerBar + s] = bar1[s];
         }
       }
-    }
+    });
     this.render();
     this.onPatternChange?.();
   }

@@ -184,24 +184,33 @@ export class PianoRollLite {
 
   /**
    * 一鍵將第 1 小節的貝斯律動複製鋪滿全部小節
+   * 先徹底清空第 2 小節起的所有殘留舊音符，再進行嚴格的覆蓋式複製
    */
   public cloneFirstBar() {
     const stepsPerBar = this.getStepsPerBar();
-    const bar1Pattern: Array<{ step: number; note: number }> = [];
+    const totalSteps = this.getTotalSteps();
 
+    // 1. 取得第 1 小節的音符配置
+    const bar1Map = new Map<number, number>();
     for (let s = 0; s < stepsPerBar; s++) {
       const note = this.pattern.get(s);
       if (note !== undefined) {
-        bar1Pattern.push({ step: s, note });
+        bar1Map.set(s, note);
       }
     }
 
-    if (bar1Pattern.length === 0) return;
+    // 2. 先將第 2 小節之後 (stepsPerBar 起) 的所有舊音符徹底清除，防止殘留
+    for (let s = stepsPerBar; s < totalSteps; s++) {
+      this.pattern.delete(s);
+    }
 
-    for (let bar = 1; bar < this.totalBars; bar++) {
-      const offset = bar * stepsPerBar;
-      for (const item of bar1Pattern) {
-        this.pattern.set(offset + item.step, item.note);
+    // 3. 只有在第 1 小節有音符時，才複製到後續小節
+    if (bar1Map.size > 0) {
+      for (let bar = 1; bar < this.totalBars; bar++) {
+        const offset = bar * stepsPerBar;
+        bar1Map.forEach((note, stepInBar) => {
+          this.pattern.set(offset + stepInBar, note);
+        });
       }
     }
 
