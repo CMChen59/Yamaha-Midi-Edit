@@ -86,8 +86,6 @@ export class CreatorApp {
 
   constructor() {
     this.initElements();
-    this.initDrumKitSelector();
-    this.initBassVoiceSelector();
     this.initSectionSelector();
     this.initMidi();
     this.bindEvents();
@@ -104,7 +102,9 @@ export class CreatorApp {
         () => this.onPatternModified(),
         (note, vel) => this.sendMidiDrumTrigger(note, vel),
         (res) => this.onGlobalResolutionChange(res),
-        (sig) => this.onGlobalTimeSignatureChange(sig)
+        (sig) => this.onGlobalTimeSignatureChange(sig),
+        (kitId) => this.onDrumKitChange(kitId),
+        this.state.selectedDrumKit.id
       );
     }
 
@@ -114,7 +114,9 @@ export class CreatorApp {
         bassContainer,
         this.state.totalBars,
         () => this.onPatternModified(),
-        (note, vel) => this.sendMidiBassTrigger(note, vel)
+        (note, vel) => this.sendMidiBassTrigger(note, vel),
+        (voiceId) => this.onBassVoiceChange(voiceId),
+        this.state.selectedBassVoice.id
       );
     }
 
@@ -128,61 +130,27 @@ export class CreatorApp {
   }
 
   /**
-   * 初始化鼓組下拉選單
+   * 鼓組切換處理
    */
-  private initDrumKitSelector() {
-    const selectKit = document.getElementById('select-drum-kit') as HTMLSelectElement | null;
-    if (!selectKit) return;
-
-    selectKit.innerHTML = '';
-    for (const kit of YAMAHA_SX920_DRUM_KITS) {
-      const opt = document.createElement('option');
-      opt.value = kit.id;
-      opt.textContent = `${kit.icon} ${kit.name} (PC ${kit.panelPc} / Bank ${kit.msb}-${kit.lsb})`;
-      if (kit.id === this.state.selectedDrumKit.id) {
-        opt.selected = true;
-      }
-      selectKit.appendChild(opt);
+  private onDrumKitChange(kitId: string) {
+    const found = YAMAHA_SX920_DRUM_KITS.find(k => k.id === kitId);
+    if (found) {
+      this.state.selectedDrumKit = found;
+      this.syncDrumKitToKeyboard();
+      this.setStatus(`✓ 已切換鼓組【${found.name}】(琴端代碼: PC ${found.panelPc}, Bank ${found.msb}-${found.lsb})`);
     }
-
-    selectKit.addEventListener('change', () => {
-      const selectedId = selectKit.value;
-      const found = YAMAHA_SX920_DRUM_KITS.find(k => k.id === selectedId);
-      if (found) {
-        this.state.selectedDrumKit = found;
-        this.syncDrumKitToKeyboard();
-        this.setStatus(`✓ 已切換鼓組【${found.name}】(琴端代碼: PC ${found.panelPc}, Bank ${found.msb}-${found.lsb})`);
-      }
-    });
   }
 
   /**
-   * 初始化貝斯音色下拉選單
+   * 貝斯音色切換處理
    */
-  private initBassVoiceSelector() {
-    const selectBass = document.getElementById('select-bass-voice') as HTMLSelectElement | null;
-    if (!selectBass) return;
-
-    selectBass.innerHTML = '';
-    for (const bass of YAMAHA_SX920_BASS_VOICES) {
-      const opt = document.createElement('option');
-      opt.value = bass.id;
-      opt.textContent = `${bass.icon} ${bass.name} (PC ${bass.panelPc} / Bank ${bass.msb}-${bass.lsb})`;
-      if (bass.id === this.state.selectedBassVoice.id) {
-        opt.selected = true;
-      }
-      selectBass.appendChild(opt);
+  private onBassVoiceChange(voiceId: string) {
+    const found = YAMAHA_SX920_BASS_VOICES.find(b => b.id === voiceId);
+    if (found) {
+      this.state.selectedBassVoice = found;
+      this.syncBassVoiceToKeyboard();
+      this.setStatus(`✓ 已切換貝斯【${found.name}】(琴端代碼: PC ${found.panelPc}, Bank ${found.msb}-${found.lsb})`);
     }
-
-    selectBass.addEventListener('change', () => {
-      const selectedId = selectBass.value;
-      const found = YAMAHA_SX920_BASS_VOICES.find(b => b.id === selectedId);
-      if (found) {
-        this.state.selectedBassVoice = found;
-        this.syncBassVoiceToKeyboard();
-        this.setStatus(`✓ 已切換貝斯【${found.name}】(琴端代碼: PC ${found.panelPc}, Bank ${found.msb}-${found.lsb})`);
-      }
-    });
   }
 
   /**

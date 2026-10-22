@@ -396,7 +396,8 @@
     .grid-toolbar-left, .grid-toolbar-right {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 10px;
+      flex-wrap: wrap;
     }
 
     .grid-select {
@@ -1010,22 +1011,6 @@
         </span>
       </div>
       <div class="voice-controls-wrap">
-        <!-- 鼓組套件選擇器 -->
-        <div class="drum-kit-selector-wrap">
-          <label for="select-drum-kit" class="control-label">🥁 琴端鼓組:</label>
-          <select id="select-drum-kit" class="kit-select-input" title="選擇匯出與琴端監聽使用的 Yamaha 原廠鼓組套件">
-            <!-- 程式載入時由 YAMAHA_SX920_DRUM_KITS 自動填入 -->
-          </select>
-        </div>
-
-        <!-- 貝斯音色選擇器 -->
-        <div class="drum-kit-selector-wrap">
-          <label for="select-bass-voice" class="control-label">🎸 琴端貝斯:</label>
-          <select id="select-bass-voice" class="kit-select-input" title="選擇匯出與琴端監聽使用的 Yamaha 原廠貝斯音色 (Channel 11)">
-            <!-- 程式載入時由 YAMAHA_SX920_BASS_VOICES 自動填入 -->
-          </select>
-        </div>
-
         <!-- 實體琴 USB Web MIDI 發聲監聽開關 -->
         <button id="btn-midi-connect" class="btn-midi-status" title="點擊連結實體琴 USB，即可直接從 PSR-SX920 喇叭發聲試聽！">
           <span class="midi-led-dot"></span>

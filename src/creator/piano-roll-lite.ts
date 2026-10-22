@@ -8,6 +8,7 @@
 
 import { bassSynth } from './bass-synth';
 import type { GridResolution, TimeSignatureType } from './drum-step-grid';
+import { YAMAHA_SX920_BASS_VOICES } from './bass-voices';
 
 export interface BassPitchInfo {
   note: number;      // MIDI 音高 (例如 36 = C1)
@@ -28,23 +29,42 @@ export class PianoRollLite {
 
   // 音符狀態：stepIndex -> number (MIDI note)
   private pattern: Map<number, number> = new Map();
+  private selectedVoiceId: string = 'finger-bass';
 
   private onPatternChange?: () => void;
   private onTriggerNote?: (note: number, velocity: number) => void;
+  private onBassVoiceChange?: (voiceId: string) => void;
 
   constructor(
     container: HTMLElement,
     totalBars: number = 4,
     onPatternChange?: () => void,
-    onTriggerNote?: (note: number, velocity: number) => void
+    onTriggerNote?: (note: number, velocity: number) => void,
+    onBassVoiceChange?: (voiceId: string) => void,
+    initialVoiceId: string = 'finger-bass'
   ) {
     this.container = container;
     this.totalBars = totalBars;
     this.onPatternChange = onPatternChange;
     this.onTriggerNote = onTriggerNote;
+    this.onBassVoiceChange = onBassVoiceChange;
+    this.selectedVoiceId = initialVoiceId;
 
     this.initPitches();
     this.render();
+  }
+
+  public setSelectedVoiceId(voiceId: string): void {
+    if (this.selectedVoiceId === voiceId) return;
+    this.selectedVoiceId = voiceId;
+    const selectBass = this.container.querySelector('#select-bass-voice') as HTMLSelectElement | null;
+    if (selectBass) {
+      selectBass.value = voiceId;
+    }
+  }
+
+  public getSelectedVoiceId(): string {
+    return this.selectedVoiceId;
   }
 
   /**
@@ -314,9 +334,19 @@ export class PianoRollLite {
     toolbar.innerHTML = `
       <div class="grid-toolbar-left">
         <span style="font-weight: 700; color: #38bdf8; display: flex; align-items: center; gap: 6px;">
-          🎸 貝斯低音音軌 (Bass Track - Channel 11)
+          🎸 貝斯音軌
         </span>
-        <span class="c-chord-guardrail-badge" title="PSR-SX920 原廠 SFF2 CASM 轉調規則以 C 大調為基準。標有金色、青色、綠色之音符在彈奏左手和弦時保證 100% 正確轉調！">
+        <div class="drum-kit-selector-wrap" style="margin-left: 4px;">
+          <label for="select-bass-voice" class="control-label">🎸 琴端貝斯:</label>
+          <select id="select-bass-voice" class="kit-select-input" title="選擇匯出與琴端監聽使用的 Yamaha 原廠貝斯音色 (Channel 11)">
+            ${YAMAHA_SX920_BASS_VOICES.map(b => `
+              <option value="${b.id}" ${b.id === this.selectedVoiceId ? 'selected' : ''}>
+                ${b.icon} ${b.name} (PC ${b.panelPc} / Bank ${b.msb}-${b.lsb})
+              </option>
+            `).join('')}
+          </select>
+        </div>
+        <span class="c-chord-guardrail-badge" title="PSR-SX920 原廠 SFF2 CASM 轉調規則以 C 大調為基準。標有金色、青色、綠色之音符在彈奏左手和弦時保證 100% 正確轉調！" style="margin-left: 4px;">
           🛡️ C 大調安全防呆啟用
         </span>
       </div>
@@ -335,6 +365,11 @@ export class PianoRollLite {
     this.container.appendChild(toolbar);
 
     // 綁定工具按鈕事件
+    const selectBass = toolbar.querySelector('#select-bass-voice') as HTMLSelectElement | null;
+    selectBass?.addEventListener('change', () => {
+      this.selectedVoiceId = selectBass.value;
+      this.onBassVoiceChange?.(selectBass.value);
+    });
     toolbar.querySelector('#btn-bass-template')?.addEventListener('click', () => this.insertClassicPattern());
     toolbar.querySelector('#btn-bass-clone')?.addEventListener('click', () => this.cloneFirstBar());
     toolbar.querySelector('#btn-bass-clear')?.addEventListener('click', () => this.clear());

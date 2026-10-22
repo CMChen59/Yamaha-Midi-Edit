@@ -5,6 +5,7 @@
  */
 
 import { drumSynth } from './drum-synth';
+import { YAMAHA_SX920_DRUM_KITS } from './drum-kits';
 
 export interface DrumVoiceOption {
   note: number;
@@ -50,10 +51,12 @@ export class DrumStepGrid {
 
   // 步進狀態記錄：note -> boolean[] (長度 = totalBars * stepsPerBar)
   private pattern: Map<number, boolean[]> = new Map();
+  private selectedKitId: string = 'standard-kit-1';
   private onPatternChange?: () => void;
   private onTriggerNote?: (note: number, velocity: number) => void;
   private onResolutionChange?: (res: GridResolution) => void;
   private onTimeSignatureChange?: (sig: TimeSignatureType) => void;
+  private onDrumKitChange?: (kitId: string) => void;
 
   constructor(
     container: HTMLElement,
@@ -61,7 +64,9 @@ export class DrumStepGrid {
     onPatternChange?: () => void,
     onTriggerNote?: (note: number, velocity: number) => void,
     onResolutionChange?: (res: GridResolution) => void,
-    onTimeSignatureChange?: (sig: TimeSignatureType) => void
+    onTimeSignatureChange?: (sig: TimeSignatureType) => void,
+    onDrumKitChange?: (kitId: string) => void,
+    initialKitId: string = 'standard-kit-1'
   ) {
     this.container = container;
     this.totalBars = totalBars;
@@ -69,9 +74,24 @@ export class DrumStepGrid {
     this.onTriggerNote = onTriggerNote;
     this.onResolutionChange = onResolutionChange;
     this.onTimeSignatureChange = onTimeSignatureChange;
+    this.onDrumKitChange = onDrumKitChange;
+    this.selectedKitId = initialKitId;
 
     this.initPattern();
     this.render();
+  }
+
+  public setSelectedKitId(kitId: string): void {
+    if (this.selectedKitId === kitId) return;
+    this.selectedKitId = kitId;
+    const selectKit = this.container.querySelector('#select-drum-kit') as HTMLSelectElement | null;
+    if (selectKit) {
+      selectKit.value = kitId;
+    }
+  }
+
+  public getSelectedKitId(): string {
+    return this.selectedKitId;
   }
 
   public playSound(note: number, velocity: number = 100) {
@@ -339,7 +359,7 @@ export class DrumStepGrid {
     const scrollWrapper = document.createElement('div');
     scrollWrapper.className = 'grid-scroll-wrapper';
 
-    // 1. 建立頂部控制輔助列 (Toolbar / Add voice / Resolution switch)
+    // 1. 建立頂部控制輔助列 (Toolbar / Add voice / Resolution switch / Drum Kit)
     const toolbar = document.createElement('div');
     toolbar.className = 'grid-toolbar';
     toolbar.innerHTML = `
@@ -351,11 +371,22 @@ export class DrumStepGrid {
           <option value="6/8" ${this.timeSignature === '6/8' ? 'selected' : ''}>6/8 拍 (三連慢搖)</option>
         </select>
 
-        <label style="font-size: 0.82rem; color: #94a3b8; font-weight: 600; margin-left: 12px;">網格解析度:</label>
+        <label style="font-size: 0.82rem; color: #94a3b8; font-weight: 600;">解析度:</label>
         <select id="grid-res-select" class="grid-select">
-          <option value="1/16" ${this.resolution === '1/16' ? 'selected' : ''}>1/16 (16分音符，細緻)</option>
-          <option value="1/8" ${this.resolution === '1/8' ? 'selected' : ''}>1/8 (8分音符，簡潔)</option>
+          <option value="1/16" ${this.resolution === '1/16' ? 'selected' : ''}>1/16 (細緻)</option>
+          <option value="1/8" ${this.resolution === '1/8' ? 'selected' : ''}>1/8 (簡潔)</option>
         </select>
+
+        <div class="drum-kit-selector-wrap" style="margin-left: 4px;">
+          <label for="select-drum-kit" class="control-label">🥁 琴端鼓組:</label>
+          <select id="select-drum-kit" class="kit-select-input" title="選擇匯出與琴端監聽使用的 Yamaha 原廠鼓組套件">
+            ${YAMAHA_SX920_DRUM_KITS.map(k => `
+              <option value="${k.id}" ${k.id === this.selectedKitId ? 'selected' : ''}>
+                ${k.icon} ${k.name} (PC ${k.panelPc} / Bank ${k.msb}-${k.lsb})
+              </option>
+            `).join('')}
+          </select>
+        </div>
       </div>
 
       <div class="grid-toolbar-right">
@@ -385,6 +416,12 @@ export class DrumStepGrid {
       const res = selectRes.value as GridResolution;
       this.setResolution(res);
       this.onResolutionChange?.(res);
+    });
+
+    const selectKit = toolbar.querySelector('#select-drum-kit') as HTMLSelectElement | null;
+    selectKit?.addEventListener('change', () => {
+      this.selectedKitId = selectKit.value;
+      this.onDrumKitChange?.(selectKit.value);
     });
 
     const btnAdd = toolbar.querySelector('#btn-add-drum-row') as HTMLButtonElement | null;
