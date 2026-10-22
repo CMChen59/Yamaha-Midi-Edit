@@ -571,7 +571,6 @@ export class CreatorApp {
         this.drumGrid?.setTotalBars(val);
         this.bassRoll?.setTotalBars(val);
         this.saveCurrentSectionToStore();
-        this.updateCloneButtonText();
         this.setStatus(`【${this.state.currentSection}】伴奏長度已調整為 ${this.state.totalBars} 小節`);
       }
     });
@@ -584,14 +583,6 @@ export class CreatorApp {
     const btnStop = document.getElementById('btn-stop') as HTMLButtonElement | null;
     btnStop?.addEventListener('click', () => {
       this.stop();
-    });
-
-    const btnClone = document.getElementById('btn-clone-bars') as HTMLButtonElement | null;
-    btnClone?.addEventListener('click', () => {
-      this.drumGrid?.cloneFirstBar();
-      this.bassRoll?.cloneFirstBar();
-      this.saveCurrentSectionToStore();
-      this.setStatus(`✨ 已將【${this.state.currentSection}】第 1 小節的鼓點與貝斯一鍵鋪滿至全部 ${this.state.totalBars} 小節！`);
     });
 
     const btnExport = document.getElementById('btn-export-file') as HTMLButtonElement | null;
@@ -953,13 +944,6 @@ export class CreatorApp {
     }
   }
 
-  private updateCloneButtonText() {
-    const btnClone = document.getElementById('btn-clone-bars');
-    if (btnClone) {
-      btnClone.textContent = `⚡ 一鍵鋪滿 ${this.state.totalBars} 小節`;
-    }
-  }
-
   private updateSectionSummary() {
     const summaryEl = document.getElementById('label-sections-summary');
     if (!summaryEl) return;
@@ -987,7 +971,6 @@ export class CreatorApp {
   }
 
   private updateUI() {
-    this.updateCloneButtonText();
     this.refreshSectionOptions();
     this.updateSectionSummary();
   }

@@ -359,11 +359,14 @@ export class DrumStepGrid {
       </div>
 
       <div class="grid-toolbar-right">
-        <button id="btn-add-drum-row" class="btn-grid-tool">
+        <button id="btn-add-drum-row" class="btn-grid-tool" title="加入新的打擊樂器軌道">
           <span>➕</span> 加入打擊樂器
         </button>
-        <button id="btn-clear-grid" class="btn-grid-tool btn-grid-clear">
-          <span>🗑️</span> 清空網格
+        <button id="btn-drum-clone" class="btn-grid-tool" title="將第 1 小節鼓點一鍵鋪滿至全部小節">
+          <span>⚡</span> 一鍵鋪滿 ${this.totalBars} 小節
+        </button>
+        <button id="btn-clear-grid" class="btn-grid-tool btn-grid-clear" title="清除所有鼓點音符">
+          <span>🗑️</span> 清空鼓組
         </button>
       </div>
     `;
@@ -386,6 +389,9 @@ export class DrumStepGrid {
 
     const btnAdd = toolbar.querySelector('#btn-add-drum-row') as HTMLButtonElement | null;
     btnAdd?.addEventListener('click', () => this.openAddVoiceModal());
+
+    const btnClone = toolbar.querySelector('#btn-drum-clone') as HTMLButtonElement | null;
+    btnClone?.addEventListener('click', () => this.cloneFirstBar());
 
     const btnClear = toolbar.querySelector('#btn-clear-grid') as HTMLButtonElement | null;
     btnClear?.addEventListener('click', () => {
