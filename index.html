@@ -713,6 +713,152 @@
       font-size: 0.8rem;
     }
 
+    /* 貝斯鋼琴捲軸樣式 */
+    .piano-roll-panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+      margin-top: 16px;
+    }
+
+    .c-chord-guardrail-badge {
+      font-size: 0.72rem;
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid rgba(245, 158, 11, 0.4);
+      color: #fbbf24;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .piano-roll-body {
+      max-height: 380px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      border: 1px solid rgba(148, 163, 184, 0.15);
+      border-radius: 6px;
+      background: rgba(15, 23, 42, 0.4);
+    }
+
+    .piano-pitch-row {
+      height: 24px;
+      min-height: 24px;
+      padding: 0 4px;
+      gap: 8px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+    }
+
+    .piano-pitch-row:hover {
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .pitch-row-root {
+      background: rgba(245, 158, 11, 0.07);
+    }
+
+    .pitch-row-fifth {
+      background: rgba(56, 189, 248, 0.05);
+    }
+
+    .pitch-row-third {
+      background: rgba(52, 211, 153, 0.05);
+    }
+
+    .piano-key-label {
+      height: 24px;
+      padding: 0 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: all 0.15s;
+    }
+
+    .piano-white-key {
+      background: #1e293b;
+      color: #f1f5f9;
+      border-left: 3px solid #64748b;
+    }
+
+    .piano-white-key:hover {
+      background: #334155;
+    }
+
+    .piano-black-key {
+      background: #090d16;
+      color: #94a3b8;
+      border-left: 3px solid #334155;
+    }
+
+    .piano-black-key:hover {
+      background: #1e293b;
+    }
+
+    .piano-key-content {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+    }
+
+    .pitch-name {
+      font-size: 0.78rem;
+      font-weight: 700;
+      font-family: monospace;
+    }
+
+    .pitch-name.root-text {
+      color: #fbbf24;
+    }
+
+    .pitch-badge {
+      font-size: 0.65rem;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-weight: 700;
+    }
+
+    .step-cell.bass-cell {
+      height: 20px;
+    }
+
+    .step-cell.bass-cell.black-key-row {
+      background: rgba(15, 23, 42, 0.85);
+    }
+
+    .step-cell.bass-cell.active-root {
+      background: linear-gradient(135deg, #f59e0b, #d97706);
+      border-color: #fbbf24;
+      box-shadow: 0 0 10px rgba(245, 158, 11, 0.5);
+    }
+
+    .step-cell.bass-cell.active-fifth {
+      background: linear-gradient(135deg, #0284c7, #0369a1);
+      border-color: #38bdf8;
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+    }
+
+    .step-cell.bass-cell.active-third {
+      background: linear-gradient(135deg, #059669, #047857);
+      border-color: #34d399;
+      box-shadow: 0 0 10px rgba(52, 211, 153, 0.5);
+    }
+
+    .step-cell.bass-cell.active-scale {
+      background: linear-gradient(135deg, #7c3aed, #6d28d9);
+      border-color: #a78bfa;
+      box-shadow: 0 0 8px rgba(124, 58, 237, 0.4);
+    }
+
     /* 底部狀態通知條 */
     footer {
       background: var(--bg-panel);
@@ -814,6 +960,14 @@
           </select>
         </div>
 
+        <!-- 貝斯音色選擇器 -->
+        <div class="drum-kit-selector-wrap">
+          <label for="select-bass-voice" class="control-label">🎸 琴端貝斯:</label>
+          <select id="select-bass-voice" class="kit-select-input" title="選擇匯出與琴端監聽使用的 Yamaha 原廠貝斯音色 (Channel 11)">
+            <!-- 程式載入時由 YAMAHA_SX920_BASS_VOICES 自動填入 -->
+          </select>
+        </div>
+
         <!-- 實體琴 USB Web MIDI 發聲監聽開關 -->
         <button id="btn-midi-connect" class="btn-midi-status" title="點擊連結實體琴 USB，即可直接從 PSR-SX920 喇叭發聲試聽！">
           <span class="midi-led-dot"></span>
@@ -822,9 +976,14 @@
       </div>
     </section>
 
-    <!-- 步進網格主畫板容器 (由 step 2 注入) -->
+    <!-- 步進網格主畫板容器 (鼓組) -->
     <section id="step-grid-container" class="sequencer-panel">
-      <!-- 步進網格將在步驟 2 動態渲染於此 -->
+      <!-- 步進網格動態渲染於此 -->
+    </section>
+
+    <!-- 貝斯鋼琴捲軸主畫板容器 (Bass) -->
+    <section id="bass-roll-container" class="sequencer-panel piano-roll-panel">
+      <!-- 貝斯鋼琴捲軸動態渲染於此 -->
     </section>
   </main>
 
