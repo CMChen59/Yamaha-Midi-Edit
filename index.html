@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Yamaha PSR-SX920 伴奏與插音專注創作台 (V2)</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎹</text></svg>">
+  <style>
+    :root {
+      --bg-dark: #0f172a;
+      --bg-panel: #1e293b;
+      --bg-card: #273549;
+      --border-color: rgba(148, 163, 184, 0.2);
+      --accent: #38bdf8;
+      --accent-hover: #0284c7;
+      --accent-gold: #f59e0b;
+      --accent-green: #10b981;
+      --accent-rose: #f43f5e;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* 頂部導航列 */
+    header {
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border-color);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      font-size: 28px;
+    }
+
+    .brand-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand-badge {
+      font-size: 0.72rem;
+      background: rgba(56, 189, 248, 0.15);
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+
+    /* 模式切換鈕 (STY / PAD) */
+    .mode-switch {
+      display: flex;
+      background: rgba(15, 23, 42, 0.6);
+      padding: 4px;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+      gap: 4px;
+    }
+
+    .mode-btn {
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .mode-btn:hover {
+      color: #fff;
+    }
+
+    .mode-btn.active {
+      background: var(--accent);
+      color: #0f172a;
+      box-shadow: 0 2px 8px rgba(56, 189, 248, 0.3);
+    }
+
+    /* 播放控制工具列 */
+    .transport-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--bg-card);
+      padding: 6px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+    }
+
+    .btn-transport {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-play {
+      background: var(--accent-green);
+      color: #fff;
+    }
+
+    .btn-play:hover {
+      background: #059669;
+    }
+
+    .btn-stop {
+      background: #475569;
+      color: #fff;
+    }
+
+    .btn-stop:hover {
+      background: #334155;
+    }
+
+    .control-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+
+    .control-group input[type="number"] {
+      width: 60px;
+      padding: 4px 8px;
+      background: var(--bg-dark);
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      color: #fff;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    .control-group select {
+      padding: 4px 8px;
+      background: var(--bg-dark);
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      color: #fff;
+      font-size: 0.82rem;
+    }
+
+    /* 右側主要動作按鈕 */
+    .action-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #0f172a;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 0.88rem;
+      font-weight: 700;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-hover);
+      color: #fff;
+      box-shadow: 0 4px 12px rgba(56, 189, 248, 0.3);
+    }
+
+    .btn-secondary {
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid var(--accent-gold);
+      color: var(--accent-gold);
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .btn-secondary:hover {
+      background: var(--accent-gold);
+      color: #0f172a;
+    }
+
+    /* 主工作區 */
+    main {
+      flex: 1;
+      padding: 20px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* 狀態與段落指示器 */
+    .section-banner {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 12px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .section-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .section-badge {
+      background: rgba(56, 189, 248, 0.15);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      color: var(--accent);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 0.85rem;
+    }
+
+    .section-hint {
+      color: var(--text-muted);
+      font-size: 0.82rem;
+    }
+
+    .voice-tag {
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: var(--accent-green);
+      padding: 4px 12px;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* 鼓組與實體琴連線控制區 */
+    .voice-controls-wrap {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .drum-kit-selector-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(15, 23, 42, 0.6);
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border-color);
+    }
+
+    .control-label {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .kit-select-input {
+      background: #1e293b;
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 0.82rem;
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .kit-select-input:hover {
+      border-color: var(--accent);
+    }
+
+    .btn-midi-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid var(--border-color);
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-midi-status:hover {
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .btn-midi-status.connected {
+      border-color: rgba(16, 185, 129, 0.5);
+      background: rgba(16, 185, 129, 0.12);
+      color: var(--accent-green);
+    }
+
+    .midi-led-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #64748b;
+      box-shadow: none;
+      transition: all 0.2s;
+    }
+
+    .btn-midi-status.connected .midi-led-dot {
+      background: var(--accent-green);
+      box-shadow: 0 0 8px var(--accent-green);
+    }
+
+    /* 步進網格工作面板 */
+    .sequencer-panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      min-height: 380px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+      overflow-x: auto;
+    }
+
+    /* 網格頂部控制輔助列 */
+    .grid-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      background: rgba(15, 23, 42, 0.5);
+      border: 1px solid var(--border-color);
+      padding: 8px 14px;
+      border-radius: 6px;
+      margin-bottom: 6px;
+      flex-wrap: wrap;
+    }
+
+    .grid-toolbar-left, .grid-toolbar-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .grid-select {
+      background: #1e293b;
+      border: 1px solid var(--border-color);
+      color: #fff;
+      font-size: 0.8rem;
+      font-weight: 600;
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .btn-grid-tool {
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      color: var(--accent);
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.2s;
+    }
+
+    .btn-grid-tool:hover {
+      background: var(--accent);
+      color: #0f172a;
+    }
+
+    .btn-grid-clear {
+      background: rgba(244, 63, 94, 0.12);
+      border-color: rgba(244, 63, 94, 0.3);
+      color: var(--accent-rose);
+    }
+
+    .btn-grid-clear:hover {
+      background: var(--accent-rose);
+      color: #fff;
+    }
+
+    /* 網格滾動與排版 */
+    .grid-scroll-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: max-content;
+    }
+
+    .grid-row {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 4px 8px;
+      border-radius: 8px;
+      transition: background 0.15s;
+    }
+
+    .drum-row:hover {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .grid-header-row {
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 8px;
+      margin-bottom: 4px;
+    }
+
+    /* 左側樂器標籤欄 (加寬至 210px 以容納下拉選單與音高標記) */
+    .row-header-label {
+      width: 210px;
+      min-width: 210px;
+      display: flex;
+      align-items: center;
+      user-select: none;
+    }
+
+    .inst-info-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      width: 100%;
+    }
+
+    .inst-name-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+    }
+
+    .inst-icon {
+      font-size: 1.15rem;
+    }
+
+    .inst-voice-select {
+      flex: 1;
+      background: #0f172a;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      color: #f8fafc;
+      font-size: 0.8rem;
+      font-weight: 600;
+      padding: 3px 6px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .inst-voice-select:hover {
+      border-color: var(--accent);
+    }
+
+    .inst-sub {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      padding-left: 24px;
+    }
+
+    .inst-sub-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .inst-preview-tag {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 1px 6px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 0.68rem;
+      transition: all 0.15s;
+    }
+
+    .inst-preview-tag:hover {
+      background: var(--accent);
+      color: #0f172a;
+    }
+
+    .btn-remove-row {
+      background: rgba(244, 63, 94, 0.1);
+      border: 1px solid rgba(244, 63, 94, 0.25);
+      color: #fda4af;
+      font-size: 0.68rem;
+      cursor: pointer;
+      padding: 1px 6px;
+      border-radius: 3px;
+      transition: all 0.15s;
+    }
+
+    .btn-remove-row:hover {
+      background: var(--accent-rose);
+      color: #fff;
+    }
+
+    .inst-note-badge-small {
+      font-size: 0.68rem;
+      letter-spacing: 0.3px;
+    }
+
+    /* 彈出新增樂器視窗 */
+    .custom-drum-modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    }
+
+    .custom-drum-modal {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 24px;
+      max-width: 520px;
+      width: 90%;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    }
+
+    .voice-picker-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 340px;
+      overflow-y: auto;
+    }
+
+    .voice-picker-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: rgba(15, 23, 42, 0.5);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+    }
+
+    .voice-picker-item:hover {
+      border-color: var(--accent);
+      background: rgba(56, 189, 248, 0.08);
+    }
+
+    .btn-picker-add {
+      background: var(--accent);
+      color: #0f172a;
+      border: none;
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .btn-picker-add:hover {
+      background: var(--accent-hover);
+      color: #fff;
+    }
+
+    /* 格子與分組排列 */
+    .steps-container {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .bar-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(15, 23, 42, 0.45);
+      padding: 4px 6px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.04);
+      position: relative;
+    }
+
+    .beat-group {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      padding: 2px;
+      border-radius: 4px;
+    }
+
+    .beat-even {
+      background: rgba(255, 255, 255, 0.015);
+    }
+
+    .beat-odd {
+      background: rgba(0, 0, 0, 0.15);
+    }
+
+    /* 步進方格 */
+    .step-cell {
+      width: 26px;
+      height: 38px;
+      border-radius: 4px;
+      background: #1e293b;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      cursor: pointer;
+      transition: all 0.1s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+    }
+
+    .step-cell:hover {
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+
+    .step-cell.beat-start {
+      border-left: 2px solid rgba(255, 255, 255, 0.35);
+    }
+
+    .step-cell.step-active {
+      border-color: transparent !important;
+    }
+
+    .step-cell.active-playhead,
+    .step-header-cell.active-playhead {
+      outline: 2px solid #fff !important;
+      outline-offset: 1px;
+      z-index: 5;
+    }
+
+    /* 頂部時間格指示 */
+    .step-header-cell {
+      width: 26px;
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.72rem;
+      color: #64748b;
+      user-select: none;
+    }
+
+    .step-header-cell.beat-start .beat-num {
+      color: #cbd5e1;
+      font-weight: 700;
+    }
+
+    .step-header-cell .sub-dot {
+      color: #475569;
+      font-size: 0.8rem;
+    }
+
+    /* 底部狀態通知條 */
+    footer {
+      background: var(--bg-panel);
+      border-top: 1px solid var(--border-color);
+      padding: 8px 24px;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .status-msg {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-green);
+    }
+  </style>
+</head>
+<body>
+  <!-- 頂部功能列 -->
+  <header>
+    <div class="brand">
+      <span class="brand-icon">🎹</span>
+      <div>
+        <div class="brand-title">
+          PSR-SX920 專注創作工作台
+          <span class="brand-badge">V2 核心版</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 模式切換 -->
+    <div class="mode-switch">
+      <button id="btn-mode-sty" class="mode-btn active">
+        🥁 STY 伴奏風格
+      </button>
+      <button id="btn-mode-pad" class="mode-btn">
+        🎛️ PAD 多功能打擊板
+      </button>
+    </div>
+
+    <!-- 播放與時鐘控制 -->
+    <div class="transport-bar">
+      <button id="btn-play-toggle" class="btn-transport btn-play">
+        <span>▶</span> 播放
+      </button>
+      <button id="btn-stop" class="btn-transport btn-stop">
+        <span>⏹</span> 停止
+      </button>
+
+      <div class="control-group">
+        <label for="input-bpm">BPM 速度</label>
+        <input type="number" id="input-bpm" min="40" max="260" value="120">
+      </div>
+
+      <div class="control-group">
+        <label for="select-bars">小節長度</label>
+        <select id="select-bars">
+          <option value="1">1 小節 (原型)</option>
+          <option value="4" selected>4 小節 (標準)</option>
+          <option value="8">8 小節 (加長)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- 右側核心動作按鈕 -->
+    <div class="action-bar">
+      <button id="btn-clone-bars" class="btn-secondary" title="將第 1 小節節奏原型一鍵複製填滿所有小節">
+        ⚡ 一鍵鋪滿 4 小節
+      </button>
+      <button id="btn-export-file" class="btn-primary">
+        🚀 匯出為 .STY
+      </button>
+    </div>
+  </header>
+
+  <!-- 主要內容區 -->
+  <main>
+    <!-- 段落與音色狀態條 -->
+    <section class="section-banner">
+      <div class="section-title-wrap">
+        <span id="label-current-section" class="section-badge">段落：Main A (4小節)</span>
+        <span class="section-hint">💡 提示：點擊右側格子即可安排鼓點，第 1 小節做完後按【一鍵鋪滿】即可完成全段！</span>
+      </div>
+      <div class="voice-controls-wrap">
+        <!-- 鼓組套件選擇器 -->
+        <div class="drum-kit-selector-wrap">
+          <label for="select-drum-kit" class="control-label">🥁 琴端鼓組:</label>
+          <select id="select-drum-kit" class="kit-select-input" title="選擇匯出與琴端監聽使用的 Yamaha 原廠鼓組套件">
+            <!-- 程式載入時由 YAMAHA_SX920_DRUM_KITS 自動填入 -->
+          </select>
+        </div>
+
+        <!-- 實體琴 USB Web MIDI 發聲監聽開關 -->
+        <button id="btn-midi-connect" class="btn-midi-status" title="點擊連結實體琴 USB，即可直接從 PSR-SX920 喇叭發聲試聽！">
+          <span class="midi-led-dot"></span>
+          <span id="label-midi-status">🎹 琴端發聲監聽: 偵測中...</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- 步進網格主畫板容器 (由 step 2 注入) -->
+    <section id="step-grid-container" class="sequencer-panel">
+      <!-- 步進網格將在步驟 2 動態渲染於此 -->
+    </section>
+  </main>
+
+  <!-- 底部狀態列 -->
+  <footer>
+    <div class="status-msg">
+      <div class="status-dot"></div>
+      <span id="status-text">工作台就緒。請在上方選擇或編輯鼓組拍點。</span>
+    </div>
+    <div>Yamaha SFF2 & SInt 規範引擎已就緒 | 100% 相容 PSR-SX920</div>
+  </footer>
+
+  <script type="module" src="/src/creator/creator-app.ts"></script>
+</body>
+</html>
