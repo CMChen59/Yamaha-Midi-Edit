@@ -151,11 +151,14 @@ flowchart TD
 
 | 任務模組 | 規劃內容 | 狀態 | 驗收方式 |
 | :--- | :--- | :---: | :--- |
-| **0. 架構籌備** | 建立 `creator.html`、`src/creator/` 獨立架構 | ✓ 已完成 | 本地 Vite 正常啟動載入 |
-| **1. 鼓組步進網格** | 16 格網格、點擊發聲、1 鍵鋪滿 4/8 小節 | ✓ 已完成 | 電腦端播放聽感正常 |
-| **1.1 STY 鼓軌匯出** | 調用後端寫入 SFF2 二進位 STY | ✓ 已完成 | 通過 186 項單元測試，支援直接下載 |
+| **0. 架構籌備** | 建立 `index.html`、`src/creator/` 獨立架構 | ✓ 已完成 | 本地 Vite 正常啟動載入 |
+| **1. 鼓組步進網格** | 16 格網格、點擊發聲、1 鍵鋪滿 4/8 小節 (徹底清空殘留音符) | ✓ 已完成 | 電腦端播放聽感正常 |
+| **1.1 STY 鼓軌匯出** | 調用後端寫入 SFF2 二進位 STY | ✓ 已完成 | 通過單元測試，支援直接下載 |
 | **1.2 鼓組選擇與琴端監聽** | 官方鼓組下拉選單 (Rock/Pop/Jazz 等) + USB 實體琴即時發聲 | ✓ 已完成 | Web MIDI 串接 PSR-SX920 Channel 10 |
-| **2. Bass 鋼琴卷軸** | 伴奏音符繪製、C 和弦音色底色提示 | 待處理 | 聽鼓聲疊加 Bass 音符 |
-| **2.1 STY Bass 匯出** | 寫入 CASM 和弦轉換表 | 待處理 | PSR-SX920 左手彈 C/F/G 跟隨轉調 |
-| **3. Multi Pad 模式** | 1~2 小節短樂句、Chord Match (Melody) 開關 | 待處理 | 匯出 .PAD 檔在琴端指派 Pad 1 |
-| **4. 音色與段落擴充** | Main A/B 段落切換複製、SX920 官方音色對齊 | 待處理 | 琴端音色代碼 (1-based) 精確吻合 |
+| **2. Bass 鋼琴卷軸** | 伴奏音符繪製、C 和弦根音/五度音底色提示、Web Audio 貝斯合成器 | ✓ 已完成 | 聽鼓聲疊加 Bass 音符 |
+| **2.1 STY Bass 匯出** | 寫入 Channel 11 Bass CASM 和弦轉換表 | ✓ 已完成 | PSR-SX920 左手彈 C/F/G 跟隨轉調 |
+| **2.2 Chord 1 和弦卷軸** | 支援多音複音、流行鋼琴四拍/吉他刷弦範本、原廠和弦音色庫 | ✓ 已完成 | 電腦端與 Web MIDI Ch 12 即時試聽 |
+| **2.3 STY Chord 1 匯出** | 寫入 Channel 12 Chord 1 CASM 和弦轉換表 | ✓ 已完成 | 通過 `creator-chord-export.test.ts` 驗證 |
+| **3. Multi Pad 模式** | 1~2 小節短樂句、Pad 1(鼓)/2(Bass)/3(和弦)、Chord Match 旗標 | ✓ 基礎完成 | 匯出 .PAD 檔在琴端指派 Pad 驗收 |
+| **4. 音色與多段落擴充** | Main A/B/C/D、Fill In AA~DD、Intro/Ending 切換與一鍵複製 | ✓ 已完成 | 實體琴面板切換 Main/Fill 平順播放 |
+| **5. 動態伴奏聲部擴展** | 支援自由增減 Chord 2 (Ch 13)、Pad (Ch 14)、Phrase 1 (Ch 15)、Phrase 2 (Ch 16)；具備頂部快速跳轉按鈕、聲部獨立音色挑選、2,300+ 資料庫檢索、Solo 獨立試聽、全曲段落記憶儲存與完整 4~8 軌 SFF2 CASM 匯出 | ✓ 已完成 | 通過 `tests/creator-dynamic-channels.test.ts` 驗證 |

@@ -57,6 +57,7 @@ export class DrumStepGrid {
   private onResolutionChange?: (res: GridResolution) => void;
   private onTimeSignatureChange?: (sig: TimeSignatureType) => void;
   private onDrumKitChange?: (kitId: string) => void;
+  private onSoloPlayToggle?: () => void;
 
   constructor(
     container: HTMLElement,
@@ -66,7 +67,8 @@ export class DrumStepGrid {
     onResolutionChange?: (res: GridResolution) => void,
     onTimeSignatureChange?: (sig: TimeSignatureType) => void,
     onDrumKitChange?: (kitId: string) => void,
-    initialKitId: string = 'standard-kit-1'
+    initialKitId: string = 'standard-kit-1',
+    onSoloPlayToggle?: () => void
   ) {
     this.container = container;
     this.totalBars = totalBars;
@@ -76,9 +78,23 @@ export class DrumStepGrid {
     this.onTimeSignatureChange = onTimeSignatureChange;
     this.onDrumKitChange = onDrumKitChange;
     this.selectedKitId = initialKitId;
+    this.onSoloPlayToggle = onSoloPlayToggle;
 
     this.initPattern();
     this.render();
+  }
+
+  public setSoloPlayState(isPlaying: boolean) {
+    const btn = this.container.querySelector('#btn-drum-play') as HTMLButtonElement | null;
+    if (btn) {
+      if (isPlaying) {
+        btn.innerHTML = '<span>⏸</span> 暫停試聽';
+        btn.classList.add('playing');
+      } else {
+        btn.innerHTML = '<span>▶</span> 試聽鼓組';
+        btn.classList.remove('playing');
+      }
+    }
   }
 
   public setSelectedKitId(kitId: string): void {
@@ -127,6 +143,14 @@ export class DrumStepGrid {
     if (this.timeSignature === '3/4') return { numerator: 3, denominator: 4 };
     if (this.timeSignature === '6/8') return { numerator: 6, denominator: 8 };
     return { numerator: 4, denominator: 4 };
+  }
+
+  public getResolution(): GridResolution {
+    return this.resolution;
+  }
+
+  public getTimeSignatureType(): TimeSignatureType {
+    return this.timeSignature;
   }
 
   private initPattern() {
@@ -390,6 +414,9 @@ export class DrumStepGrid {
       </div>
 
       <div class="grid-toolbar-right">
+        <button id="btn-drum-play" class="btn-grid-tool btn-track-play" title="單獨循環試聽鼓組 (Solo)">
+          <span>▶</span> 試聽鼓組
+        </button>
         <button id="btn-add-drum-row" class="btn-grid-tool" title="加入新的打擊樂器軌道">
           <span>➕</span> 加入打擊樂器
         </button>
@@ -423,6 +450,9 @@ export class DrumStepGrid {
       this.selectedKitId = selectKit.value;
       this.onDrumKitChange?.(selectKit.value);
     });
+
+    const btnPlay = toolbar.querySelector('#btn-drum-play') as HTMLButtonElement | null;
+    btnPlay?.addEventListener('click', () => this.onSoloPlayToggle?.());
 
     const btnAdd = toolbar.querySelector('#btn-add-drum-row') as HTMLButtonElement | null;
     btnAdd?.addEventListener('click', () => this.openAddVoiceModal());

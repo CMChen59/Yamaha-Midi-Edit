@@ -5,8 +5,21 @@
  */
 
 export class DrumSynth {
+  private static muted: boolean = false;
   private ctx: AudioContext | null = null;
   private noiseBuffer: AudioBuffer | null = null;
+
+  public static setMuted(muted: boolean) {
+    DrumSynth.muted = muted;
+  }
+
+  public static isMuted(): boolean {
+    return DrumSynth.muted;
+  }
+
+  public setMuted(muted: boolean) {
+    DrumSynth.muted = muted;
+  }
 
   constructor() {
     // 延遲初始化，待使用者首次互動啟動 AudioContext
@@ -309,6 +322,7 @@ export class DrumSynth {
    * 根據 MIDI 音符號碼觸發對應樂器
    */
   public playNote(note: number, velocity: number = 100) {
+    if (DrumSynth.muted) return;
     switch (note) {
       case 35:
       case 36: // B0/C1 Kick

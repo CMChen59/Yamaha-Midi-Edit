@@ -365,6 +365,12 @@
       box-shadow: 0 0 8px var(--accent-green);
     }
 
+    .btn-midi-status.muted-active {
+      border-color: rgba(56, 189, 248, 0.4);
+      background: rgba(56, 189, 248, 0.1);
+      color: #38bdf8;
+    }
+
     /* 步進網格工作面板 */
     .sequencer-panel {
       background: var(--bg-panel);
@@ -377,6 +383,16 @@
       min-height: 380px;
       box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
       overflow-x: auto;
+    }
+
+    @keyframes pulseGlow {
+      0% { box-shadow: 0 0 0 rgba(56, 189, 248, 0); border-color: rgba(56, 189, 248, 0.35); }
+      30% { box-shadow: 0 0 25px rgba(56, 189, 248, 0.7); border-color: #38bdf8; }
+      100% { box-shadow: 0 0 0 rgba(56, 189, 248, 0); border-color: rgba(56, 189, 248, 0.35); }
+    }
+
+    .panel-pulse-highlight {
+      animation: pulseGlow 1.5s ease-out;
     }
 
     /* 網格頂部控制輔助列 */
@@ -440,6 +456,26 @@
     .btn-grid-clear:hover {
       background: var(--accent-rose);
       color: #fff;
+    }
+
+    .btn-track-play {
+      background: rgba(16, 185, 129, 0.15) !important;
+      border-color: rgba(16, 185, 129, 0.4) !important;
+      color: #34d399 !important;
+      font-weight: 700 !important;
+    }
+
+    .btn-track-play:hover {
+      background: rgba(16, 185, 129, 0.3) !important;
+      border-color: #34d399 !important;
+      color: #fff !important;
+    }
+
+    .btn-track-play.playing {
+      background: rgba(245, 158, 11, 0.25) !important;
+      border-color: #f59e0b !important;
+      color: #fbbf24 !important;
+      box-shadow: 0 0 10px rgba(245, 158, 11, 0.4);
     }
 
     /* 網格滾動與排版 */
@@ -913,6 +949,39 @@
       box-shadow: 0 0 8px rgba(124, 58, 237, 0.4);
     }
 
+    /* 和弦鋼琴捲軸樣式 (Chord 1 / Ch 12) */
+    .step-cell.chord-cell {
+      height: 20px;
+    }
+
+    .step-cell.chord-cell.active.note-root {
+      background: linear-gradient(135deg, #f59e0b, #d97706);
+      border-color: #fbbf24;
+      box-shadow: 0 0 10px rgba(245, 158, 11, 0.5);
+      color: #fff;
+    }
+
+    .step-cell.chord-cell.active.note-fifth {
+      background: linear-gradient(135deg, #0284c7, #0369a1);
+      border-color: #38bdf8;
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+      color: #fff;
+    }
+
+    .step-cell.chord-cell.active.note-third {
+      background: linear-gradient(135deg, #059669, #047857);
+      border-color: #34d399;
+      box-shadow: 0 0 10px rgba(52, 211, 153, 0.5);
+      color: #fff;
+    }
+
+    .step-cell.chord-cell.active.note-general {
+      background: linear-gradient(135deg, #7c3aed, #6d28d9);
+      border-color: #a78bfa;
+      box-shadow: 0 0 8px rgba(124, 58, 237, 0.4);
+      color: #fff;
+    }
+
     /* 底部狀態通知條 */
     footer {
       background: var(--bg-panel);
@@ -964,8 +1033,8 @@
 
     <!-- 播放與時鐘控制 -->
     <div class="transport-bar">
-      <button id="btn-play-toggle" class="btn-transport btn-play">
-        <span>▶</span> 播放
+      <button id="btn-play-toggle" class="btn-transport btn-play" title="同時播放所有已編寫聲部 (鼓組 + 貝斯 + 和弦)">
+        <span>▶</span> 全部播放
       </button>
       <button id="btn-stop" class="btn-transport btn-stop">
         <span>⏹</span> 停止
@@ -988,6 +1057,9 @@
 
     <!-- 右側核心動作按鈕 -->
     <div class="action-bar">
+      <button id="btn-quick-add-track-nav" class="btn-secondary" style="border-color: #38bdf8; color: #38bdf8; background: rgba(56, 189, 248, 0.15); font-weight: 700;" title="快速跳至新增伴奏音軌區 (可加選 Chord 2, Pad, Phrase 1, Phrase 2)">
+        <span>➕</span> 新增聲部 (Add CH)
+      </button>
       <button id="btn-export-file" class="btn-primary">
         🚀 匯出為 .STY
       </button>
@@ -1016,6 +1088,11 @@
           <span class="midi-led-dot"></span>
           <span id="label-midi-status">🎹 琴端發聲監聽: 偵測中...</span>
         </button>
+
+        <!-- 電腦端發聲/靜音切換開關 -->
+        <button id="btn-toggle-computer-audio" class="btn-midi-status" title="切換電腦端喇叭發聲。當連接實體琴時，預設自動靜音電腦以避免聲音重疊回音。">
+          <span id="label-computer-audio">電腦: 🔊 發聲中</span>
+        </button>
       </div>
     </section>
 
@@ -1027,6 +1104,48 @@
     <!-- 貝斯鋼琴捲軸主畫板容器 (Bass) -->
     <section id="bass-roll-container" class="sequencer-panel piano-roll-panel">
       <!-- 貝斯鋼琴捲軸動態渲染於此 -->
+    </section>
+
+    <!-- 和弦鋼琴捲軸主畫板容器 (Chord 1) -->
+    <section id="chord-roll-container" class="sequencer-panel piano-roll-panel">
+      <!-- 和弦鋼琴捲軸動態渲染於此 -->
+    </section>
+
+    <!-- 動態新增伴奏音軌外容器 (Chord 2, Pad, Phrase 1, Phrase 2 等) -->
+    <div id="dynamic-tracks-container" style="display: flex; flex-direction: column; gap: 20px;"></div>
+
+    <!-- ➕ 新增伴奏聲部音軌操作區 -->
+    <section id="panel-add-channel" class="sequencer-panel add-channel-panel" style="padding: 18px 20px; border: 2px dashed rgba(56, 189, 248, 0.35); border-radius: 12px; background: rgba(15, 23, 42, 0.65); transition: all 0.3s;">
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div style="width: 40px; height: 40px; border-radius: 10px; background: rgba(56, 189, 248, 0.15); display: flex; align-items: center; justify-content: center; font-size: 1.4rem; color: #38bdf8;">
+            ➕
+          </div>
+          <div>
+            <h4 style="margin: 0; font-size: 1.02rem; color: #fff; font-weight: 700; display: flex; align-items: center; gap: 8px;">
+              新增伴奏聲部音軌 (Add Yamaha Style Channel)
+            </h4>
+            <div id="add-channel-notice" style="font-size: 0.78rem; color: #94a3b8; margin-top: 3px;">
+              PSR-SX920 完整具備 8 個伴奏通道。預設啟用三大核心軌（主鼓組、貝斯、和弦 1），點擊下方按鈕可依編曲需求隨時自由增減！
+            </div>
+          </div>
+        </div>
+
+        <div id="add-channel-btn-group" style="display: flex; gap: 10px; flex-wrap: wrap;">
+          <button id="btn-add-ch-chord2" class="btn-grid-tool btn-add-channel-item" data-part="Chord2" style="background: rgba(56, 189, 248, 0.15); border-color: #38bdf8; color: #38bdf8; font-weight: 700; padding: 7px 16px; font-size: 0.85rem;" title="新增次要和弦音軌 (Ch 13)：適合副吉他、弦樂刷弦或琶音">
+            + 🎹 Chord 2 (次要和弦 - Ch 13)
+          </button>
+          <button id="btn-add-ch-pad" class="btn-grid-tool btn-add-channel-item" data-part="Pad" style="background: rgba(168, 85, 247, 0.15); border-color: #a855f7; color: #c084fc; font-weight: 700; padding: 7px 16px; font-size: 0.85rem;" title="新增氛圍墊音音軌 (Ch 14)：適合溫暖合成鋪底、弦樂長音或合唱">
+            + 🌌 Pad (長音墊音 - Ch 14)
+          </button>
+          <button id="btn-add-ch-phrase1" class="btn-grid-tool btn-add-channel-item" data-part="Phrase1" style="background: rgba(245, 158, 11, 0.15); border-color: #f59e0b; color: #fbbf24; font-weight: 700; padding: 7px 16px; font-size: 0.85rem;" title="新增裝飾短句 1 (Ch 15)：NTT=Melody 旋律轉調，適合管樂樂句、即興對位">
+            + ✨ Phrase 1 (裝飾短句 1 - Ch 15)
+          </button>
+          <button id="btn-add-ch-phrase2" class="btn-grid-tool btn-add-channel-item" data-part="Phrase2" style="background: rgba(234, 179, 8, 0.15); border-color: #eab308; color: #fde047; font-weight: 700; padding: 7px 16px; font-size: 0.85rem;" title="新增裝飾短句 2 (Ch 16)：NTT=Melody 旋律轉調，適合木管、合成主奏修飾">
+            + ✨ Phrase 2 (裝飾短句 2 - Ch 16)
+          </button>
+        </div>
+      </div>
     </section>
   </main>
 
@@ -1055,6 +1174,152 @@
         <div id="modal-target-sections-list" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
           <!-- 動態按鈕 -->
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 全琴 2,300+ 原廠音色庫搜尋彈窗 -->
+  <div id="modal-voice-search" class="custom-drum-modal-overlay" style="display: none;">
+    <div class="custom-drum-modal" style="max-width: 680px; width: 92%;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px;">
+        <h3 style="font-size: 1.1rem; color: #fff; display: flex; align-items: center; gap: 8px;">
+          <span>🔍</span> Yamaha PSR-SX920 原廠 2,300+ 音色資料庫檢索
+        </h3>
+        <button id="btn-close-voice-search" style="background: transparent; border: none; color: #94a3b8; font-size: 1.3rem; cursor: pointer;">✕</button>
+      </div>
+      <div style="margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
+        <input type="text" id="input-voice-search-keyword" placeholder="輸入樂器名稱搜尋 (例如 CFX, Guitar, Sax, Brass, Pad)..." style="flex: 1; min-width: 200px; padding: 6px 12px; background: rgba(15, 23, 42, 0.7); border: 1px solid var(--border-color); border-radius: 6px; color: #fff; font-size: 0.85rem;">
+        <select id="select-voice-search-category" class="grid-select" style="min-width: 140px; padding: 6px 8px;">
+          <option value="ALL">全部樂器類別 (ALL)</option>
+          <option value="Piano">🎹 鋼琴 (Piano)</option>
+          <option value="E.Piano">⚡ 電鋼琴 (E.Piano)</option>
+          <option value="Guitar">🎸 吉他 (Guitar)</option>
+          <option value="Strings">🎻 弦樂 (Strings)</option>
+          <option value="Brass">🎺 銅管 (Brass)</option>
+          <option value="Saxophone">🎷 薩克斯風 (Sax)</option>
+          <option value="Organ">🎷 風琴 (Organ)</option>
+          <option value="Accordion">🪗 手風琴 (Accordion)</option>
+          <option value="Pad">🌌 氛圍長音 (Pad)</option>
+          <option value="Choir">👥 人聲合唱 (Choir)</option>
+          <option value="Synth">🎛️ 合成器 (Synth)</option>
+          <option value="Bass">🎸 貝斯 (Bass)</option>
+        </select>
+      </div>
+      <div id="voice-search-results-list" class="voice-picker-list" style="max-height: 380px;">
+        <!-- 動態搜尋結果列表 -->
+      </div>
+    </div>
+  </div>
+
+  <!-- 🎹 Yamaha PSR-SX920 Web MIDI 琴端發聲設定與診斷視窗 -->
+  <div id="modal-midi-settings" class="custom-drum-modal-overlay" style="display: none;">
+    <div class="custom-drum-modal" style="max-width: 620px; width: 94%;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px;">
+        <h3 style="font-size: 1.15rem; color: #fff; display: flex; align-items: center; gap: 8px; margin: 0;">
+          <span>🎹</span> PSR-SX920 琴端即時發聲設定與排查診斷
+        </h3>
+        <button id="btn-close-midi-modal" style="background: transparent; border: none; color: #94a3b8; font-size: 1.3rem; cursor: pointer;">✕</button>
+      </div>
+
+      <!-- 1. 輸出裝置選擇 -->
+      <div style="background: rgba(15, 23, 42, 0.6); padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 14px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+          <div>
+            <div style="font-size: 0.88rem; font-weight: 700; color: #38bdf8;">USB MIDI 輸出設備 (Output Port):</div>
+            <div style="font-size: 0.76rem; color: #94a3b8; margin-top: 2px;">若琴端有提供 Port 1 與 Port 2，可在此直接切換：</div>
+          </div>
+          <select id="select-midi-output-device" class="grid-select" style="min-width: 200px; padding: 6px 10px; font-size: 0.85rem;">
+            <!-- 動態填入 -->
+          </select>
+        </div>
+      </div>
+
+      <!-- 2. 一鍵發聲測試區 -->
+      <div style="background: rgba(16, 185, 129, 0.08); padding: 14px 16px; border-radius: 8px; border: 1px solid rgba(16, 185, 129, 0.3); margin-bottom: 14px;">
+        <div style="font-size: 0.9rem; font-weight: 700; color: #34d399; margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+          <span>🔊</span> 實體琴喇叭即時發聲檢測 (點擊測試琴上有無聲音)
+        </div>
+        <div style="font-size: 0.78rem; color: #94a3b8; margin-bottom: 10px;">
+          點擊下方按鈕，軟體將自動重設控制器並以飽滿音量 (CC7=115, CC11=127) 發送測試音符至琴端：
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px;">
+          <button id="btn-test-ch1-piano" class="btn-grid-tool" style="background: rgba(56, 189, 248, 0.15); border-color: #38bdf8; color: #38bdf8; font-weight: 700; justify-content: center; padding: 8px 6px;">
+            🔔 測 Ch 1 (大鋼琴)
+          </button>
+          <button id="btn-test-ch10-drums" class="btn-grid-tool" style="background: rgba(245, 158, 11, 0.15); border-color: #f59e0b; color: #fbbf24; font-weight: 700; justify-content: center; padding: 8px 6px;">
+            🥁 測 Ch 10 (鼓組)
+          </button>
+          <button id="btn-test-ch11-bass" class="btn-grid-tool" style="background: rgba(168, 85, 247, 0.15); border-color: #a855f7; color: #c084fc; font-weight: 700; justify-content: center; padding: 8px 6px;">
+            🎸 測 Ch 11 (貝斯)
+          </button>
+          <button id="btn-test-ch12-chord" class="btn-grid-tool" style="background: rgba(52, 211, 153, 0.15); border-color: #34d399; color: #34d399; font-weight: 700; justify-content: center; padding: 8px 6px;">
+            🎹 測 Ch 12 (和弦)
+          </button>
+        </div>
+      </div>
+
+      <!-- 2.5 電腦 Web Audio 靜音與發聲模式 -->
+      <div style="background: rgba(15, 23, 42, 0.6); padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 14px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+          <div>
+            <div style="font-size: 0.88rem; font-weight: 700; color: #f1f5f9;">💻 電腦喇叭/耳機發聲 (Web Audio API):</div>
+            <div id="modal-pc-audio-desc" style="font-size: 0.76rem; color: #94a3b8; margin-top: 2px;">
+              當連接實體琴時，預設自動靜音電腦，避免聲音重疊延遲
+            </div>
+          </div>
+          <button id="btn-modal-toggle-pc-audio" class="btn-grid-tool" style="background: rgba(56, 189, 248, 0.12); border-color: #38bdf8; color: #38bdf8; font-weight: 700; padding: 6px 12px;">
+            🔇 電腦目前已靜音 (由琴端發聲)
+          </button>
+        </div>
+      </div>
+
+      <!-- 3. 發聲通道模式選擇 -->
+      <div style="background: rgba(15, 23, 42, 0.6); padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 14px;">
+        <div style="font-size: 0.88rem; font-weight: 700; color: #f1f5f9; margin-bottom: 8px;">
+          🎯 琴端發聲通道指派模式 (Channel Routing):
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 8px; font-size: 0.82rem;">
+          <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer; color: #cbd5e1;">
+            <input type="radio" name="radio-midi-routing" value="standard" checked style="margin-top: 3px;">
+            <div>
+              <strong style="color: #38bdf8;">標準伴奏 8 通道模式 (推薦)</strong>：鼓組(Ch 10)、貝斯(Ch 11)、和弦 1(Ch 12)、各擴展軌(Ch 13~16)。各聲部音色完全獨立（搭配琴端 Song 或 All Parts 模板）。
+            </div>
+          </label>
+          <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer; color: #cbd5e1;">
+            <input type="radio" name="radio-midi-routing" value="direct_ch1" style="margin-top: 3px;">
+            <div>
+              <strong style="color: #34d399;">直通主聲部模式 (Direct to Ch 1)</strong>：所有聲部強制映射至琴端 Channel 1 (Right 1) 發聲。相容所有琴端未設定情況，保證 100% 能由琴端喇叭發出聲音！
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <!-- 4. 琴端 PSR-SX920 30 秒設定指引 -->
+      <div style="background: rgba(245, 158, 11, 0.08); padding: 14px 16px; border-radius: 8px; border: 1px solid rgba(245, 158, 11, 0.3);">
+        <div style="font-size: 0.88rem; font-weight: 700; color: #f59e0b; margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+          <span>💡</span> 為什麼接上琴後沒聲音？（Yamaha PSR-SX920 琴端 30 秒設定排查）
+        </div>
+        <ol style="margin: 0; padding-left: 20px; font-size: 0.8rem; color: #cbd5e1; line-height: 1.6;">
+          <li>
+            <strong>最常見原因（琴端 MIDI 模板指派）</strong>：PSR-SX920 原廠預設將 Channel 9~16 指派給「伴奏風格 (STYLE)」。在琴沒有按 Start 播放伴奏時，琴端會自動靜音伴奏軌的外部訊號！
+          </li>
+          <li>
+            <strong>快速解決步驟（30 秒搞定）</strong>：
+            <ul style="margin: 4px 0; padding-left: 18px; color: #94a3b8;">
+              <li>① 按下琴右側螢幕旁的 <strong style="color: #fff;">[MENU]</strong> 按鈕。</li>
+              <li>② 點擊螢幕上的 <strong style="color: #fff;">[MIDI]</strong> 選單。</li>
+              <li>③ 在左側 Preset 清單中，選擇 <strong style="color: #38bdf8;">「Song」</strong>（最推薦！此範本開放全 16 軌 XG 多重音源，所有通道立即直接發聲）或選擇 <strong style="color: #38bdf8;">「All Parts」</strong>。</li>
+            </ul>
+          </li>
+          <li>
+            <strong>實體音量檢查</strong>：請確認琴上的主音量旋鈕有開，且面板上的 <strong style="color: #fff;">[STYLE-ACMP]</strong> 音量滑桿未被推到最底。
+          </li>
+        </ol>
+      </div>
+
+      <div style="margin-top: 14px; text-align: right;">
+        <button id="btn-reconnect-midi" class="btn-secondary" style="margin-right: 8px; display: inline-flex;">🔄 重新掃描設備</button>
+        <button id="btn-close-midi-modal-bottom" class="btn-primary" style="display: inline-flex;">完成 / 關閉</button>
       </div>
     </div>
   </div>

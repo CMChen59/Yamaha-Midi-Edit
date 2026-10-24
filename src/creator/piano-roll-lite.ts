@@ -8,7 +8,7 @@
 
 import { bassSynth } from './bass-synth';
 import type { GridResolution, TimeSignatureType } from './drum-step-grid';
-import { YAMAHA_SX920_BASS_VOICES } from './bass-voices';
+import { YAMAHA_SX920_BASS_VOICES, type YamahaBassPreset } from './bass-voices';
 
 export interface BassPitchInfo {
   note: number;      // MIDI 音高 (例如 36 = C1)
@@ -34,6 +34,8 @@ export class PianoRollLite {
   private onPatternChange?: () => void;
   private onTriggerNote?: (note: number, velocity: number) => void;
   private onBassVoiceChange?: (voiceId: string) => void;
+  private onSoloPlayToggle?: () => void;
+  private onOpenVoiceSearch?: () => void;
 
   constructor(
     container: HTMLElement,
@@ -41,7 +43,9 @@ export class PianoRollLite {
     onPatternChange?: () => void,
     onTriggerNote?: (note: number, velocity: number) => void,
     onBassVoiceChange?: (voiceId: string) => void,
-    initialVoiceId: string = 'finger-bass'
+    initialVoiceId: string = 'finger-bass',
+    onSoloPlayToggle?: () => void,
+    onOpenVoiceSearch?: () => void
   ) {
     this.container = container;
     this.totalBars = totalBars;
@@ -49,14 +53,53 @@ export class PianoRollLite {
     this.onTriggerNote = onTriggerNote;
     this.onBassVoiceChange = onBassVoiceChange;
     this.selectedVoiceId = initialVoiceId;
+    const initVoice = YAMAHA_SX920_BASS_VOICES.find(b => b.id === initialVoiceId);
+    if (initVoice) {
+      bassSynth.setVoice(initVoice);
+    }
+    this.onSoloPlayToggle = onSoloPlayToggle;
+    this.onOpenVoiceSearch = onOpenVoiceSearch;
 
     this.initPitches();
     this.render();
   }
 
+  public setSoloPlayState(isPlaying: boolean) {
+    const btn = this.container.querySelector('#btn-bass-play') as HTMLButtonElement | null;
+    if (btn) {
+      if (isPlaying) {
+        btn.innerHTML = '<span>⏸</span> 暫停試聽';
+        btn.classList.add('playing');
+      } else {
+        btn.innerHTML = '<span>▶</span> 試聽貝斯';
+        btn.classList.remove('playing');
+      }
+    }
+  }
+
+  public setVoice(voice: YamahaBassPreset): void {
+    this.selectedVoiceId = voice.id;
+    bassSynth.setVoice(voice);
+    const selectBass = this.container.querySelector('#select-bass-voice') as HTMLSelectElement | null;
+    if (selectBass) {
+      let opt = selectBass.querySelector(`option[value="${voice.id}"]`) as HTMLOptionElement | null;
+      if (!opt) {
+        opt = document.createElement('option');
+        opt.value = voice.id;
+        opt.textContent = `${voice.icon} ${voice.name} (PC ${voice.panelPc} / Bank ${voice.msb}-${voice.lsb})`;
+        selectBass.appendChild(opt);
+      }
+      selectBass.value = voice.id;
+    }
+  }
+
   public setSelectedVoiceId(voiceId: string): void {
     if (this.selectedVoiceId === voiceId) return;
     this.selectedVoiceId = voiceId;
+    const found = YAMAHA_SX920_BASS_VOICES.find(b => b.id === voiceId);
+    if (found) {
+      bassSynth.setVoice(found);
+    }
     const selectBass = this.container.querySelector('#select-bass-voice') as HTMLSelectElement | null;
     if (selectBass) {
       selectBass.value = voiceId;
@@ -266,6 +309,10 @@ export class PianoRollLite {
       }
     }
 
+    // 智慧連動：自動切換為標準指彈電貝斯音色
+    this.setSelectedVoiceId('finger-bass');
+    this.onBassVoiceChange?.('finger-bass');
+
     this.render();
     this.onPatternChange?.();
   }
@@ -328,6 +375,31 @@ export class PianoRollLite {
     const stepsPerBeat = this.getStepsPerBeat();
     const beatsPerBar = this.getBeatsPerBar();
 
+    // 依分類建立 <optgroup>
+    const categoryLabels: Record<string, string> = {
+      Electric: '🎸 電貝斯 (Electric Bass)',
+      Acoustic: '🎻 原聲貝斯 (Acoustic Bass)',
+      Synth: '🎹 合成貝斯 (Synth Bass)',
+    };
+    const categories: string[] = [];
+    YAMAHA_SX920_BASS_VOICES.forEach(v => {
+      if (!categories.includes(v.category)) categories.push(v.category);
+    });
+
+    const optgroupsHtml = categories.map(cat => {
+      const list = YAMAHA_SX920_BASS_VOICES.filter(v => v.category === cat);
+      const label = categoryLabels[cat] || cat;
+      return `
+        <optgroup label="${label}">
+          ${list.map(b => `
+            <option value="${b.id}" ${b.id === this.selectedVoiceId ? 'selected' : ''}>
+              ${b.icon} ${b.name} (PC ${b.panelPc} / Bank ${b.msb}-${b.lsb})
+            </option>
+          `).join('')}
+        </optgroup>
+      `;
+    }).join('');
+
     // 1. 捲軸頂部輔助工具列
     const toolbar = document.createElement('div');
     toolbar.className = 'grid-toolbar';
@@ -336,21 +408,23 @@ export class PianoRollLite {
         <span style="font-weight: 700; color: #38bdf8; display: flex; align-items: center; gap: 6px;">
           🎸 貝斯音軌
         </span>
-        <div class="drum-kit-selector-wrap" style="margin-left: 4px;">
+        <div class="drum-kit-selector-wrap" style="margin-left: 4px; display: flex; align-items: center; gap: 6px;">
           <label for="select-bass-voice" class="control-label">🎸 琴端貝斯:</label>
           <select id="select-bass-voice" class="kit-select-input" title="選擇匯出與琴端監聽使用的 Yamaha 原廠貝斯音色 (Channel 11)">
-            ${YAMAHA_SX920_BASS_VOICES.map(b => `
-              <option value="${b.id}" ${b.id === this.selectedVoiceId ? 'selected' : ''}>
-                ${b.icon} ${b.name} (PC ${b.panelPc} / Bank ${b.msb}-${b.lsb})
-              </option>
-            `).join('')}
+            ${optgroupsHtml}
           </select>
+          <button id="btn-search-bass-voice" class="btn-grid-tool" style="padding: 2px 8px; font-size: 0.75rem;" title="搜尋 Yamaha PSR-SX920 原廠 2,300+ 完整音色資料庫">
+            🔍 更多音色
+          </button>
         </div>
         <span class="c-chord-guardrail-badge" title="PSR-SX920 原廠 SFF2 CASM 轉調規則以 C 大調為基準。標有金色、青色、綠色之音符在彈奏左手和弦時保證 100% 正確轉調！" style="margin-left: 4px;">
           🛡️ C 大調安全防呆啟用
         </span>
       </div>
       <div class="grid-toolbar-right">
+        <button id="btn-bass-play" class="btn-grid-tool btn-track-play" title="單獨循環試聽貝斯 (Solo)">
+          <span>▶</span> 試聽貝斯
+        </button>
         <button id="btn-bass-template" class="btn-grid-tool" title="一鍵自動填入流行樂 C-G 貝斯標準律動">
           ✨ 填入經典流行律動
         </button>
@@ -368,8 +442,14 @@ export class PianoRollLite {
     const selectBass = toolbar.querySelector('#select-bass-voice') as HTMLSelectElement | null;
     selectBass?.addEventListener('change', () => {
       this.selectedVoiceId = selectBass.value;
+      const found = YAMAHA_SX920_BASS_VOICES.find(b => b.id === selectBass.value);
+      if (found) {
+        bassSynth.setVoice(found);
+      }
       this.onBassVoiceChange?.(selectBass.value);
     });
+    toolbar.querySelector('#btn-search-bass-voice')?.addEventListener('click', () => this.onOpenVoiceSearch?.());
+    toolbar.querySelector('#btn-bass-play')?.addEventListener('click', () => this.onSoloPlayToggle?.());
     toolbar.querySelector('#btn-bass-template')?.addEventListener('click', () => this.insertClassicPattern());
     toolbar.querySelector('#btn-bass-clone')?.addEventListener('click', () => this.cloneFirstBar());
     toolbar.querySelector('#btn-bass-clear')?.addEventListener('click', () => this.clear());

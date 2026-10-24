@@ -32,7 +32,7 @@ export class YamahaStyleSynthesizer {
     const styleName = options?.styleName?.trim() || 'New Style';
     const bpm = Math.max(30, Math.min(300, options?.bpm ?? 120));
     const timeSig = options?.timeSignature ?? { numerator: 4, denominator: 4 };
-    const division = options?.division ?? 480;
+    const division = options?.division ?? 1920;
 
     const ticksPerBeat = division;
     const ticksPerBar = Math.round(ticksPerBeat * timeSig.numerator * (4 / timeSig.denominator));
@@ -50,10 +50,27 @@ export class YamahaStyleSynthesizer {
     const activeParts: StylePartConfig[] = partKeys.map((k) => {
       const def = DEFAULT_STYLE_PARTS[k];
       const custom = options?.parts?.[k];
-      return {
+      const merged = {
         ...def,
         ...custom,
       };
+
+      // Yamaha Arranger 伴奏音軌安全音色庫映射 (XG Mode Compatibility)
+      // 實體琴 (PSR-SX920/SX900/Genos) 伴奏合成引擎 (SMF 0, Ch 9~16) 在 SInt 接收 XG On 後，
+      // 音軌必須遵循標準 XG Bank 規範：
+      // - 鼓組 (Ch 8, 9): MSB 127, LSB 0
+      // - 樂器 (Ch 10~15): MSB 0, LSB 0 (若使用面板專用庫如 LSB 112/116 會導致實體琴拋出 Data has not been loaded properly)
+      if (merged.channel === 8 || merged.channel === 9) {
+        merged.msb = 127;
+        merged.lsb = 0;
+      } else {
+        if (merged.msb >= 100 || merged.lsb >= 100 || merged.lsb !== 0) {
+          merged.msb = 0;
+          merged.lsb = 0;
+        }
+      }
+
+      return merged;
     });
 
     // 3. 收集帶有絕對 Tick 的事件清單
@@ -157,8 +174,9 @@ export class YamahaStyleSynthesizer {
       },
     });
 
+    const xgTick = Math.max(1, Math.round(ticksPerBar * 0.1));
     absEvents.push({
-      absTick: Math.max(1, Math.round(ticksPerBar * 0.1)),
+      absTick: xgTick,
       priority: 8,
       event: {
         delta: 0,
@@ -167,58 +185,64 @@ export class YamahaStyleSynthesizer {
       },
     });
 
-    const setupTick = Math.max(2, Math.round(ticksPerBar * 0.2));
+    const ctrlTick = Math.max(2, Math.round(ticksPerBar * 0.2));
+    const msbTick = Math.max(3, Math.round(ticksPerBar * 0.3));
+    const lsbTick = Math.max(4, Math.round(ticksPerBar * 0.4));
+    const pcTick = Math.max(5, Math.round(ticksPerBar * 0.5));
 
     // 為 8 個伴奏聲部 (Channel 8~15) 寫入音色切換與混音控制器初始參數
+    // 依序分段送出：控制器混音 -> Bank MSB -> Bank LSB -> Program Change
+    // 提供琴端硬體 DSP 充足時間完成模式切換與音色庫映射
     for (const p of activeParts) {
       const ch = p.channel;
-      // Bank MSB (CC 0)
-      absEvents.push({
-        absTick: setupTick,
-        priority: 10,
-        event: { delta: 0, type: 'controlChange', channel: ch, controller: 0, value: p.msb },
-      });
-      // Bank LSB (CC 32)
-      absEvents.push({
-        absTick: setupTick,
-        priority: 11,
-        event: { delta: 0, type: 'controlChange', channel: ch, controller: 32, value: p.lsb },
-      });
-      // Program Change
-      absEvents.push({
-        absTick: setupTick,
-        priority: 12,
-        event: { delta: 0, type: 'programChange', channel: ch, program: p.pc },
-      });
       // Volume (CC 7)
       absEvents.push({
-        absTick: setupTick,
-        priority: 13,
+        absTick: ctrlTick,
+        priority: 10,
         event: { delta: 0, type: 'controlChange', channel: ch, controller: 7, value: p.volume },
       });
       // Pan (CC 10)
       absEvents.push({
-        absTick: setupTick,
-        priority: 14,
+        absTick: ctrlTick,
+        priority: 11,
         event: { delta: 0, type: 'controlChange', channel: ch, controller: 10, value: p.pan },
       });
       // Expression (CC 11: 127)
       absEvents.push({
-        absTick: setupTick,
-        priority: 15,
+        absTick: ctrlTick,
+        priority: 12,
         event: { delta: 0, type: 'controlChange', channel: ch, controller: 11, value: 127 },
       });
       // Reverb (CC 91)
       absEvents.push({
-        absTick: setupTick,
-        priority: 16,
+        absTick: ctrlTick,
+        priority: 13,
         event: { delta: 0, type: 'controlChange', channel: ch, controller: 91, value: p.reverb },
       });
       // Chorus (CC 93)
       absEvents.push({
-        absTick: setupTick,
-        priority: 17,
+        absTick: ctrlTick,
+        priority: 14,
         event: { delta: 0, type: 'controlChange', channel: ch, controller: 93, value: p.chorus },
+      });
+
+      // Bank MSB (CC 0)
+      absEvents.push({
+        absTick: msbTick,
+        priority: 15,
+        event: { delta: 0, type: 'controlChange', channel: ch, controller: 0, value: p.msb },
+      });
+      // Bank LSB (CC 32)
+      absEvents.push({
+        absTick: lsbTick,
+        priority: 16,
+        event: { delta: 0, type: 'controlChange', channel: ch, controller: 32, value: p.lsb },
+      });
+      // Program Change
+      absEvents.push({
+        absTick: pcTick,
+        priority: 17,
+        event: { delta: 0, type: 'programChange', channel: ch, program: p.pc },
       });
     }
 

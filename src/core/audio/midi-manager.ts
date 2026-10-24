@@ -151,6 +151,10 @@ export class MidiManager {
     for (const port of this.midiAccess.outputs.values()) {
       if (port.id === idOrName || port.name === idOrName) {
         this.selectedOutput = port;
+        if (port.open && typeof port.open === 'function') {
+          port.open().catch((err: any) => console.warn('[MidiManager] Failed to open port:', err));
+        }
+        this.wakeUpAllChannels();
         return true;
       }
     }
@@ -395,8 +399,9 @@ export class MidiManager {
 
   /**
    * 傳送 Yamaha 原廠音色切換指令 (Bank Select MSB + LSB + Program Change)
+   * 可選傳入 initControllers=true 同步預設充沛音量 (CC7=115) 與表情 (CC11=127)
    */
-  public sendVoiceChange(channel: number, config: VoiceBankConfig): boolean {
+  public sendVoiceChange(channel: number, config: VoiceBankConfig, initControllers: boolean = false): boolean {
     if (!this.selectedOutput) return false;
     const ch = Math.max(0, Math.min(15, channel));
     const msb = Math.max(0, Math.min(127, Math.round(config.msb)));
@@ -406,7 +411,36 @@ export class MidiManager {
     this.send([0xB0 | ch, 0, msb]);   // CC 0: Bank Select MSB
     this.send([0xB0 | ch, 32, lsb]);  // CC 32: Bank Select LSB
     this.send([0xC0 | ch, pc]);       // Program Change
+    if (initControllers) {
+      this.send([0xB0 | ch, 7, 115]);   // CC 7: Channel Volume (115 飽滿音量)
+      this.send([0xB0 | ch, 11, 127]);  // CC 11: Expression (127 最大表情)
+      this.send([0xB0 | ch, 10, 64]);   // CC 10: Pan (置中)
+    }
     return true;
+  }
+
+  /**
+   * 喚醒並初始化 PSR-SX920 所有 16 個通道的音量、表情與控制器
+   * 防止因琴端預設通道音量為 0 或控制器被切斷而無聲
+   */
+  public wakeUpAllChannels(): void {
+    if (!this.selectedOutput) return;
+
+    // 嘗試傳送 GM / XG System On SysEx (若支援)
+    try {
+      this.send([0xF0, 0x7E, 0x7F, 0x09, 0x01, 0xF7]); // GM System On
+      this.send([0xF0, 0x43, 0x10, 0x4C, 0x00, 0x00, 0x7E, 0x00, 0xF7]); // XG System On
+    } catch {
+      // 忽略無 sysex 權限情況
+    }
+
+    for (let ch = 0; ch < 16; ch++) {
+      this.send([0xB0 | ch, 121, 0]);  // Reset All Controllers
+      this.send([0xB0 | ch, 7, 115]);   // CC 7: Volume = 115
+      this.send([0xB0 | ch, 11, 127]);  // CC 11: Expression = 127
+      this.send([0xB0 | ch, 10, 64]);   // CC 10: Pan = 64
+      this.send([0xB0 | ch, 64, 0]);    // CC 64: Sustain Off
+    }
   }
 
   /**
@@ -482,7 +516,8 @@ export class MidiManager {
   }
 
   /**
-   * 琴端連線測試音效：彈奏 C4 -> E4 -> G4 -> C5 琶音與和弦，確認 PSR-SX920 發聲正常
+   * 測試 1: 鍵盤主音色發聲測試 (Channel 1 鋼琴琶音)
+   * 無論 PSR-SX920 處於何種 MIDI 模式（即使是最嚴苛的 Keyboard / Right 1 模式）皆必響
    */
   public playTestChime(channel: number = 0): void {
     if (!this.selectedOutput) return;
@@ -490,17 +525,86 @@ export class MidiManager {
 
     // 先切換至 Concert Grand (MSB 0, LSB 112, PC 0)
     this.sendVoiceChange(ch, { msb: 0, lsb: 112, pc: 0 });
-    this.sendMixerControllers(ch, { volume: 105, pan: 64 });
+    this.sendMixerControllers(ch, { volume: 115, pan: 64 });
 
     const notes = [60, 64, 67, 72]; // C4, E4, G4, C5
     notes.forEach((pitch, i) => {
       setTimeout(() => {
-        this.sendNoteOn(ch, pitch, 100);
+        this.sendNoteOn(ch, pitch, 110);
         setTimeout(() => {
           this.sendNoteOff(ch, pitch);
-        }, 300);
+        }, 280);
       }, i * 140);
     });
+  }
+
+  /**
+   * 測試 2: 伴奏鼓組發聲測試 (Channel 10 Standard Kit 1)
+   */
+  public playTestDrums(channel: number = 9): void {
+    if (!this.selectedOutput) return;
+    const ch = Math.max(0, Math.min(15, channel));
+
+    // 切換至 Standard Kit 1 (Bank 127-0, PC 0)
+    this.sendVoiceChange(ch, { msb: 127, lsb: 0, pc: 0 });
+    this.sendMixerControllers(ch, { volume: 115, pan: 64 });
+
+    // 大鼓(36) -> 閉鈸(42) -> 小鼓(38) -> 碎音鈸(49)
+    const seq = [
+      { note: 36, delay: 0 },
+      { note: 42, delay: 150 },
+      { note: 38, delay: 300 },
+      { note: 42, delay: 450 },
+      { note: 49, delay: 600 },
+    ];
+
+    seq.forEach(item => {
+      setTimeout(() => {
+        this.sendNoteOn(ch, item.note, 110);
+        setTimeout(() => {
+          this.sendNoteOff(ch, item.note);
+        }, 120);
+      }, item.delay);
+    });
+  }
+
+  /**
+   * 測試 3: 伴奏貝斯發聲測試 (Channel 11 Finger Bass)
+   */
+  public playTestBass(channel: number = 10): void {
+    if (!this.selectedOutput) return;
+    const ch = Math.max(0, Math.min(15, channel));
+
+    // 切換至 Finger Bass (Bank 104-2, PC 33)
+    this.sendVoiceChange(ch, { msb: 104, lsb: 2, pc: 33 });
+    this.sendMixerControllers(ch, { volume: 115, pan: 64 });
+
+    const notes = [36, 43, 41, 38]; // C1, G1, F1, D1
+    notes.forEach((pitch, i) => {
+      setTimeout(() => {
+        this.sendNoteOn(ch, pitch, 110);
+        setTimeout(() => {
+          this.sendNoteOff(ch, pitch);
+        }, 220);
+      }, i * 180);
+    });
+  }
+
+  /**
+   * 測試 4: 伴奏和弦發聲測試 (Channel 12 Concert Grand)
+   */
+  public playTestChord(channel: number = 11): void {
+    if (!this.selectedOutput) return;
+    const ch = Math.max(0, Math.min(15, channel));
+
+    this.sendVoiceChange(ch, { msb: 0, lsb: 112, pc: 0 });
+    this.sendMixerControllers(ch, { volume: 115, pan: 64 });
+
+    const chord = [60, 64, 67]; // C4, E4, G4
+    chord.forEach(pitch => this.sendNoteOn(ch, pitch, 105));
+    setTimeout(() => {
+      chord.forEach(pitch => this.sendNoteOff(ch, pitch));
+    }, 500);
   }
 
   /**
