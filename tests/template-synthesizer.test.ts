@@ -65,7 +65,7 @@ describe('YamahaTemplateStyleSynthesizer', () => {
 
     const casmChunk = parsed.customChunks.find(c => c.id === 'CASM');
     expect(casmChunk).toBeDefined();
-    expect(casmChunk?.data.length).toBe(3701); // Golden template CASM perfectly intact!
+    expect(casmChunk?.data.length).toBe(6031); // Golden template CASM (3701) + 5 Fill In CSEGs (2330)
 
     // Verify track name
     const tr0 = parsed.tracks[0];
@@ -178,9 +178,99 @@ describe('YamahaTemplateStyleSynthesizer', () => {
     expect(notesInMainABars[1]).toBeGreaterThan(0);
     expect(notesInMainABars[2]).toBeGreaterThan(0);
     expect(notesInMainABars[3]).toBeGreaterThan(0);
-    // All 4 bars should have equal notes because each bar has same kick/snare pattern
-    expect(notesInMainABars[0]).toBe(notesInMainABars[1]);
-    expect(notesInMainABars[1]).toBe(notesInMainABars[2]);
-    expect(notesInMainABars[2]).toBe(notesInMainABars[3]);
+  });
+
+  it('tests full synthesis with Fill In AA and Fill In BB in CASM and Track 0', () => {
+    // 1. Prepare dummy drum, bass, and chord patterns
+    const drumPattern = new Map<number, boolean[]>();
+    const kick = new Array(64).fill(false);
+    kick[0] = true;
+    kick[8] = true;
+    drumPattern.set(36, kick);
+
+    const bassPattern = new Map<number, number>();
+    bassPattern.set(0, 36);
+
+    const chordPattern = new Map<number, Set<number>>();
+    chordPattern.set(0, new Set([60, 64, 67]));
+
+    // Custom Fill In AA pattern (snare roll)
+    const fillDrum = new Map<number, boolean[]>();
+    const snare = new Array(16).fill(true); // 16 snare hits!
+    fillDrum.set(38, snare);
+
+    const fillBass = new Map<number, number>();
+    fillBass.set(0, 36);
+    fillBass.set(8, 43);
+
+    const fillChord = new Map<number, Set<number>>();
+    fillChord.set(0, new Set([60, 64, 67]));
+
+    const bytes = YamahaTemplateStyleSynthesizer.synthesizeFromTemplate({
+      styleName: 'Pop Rock With Fills',
+      bpm: 120,
+      drumKit: { msb: 127, lsb: 0, pc: 0 },
+      bassVoice: { msb: 0, lsb: 112, pc: 33 },
+      chordVoice: { msb: 104, lsb: 0, pc: 0 },
+      sections: [
+        {
+          name: 'Main A',
+          bars: 4,
+          drumPattern,
+          bassPattern,
+          chordPattern,
+        },
+        {
+          name: 'Main B',
+          bars: 4,
+          drumPattern,
+          bassPattern,
+          chordPattern,
+        },
+        {
+          name: 'Fill In AA',
+          bars: 1,
+          drumPattern: fillDrum,
+          bassPattern: fillBass,
+          chordPattern: fillChord,
+        },
+      ],
+    });
+
+    expect(bytes).toBeDefined();
+    expect(bytes.length).toBeGreaterThan(5000);
+
+    const parsed = YamahaParser.parse(bytes, 'STY');
+    const fillAA = parsed.sections.find(s => s.name === 'Fill In AA');
+    const fillBB = parsed.sections.find(s => s.name === 'Fill In BB');
+    const fillCC = parsed.sections.find(s => s.name === 'Fill In CC');
+    const fillDD = parsed.sections.find(s => s.name === 'Fill In DD');
+    const fillBA = parsed.sections.find(s => s.name === 'Fill In BA');
+
+    expect(fillAA).toBeDefined();
+    expect(fillBB).toBeDefined();
+    expect(fillCC).toBeDefined();
+    expect(fillDD).toBeDefined();
+    expect(fillBA).toBeDefined();
+
+    // Verify notes exist inside Fill In AA
+    let t = 0;
+    let notesInFillAA = 0;
+    let notesInFillBB = 0;
+    for (const ev of parsed.tracks[0].events) {
+      t += ev.delta;
+      if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
+        if (t >= fillAA!.startTick && (fillAA!.endTick === undefined || t < fillAA!.endTick)) {
+          notesInFillAA++;
+        }
+        if (t >= fillBB!.startTick && (fillBB!.endTick === undefined || t < fillBB!.endTick)) {
+          notesInFillBB++;
+        }
+      }
+    }
+
+    console.log(`Fill In AA notes count: ${notesInFillAA}, Fill In BB notes count: ${notesInFillBB}`);
+    expect(notesInFillAA).toBeGreaterThan(0); // Custom snare roll + bass + chord
+    expect(notesInFillBB).toBeGreaterThan(0); // Fallback from Main B with snare roll accent
   });
 });

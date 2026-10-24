@@ -70,8 +70,11 @@ export class YamahaTemplateStyleSynthesizer {
     for (const ev of tr0.events) {
       curTick += ev.delta;
 
-      // 移除範本內既有的舊音符
+      // 移除範本內既有的舊音符與舊的 End of Track (結尾會統一追加)
       if (ev.type === 'noteOn' || ev.type === 'noteOff') {
+        continue;
+      }
+      if (ev.type === 'meta' && ev.metaType === 0x2f) {
         continue;
       }
 
@@ -322,6 +325,273 @@ export class YamahaTemplateStyleSynthesizer {
             }
           });
         }
+      }
+    }
+
+    // 3.5 生成並注入 Yamaha 標準過門段落 (Fill In AA, Fill In BB, Fill In CC, Fill In DD, Fill In BA)
+    // 徹底解決實體 PSR-SX920 按面板 [Fill In A] / [Fill In B] 時無內容或靜音的痛點
+    let maxTickSoFar = 0;
+    for (const item of timedEvents) {
+      if (item.absTick > maxTickSoFar) maxTickSoFar = item.absTick;
+    }
+    let currentFillTick = Math.ceil(maxTickSoFar / ticksPerBar) * ticksPerBar;
+
+    const fillSectionConfigs = [
+      { name: 'Fill In AA', sourceMain: 'Main A' },
+      { name: 'Fill In BB', sourceMain: 'Main B' },
+      { name: 'Fill In CC', sourceMain: 'Main C' },
+      { name: 'Fill In DD', sourceMain: 'Main D' },
+      { name: 'Fill In BA', sourceMain: 'Main B' },
+    ];
+
+    for (const fillCfg of fillSectionConfigs) {
+      const fillStart = currentFillTick;
+      const fillEnd = fillStart + ticksPerBar; // 1 小節長度
+
+      // 插入 Marker 標記事件
+      timedEvents.push({
+        absTick: fillStart,
+        priority: 20,
+        event: {
+          delta: 0,
+          type: 'meta',
+          metaType: 6,
+          text: fillCfg.name,
+          metaData: new TextEncoder().encode(fillCfg.name),
+        },
+      });
+
+      // 註冊至 parsed.sections 列表，供後續驗證與讀取
+      parsed.sections.push({
+        name: fillCfg.name,
+        startTick: fillStart,
+        endTick: fillEnd,
+        measureCount: 1,
+      });
+
+      // 決定過門內容來源：使用者若有編寫同名過門則優先使用，否則取對應主段落的最後一小節作為自然過門
+      let fillUserSec = userSectionMap.get(fillCfg.name);
+      let isFallbackFromMain = false;
+      if (!fillUserSec) {
+        fillUserSec = userSectionMap.get(fillCfg.sourceMain) || mainAUser;
+        isFallbackFromMain = true;
+      }
+
+      const patternBars = Math.max(1, fillUserSec.bars || 1);
+      const fillBarIdx = isFallbackFromMain ? patternBars - 1 : 0; // 取主段落最後一小節，或使用者自定義過門
+
+      let secStepsPerBar = fillUserSec.stepsPerBar || options.stepsPerBar;
+      if (!secStepsPerBar) {
+        let maxLen = 0;
+        fillUserSec.drumPattern.forEach((arr) => {
+          if (arr.length > maxLen) maxLen = arr.length;
+        });
+        secStepsPerBar = maxLen > 0 && fillUserSec.bars > 0 ? Math.round(maxLen / fillUserSec.bars) : 16;
+      }
+      const secTicksPerStep = Math.round(ticksPerBar / secStepsPerBar);
+
+      // 3.5.1 鼓點
+      fillUserSec.drumPattern.forEach((steps, note) => {
+        for (let s = 0; s < secStepsPerBar; s++) {
+          const stepIdx = fillBarIdx * secStepsPerBar + s;
+          if (steps[stepIdx]) {
+            const noteStart = fillStart + s * secTicksPerStep;
+            const noteEnd = noteStart + Math.max(12, Math.round(secTicksPerStep * 0.75));
+            timedEvents.push({
+              absTick: noteStart,
+              priority: 50,
+              event: { delta: 0, type: 'noteOn', channel: 9, noteNumber: note, velocity: 100 },
+            });
+            timedEvents.push({
+              absTick: noteEnd,
+              priority: 40,
+              event: { delta: 0, type: 'noteOff', channel: 9, noteNumber: note, velocity: 0 },
+            });
+          }
+        }
+      });
+
+      // 若為由主段落自動衍生之過門，在第 15、16 格加入自然的小鼓碎拍衝刺以強化過門聽感
+      if (isFallbackFromMain) {
+        for (let s = Math.max(0, secStepsPerBar - 2); s < secStepsPerBar; s++) {
+          const noteStart = fillStart + s * secTicksPerStep;
+          const noteEnd = noteStart + Math.max(12, Math.round(secTicksPerStep * 0.75));
+          timedEvents.push({
+            absTick: noteStart,
+            priority: 50,
+            event: { delta: 0, type: 'noteOn', channel: 9, noteNumber: 38, velocity: 110 },
+          });
+          timedEvents.push({
+            absTick: noteEnd,
+            priority: 40,
+            event: { delta: 0, type: 'noteOff', channel: 9, noteNumber: 38, velocity: 0 },
+          });
+        }
+      }
+
+      // 3.5.2 貝斯
+      for (let s = 0; s < secStepsPerBar; s++) {
+        const stepIdx = fillBarIdx * secStepsPerBar + s;
+        const note = fillUserSec.bassPattern.get(stepIdx);
+        if (note !== undefined) {
+          const noteStart = fillStart + s * secTicksPerStep;
+          const noteEnd = noteStart + Math.max(18, Math.round(secTicksPerStep * 1.5));
+          timedEvents.push({
+            absTick: noteStart,
+            priority: 50,
+            event: { delta: 0, type: 'noteOn', channel: 10, noteNumber: note, velocity: 100 },
+          });
+          timedEvents.push({
+            absTick: noteEnd,
+            priority: 40,
+            event: { delta: 0, type: 'noteOff', channel: 10, noteNumber: note, velocity: 0 },
+          });
+        }
+      }
+
+      // 3.5.3 和弦 1
+      if (fillUserSec.chordPattern) {
+        for (let s = 0; s < secStepsPerBar; s++) {
+          const stepIdx = fillBarIdx * secStepsPerBar + s;
+          const noteSet = fillUserSec.chordPattern.get(stepIdx);
+          if (noteSet && noteSet.size > 0) {
+            const noteStart = fillStart + s * secTicksPerStep;
+            const noteEnd = noteStart + Math.max(18, Math.round(secTicksPerStep * 1.7));
+            noteSet.forEach(note => {
+              timedEvents.push({
+                absTick: noteStart,
+                priority: 50,
+                event: { delta: 0, type: 'noteOn', channel: 11, noteNumber: note, velocity: 95 },
+              });
+              timedEvents.push({
+                absTick: noteEnd,
+                priority: 40,
+                event: { delta: 0, type: 'noteOff', channel: 11, noteNumber: note, velocity: 0 },
+              });
+            });
+          }
+        }
+      }
+
+      // 3.5.4 動態伴奏音軌 (Chord 2, Pad, Phrase 1, Phrase 2)
+      if (fillUserSec.dynamicPatterns) {
+        const partChannelMap: Record<string, number> = {
+          Chord2: 12,
+          Pad: 13,
+          Phrase1: 14,
+          Phrase2: 15,
+        };
+        Object.entries(fillUserSec.dynamicPatterns).forEach(([partId, pat]) => {
+          const ch = partChannelMap[partId] ?? 12;
+          for (let s = 0; s < secStepsPerBar; s++) {
+            const stepIdx = fillBarIdx * secStepsPerBar + s;
+            const noteSet = pat.get(stepIdx);
+            if (noteSet && noteSet.size > 0) {
+              const noteStart = fillStart + s * secTicksPerStep;
+              const noteEnd = noteStart + Math.max(18, Math.round(secTicksPerStep * 1.7));
+              noteSet.forEach(note => {
+                timedEvents.push({
+                  absTick: noteStart,
+                  priority: 50,
+                  event: { delta: 0, type: 'noteOn', channel: ch, noteNumber: note, velocity: 90 },
+                });
+                timedEvents.push({
+                  absTick: noteEnd,
+                  priority: 40,
+                  event: { delta: 0, type: 'noteOff', channel: ch, noteNumber: note, velocity: 0 },
+                });
+              });
+            }
+          }
+        });
+      }
+
+      currentFillTick += ticksPerBar;
+    }
+
+    // 在全曲音軌最後加入 Meta 0x2F (End of Track)
+    timedEvents.push({
+      absTick: currentFillTick,
+      priority: 999,
+      event: {
+        delta: 0,
+        type: 'meta',
+        metaType: 0x2f,
+        metaData: new Uint8Array(0),
+      },
+    });
+
+    // 3.6 擴展 CASM 區塊，注入過門之 CSEG (Fill In AA, BB, CC, DD, BA)
+    const casmChunk = parsed.customChunks.find(c => c.id === 'CASM');
+    if (casmChunk) {
+      const findCseg = (casmData: Uint8Array, secName: string): Uint8Array | null => {
+        let offset = 0;
+        while (offset < casmData.length - 8) {
+          if (casmData[offset] === 0x43 && casmData[offset+1] === 0x53 && casmData[offset+2] === 0x45 && casmData[offset+3] === 0x47) {
+            const csegLen = (casmData[offset+4] << 24) | (casmData[offset+5] << 16) | (casmData[offset+6] << 8) | casmData[offset+7];
+            for (let j = offset + 8; j < offset + 8 + csegLen - 8; j++) {
+              if (casmData[j] === 0x53 && casmData[j+1] === 0x64 && casmData[j+2] === 0x65 && casmData[j+3] === 0x63) {
+                const sdecLen = (casmData[j+4] << 24) | (casmData[j+5] << 16) | (casmData[j+6] << 8) | casmData[j+7];
+                const sdecText = new TextDecoder().decode(casmData.slice(j + 8, j + 8 + sdecLen));
+                if (sdecText === secName) {
+                  return casmData.slice(offset, offset + 8 + csegLen);
+                }
+                break;
+              }
+            }
+            offset += 8 + csegLen;
+          } else {
+            offset++;
+          }
+        }
+        return null;
+      };
+
+      const createCsegForSection = (sourceCseg: Uint8Array, newSecName: string): Uint8Array => {
+        const oldSdecLen = (sourceCseg[12] << 24) | (sourceCseg[13] << 16) | (sourceCseg[14] << 8) | sourceCseg[15];
+        const newSecBytes = new TextEncoder().encode(newSecName);
+        const diff = newSecBytes.length - oldSdecLen;
+        const oldCsegLen = (sourceCseg[4] << 24) | (sourceCseg[5] << 16) | (sourceCseg[6] << 8) | sourceCseg[7];
+        const newCsegLen = oldCsegLen + diff;
+
+        const result = new Uint8Array(sourceCseg.length + diff);
+        result.set(sourceCseg.slice(0, 4), 0);
+        result[4] = (newCsegLen >> 24) & 0xff;
+        result[5] = (newCsegLen >> 16) & 0xff;
+        result[6] = (newCsegLen >> 8) & 0xff;
+        result[7] = newCsegLen & 0xff;
+        result.set(sourceCseg.slice(8, 12), 8);
+        result[12] = (newSecBytes.length >> 24) & 0xff;
+        result[13] = (newSecBytes.length >> 16) & 0xff;
+        result[14] = (newSecBytes.length >> 8) & 0xff;
+        result[15] = newSecBytes.length & 0xff;
+        result.set(newSecBytes, 16);
+        result.set(sourceCseg.slice(16 + oldSdecLen), 16 + newSecBytes.length);
+        return result;
+      };
+
+      const mainACseg = findCseg(casmChunk.data, 'Main A');
+      const mainBCseg = findCseg(casmChunk.data, 'Main B');
+      const mainCCseg = findCseg(casmChunk.data, 'Main C');
+      const mainDCseg = findCseg(casmChunk.data, 'Main D');
+
+      const extraCsegs: Uint8Array[] = [];
+      if (mainACseg) extraCsegs.push(createCsegForSection(mainACseg, 'Fill In AA'));
+      if (mainBCseg) extraCsegs.push(createCsegForSection(mainBCseg, 'Fill In BB'));
+      if (mainCCseg) extraCsegs.push(createCsegForSection(mainCCseg, 'Fill In CC'));
+      if (mainDCseg) extraCsegs.push(createCsegForSection(mainDCseg, 'Fill In DD'));
+      if (mainACseg) extraCsegs.push(createCsegForSection(mainACseg, 'Fill In BA'));
+
+      if (extraCsegs.length > 0) {
+        const totalExtraLen = extraCsegs.reduce((sum, c) => sum + c.length, 0);
+        const combinedCasm = new Uint8Array(casmChunk.data.length + totalExtraLen);
+        combinedCasm.set(casmChunk.data, 0);
+        let curOffset = casmChunk.data.length;
+        for (const ec of extraCsegs) {
+          combinedCasm.set(ec, curOffset);
+          curOffset += ec.length;
+        }
+        casmChunk.data = combinedCasm;
       }
     }
 
