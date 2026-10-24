@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import { YamahaTemplateStyleSynthesizer } from '../src/core/writer/template-style-synthesizer';
 import { YamahaParser } from '../src/core/parser/yamaha-parser';
-import { getGoldenStyleTemplateBytes } from '../src/core/data/yamaha-style-template';
 
 describe('YamahaTemplateStyleSynthesizer', () => {
   it('synthesizes a perfect SX920 style file from golden template', () => {
@@ -60,25 +59,17 @@ describe('YamahaTemplateStyleSynthesizer', () => {
     // Parse back
     const parsed = YamahaParser.parse(bytes, 'STY');
     expect(parsed.format).toBe('STY');
-    expect(parsed.division).toBe(96);
+    expect(parsed.division).toBe(1920);
     expect(parsed.hasCasm).toBe(true);
 
     const casmChunk = parsed.customChunks.find(c => c.id === 'CASM');
     expect(casmChunk).toBeDefined();
-    expect(casmChunk?.data.length).toBe(3701); // Golden template CASM perfectly intact!
+    expect(casmChunk?.data.length).toBe(2094); // Full-House 1920 PPQ CASM intact!
 
     // Verify track name
     const tr0 = parsed.tracks[0];
-    const timeSigEv = tr0.events.find(e => e.type === 'meta' && e.metaType === 0x58);
-    console.log('TimeSignature event:', timeSigEv, 'parsed timeSignature:', parsed.timeSignature);
     const nameEv = tr0.events.find(e => e.type === 'meta' && e.metaType === 0x03);
     expect(nameEv?.text).toBe('Pop Rock 2026');
-
-    // Print all sections and note ranges in each section
-    console.log('\n--- Section details in synthesized file ---');
-    parsed.sections.forEach(s => {
-      console.log(`  ${s.name.padEnd(12)} startTick=${s.startTick} endTick=${s.endTick} bars=${s.measureCount}`);
-    });
 
     // Check where notes exist
     let t = 0;
@@ -86,25 +77,24 @@ describe('YamahaTemplateStyleSynthesizer', () => {
     for (const ev of tr0.events) {
       t += ev.delta;
       if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
-        // Find which section this note belongs to
         const sec = parsed.sections.find(s => s.startTick <= t && (s.endTick === undefined || t < s.endTick));
         const sName = sec?.name || 'Unknown';
         notesBySection.set(sName, (notesBySection.get(sName) || 0) + 1);
       }
     }
-    console.log('\n--- Notes per section ---');
-    notesBySection.forEach((cnt, sName) => {
-      console.log(`  ${sName.padEnd(12)}: ${cnt} notes`);
-    });
 
     // Verify sections have notes
-    const noteCount = tr0.events.filter(e => e.type === 'noteOn' && (e.velocity ?? 0) > 0).length;
-    console.log('Total notes in synthesized file:', noteCount);
-    expect(noteCount).toBeGreaterThan(500);
+    expect(notesBySection.get('Main A')).toBeGreaterThan(0);
+    expect(notesBySection.get('Main B')).toBeGreaterThan(0);
+    expect(notesBySection.get('Fill In AA')).toBeGreaterThan(0);
+    expect(notesBySection.get('Fill In BB')).toBeGreaterThan(0);
+
+    const totalNotes = tr0.events.filter(e => e.type === 'noteOn' && (e.velocity ?? 0) > 0).length;
+    console.log('Total notes in synthesized file:', totalNotes);
+    expect(totalNotes).toBeGreaterThan(500);
 
     // Save sample to disk
     fs.writeFileSync('public/samples/SX920_Golden_Template.sty', Buffer.from(bytes));
-    console.log('Saved to public/samples/SX920_Golden_Template.sty (bytes: ' + bytes.length + ')');
   });
 
   it('correctly handles 8-step (1/8 note) resolution without 2x compression or blank bars', () => {
@@ -156,31 +146,28 @@ describe('YamahaTemplateStyleSynthesizer', () => {
     const mainA = parsed.sections.find(s => s.name === 'Main A')!;
     expect(mainA).toBeDefined();
 
-    // Check notes within Main A (startTick to startTick + 4 bars = 4 * 384 = 1536 ticks)
+    // Main A in template is 2 bars (measureCount = 2, 2 * 7680 = 15360 ticks)
+    const ticksPerBar = 1920 * 4;
     const tr0 = parsed.tracks[0];
     let t = 0;
-    const notesInMainABars: number[] = [0, 0, 0, 0]; // count per bar (Bar 1, 2, 3, 4)
+    const notesInMainABars: number[] = [0, 0]; // count per bar (Bar 1, Bar 2)
     for (const ev of tr0.events) {
       t += ev.delta;
       if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
-        if (t >= mainA.startTick && t < mainA.startTick + 4 * 384) {
-          const barIdx = Math.floor((t - mainA.startTick) / 384);
-          if (barIdx >= 0 && barIdx < 4) {
+        if (t >= mainA.startTick && t < mainA.startTick + 2 * ticksPerBar) {
+          const barIdx = Math.floor((t - mainA.startTick) / ticksPerBar);
+          if (barIdx >= 0 && barIdx < 2) {
             notesInMainABars[barIdx]++;
           }
         }
       }
     }
 
-    console.log('Notes in 8-beat Main A first 4 bars:', notesInMainABars);
-    // Every single bar (1, 2, 3, 4) MUST have notes! No bar should be 0!
+    console.log('Notes in 8-beat Main A bars (bar 1 & 2):', notesInMainABars);
+    // Both bars MUST have notes! No bar should be 0!
     expect(notesInMainABars[0]).toBeGreaterThan(0);
     expect(notesInMainABars[1]).toBeGreaterThan(0);
-    expect(notesInMainABars[2]).toBeGreaterThan(0);
-    expect(notesInMainABars[3]).toBeGreaterThan(0);
-    // All 4 bars should have equal notes because each bar has same kick/snare pattern
+    // Both bars should have equal notes because each bar has same kick/snare pattern
     expect(notesInMainABars[0]).toBe(notesInMainABars[1]);
-    expect(notesInMainABars[1]).toBe(notesInMainABars[2]);
-    expect(notesInMainABars[2]).toBe(notesInMainABars[3]);
   });
 });

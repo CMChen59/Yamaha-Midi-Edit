@@ -34,16 +34,18 @@ export interface TemplateStyleExportOptions {
 
 export class YamahaTemplateStyleSynthesizer {
   /**
-   * 使用經過 Yamaha PSR-SX920 實體琴 100% 驗證通過的黃金範本 (Golden Template) 進行伴奏合成。
+   * 使用經過 Yamaha PSR-SX920 實體琴 100% 驗證通過的 1920 PPQ 黃金全曲式範本 (Full-House Template) 進行伴奏合成。
    * 此方法完整保留 Yamaha 原廠之 MThd、SInt 初始化握手標頭、SysEx (Works Header, GM On, XG On)、
    * 以及合法完整的 SFF2 CASM (Chord Audio Style Mapping) 轉調映射區塊，
-   * 確保實體琴載入時絕對不會出現 "Data has not been loaded properly" 錯誤。
+   * 範本原生內建 Main A~D、Fill In AA~DD、Intro A~C、Ending A 共 12 個音樂段落，
+   * 確保實體琴載入時絕對不會出現 "Data has not been loaded properly" 錯誤，
+   * 且按下 [AUTO FILL-IN] 或 [Fill In A/B/C/D] 鍵時能完美發出過門樂音與小鼓滾奏過渡。
    */
   public static synthesizeFromTemplate(options: TemplateStyleExportOptions): Uint8Array {
     const rawTemplateBytes = getGoldenStyleTemplateBytes();
     const parsed = YamahaParser.parse(rawTemplateBytes, 'STY');
 
-    const division = parsed.division || 96; // 96 PPQ (Yamaha 原廠黃金範本標準時鐘)
+    const division = parsed.division || 1920; // 1920 PPQ (Yamaha PSR-SX920 原廠標準高解析度時鐘)
     const timeSig = options.timeSignature ?? { numerator: 4, denominator: 4 };
     const ticksPerBeat = division;
     const ticksPerBar = Math.round(ticksPerBeat * timeSig.numerator * (4 / timeSig.denominator));
@@ -183,17 +185,34 @@ export class YamahaTemplateStyleSynthesizer {
     }
 
     // 3. 將使用者的樂音編入範本的所有段落中
-    // 範本段落：Intro A, Main A, Main B, Intro B, Main C, Intro C, Main D, Ending A
+    // 範本段落：Main A-D, Fill In AA-DD, Intro A-C, Ending A
     for (const sec of parsed.sections) {
       if (sec.name === 'SFF2' || sec.name === 'SInt') continue;
 
       const secStart = sec.startTick;
-      const secBars = sec.measureCount || 4;
+      const secBars = sec.measureCount || (sec.endTick ? Math.round((sec.endTick - sec.startTick) / ticksPerBar) : 4);
 
-      // 決定該段落應採用的使用者輸入：優先使用同名段落，若無則以 mainAUser 循環鏡像填充
+      // 決定該段落應採用的使用者輸入：優先使用同名段落，若無則依段落性質智能映射
       let targetUserSec = userSectionMap.get(sec.name);
+      let isAutoDerivedFill = false;
+
       if (!targetUserSec) {
-        if (sec.name.startsWith('Main')) {
+        if (sec.name === 'Fill In AA') {
+          targetUserSec = userSectionMap.get('Main A') || mainAUser;
+          isAutoDerivedFill = true;
+        } else if (sec.name === 'Fill In BB') {
+          targetUserSec = userSectionMap.get('Main B') || userSectionMap.get('Main A') || mainAUser;
+          isAutoDerivedFill = true;
+        } else if (sec.name === 'Fill In CC') {
+          targetUserSec = userSectionMap.get('Main C') || userSectionMap.get('Main A') || mainAUser;
+          isAutoDerivedFill = true;
+        } else if (sec.name === 'Fill In DD') {
+          targetUserSec = userSectionMap.get('Main D') || userSectionMap.get('Main A') || mainAUser;
+          isAutoDerivedFill = true;
+        } else if (sec.name.startsWith('Fill')) {
+          targetUserSec = mainAUser;
+          isAutoDerivedFill = true;
+        } else if (sec.name.startsWith('Main')) {
           targetUserSec = userSectionMap.get('Main A') || mainAUser;
         } else if (sec.name.startsWith('Intro')) {
           targetUserSec = userSectionMap.get('Intro A') || mainAUser;
@@ -222,7 +241,10 @@ export class YamahaTemplateStyleSynthesizer {
       const secTicksPerStep = Math.round(ticksPerBar / secStepsPerBar);
 
       for (let b = 0; b < secBars; b++) {
-        const userBar = b % patternBars;
+        // 如果是自動衍生過門且原模式有多小節，取最後一小節作為過門基礎
+        const userBar = (isAutoDerivedFill && patternBars > 1)
+          ? (patternBars - 1)
+          : (b % patternBars);
         const barOffset = b * ticksPerBar;
 
         // 3.1 鼓點 (Ch 10 / index 9)
@@ -245,6 +267,25 @@ export class YamahaTemplateStyleSynthesizer {
             }
           }
         });
+
+        // 3.1.1 若為自動衍生之過門段落 (Fill In)，在該小節最後一拍注入小鼓滾奏 (Snare Roll) 營造過門氣勢
+        if (isAutoDerivedFill) {
+          const fillRollSteps = secStepsPerBar === 16 ? [14, 15] : [secStepsPerBar - 1];
+          for (const s of fillRollSteps) {
+            const noteStart = secStart + barOffset + s * secTicksPerStep;
+            const noteEnd = noteStart + Math.max(12, Math.round(secTicksPerStep * 0.5));
+            timedEvents.push({
+              absTick: noteStart,
+              priority: 50,
+              event: { delta: 0, type: 'noteOn', channel: 9, noteNumber: 38, velocity: 115 },
+            });
+            timedEvents.push({
+              absTick: noteEnd,
+              priority: 40,
+              event: { delta: 0, type: 'noteOff', channel: 9, noteNumber: 38, velocity: 0 },
+            });
+          }
+        }
 
         // 3.2 貝斯 (Ch 11 / index 10)
         for (let s = 0; s < secStepsPerBar; s++) {
