@@ -41,8 +41,8 @@ export const STY_SECTION_PRESETS: SectionPreset[] = [
   { id: 'Fill In BB', label: 'Fill In BB (過門 B - 1小節)', defaultBars: 1 },
   { id: 'Fill In CC', label: 'Fill In CC (過門 C - 1小節)', defaultBars: 1 },
   { id: 'Fill In DD', label: 'Fill In DD (過門 D - 1小節)', defaultBars: 1 },
-  { id: 'Intro A', label: 'Intro A (前奏 A - 2小節)', defaultBars: 2 },
-  { id: 'Ending A', label: 'Ending A (尾奏 A - 2小節)', defaultBars: 2 },
+  { id: 'Intro A', label: 'Intro A (前奏 A - 可選 2/4/8 小節)', defaultBars: 4 },
+  { id: 'Ending A', label: 'Ending A (尾奏 A - 可選 2/4 小節)', defaultBars: 2 },
 ];
 
 export const PAD_SECTION_PRESETS: SectionPreset[] = [
@@ -2503,22 +2503,39 @@ export class CreatorApp {
     const badge = document.getElementById('assistant-badge');
     const title = document.getElementById('assistant-title');
     const desc = document.getElementById('assistant-desc');
+    const barButtonsContainer = document.getElementById('assistant-bar-buttons');
     const presetContainer = document.getElementById('assistant-preset-buttons');
     const auditionContainer = document.getElementById('assistant-audition-buttons');
 
+    const currentBars = this.state.totalBars;
+
     if (isIntro) {
       panel.classList.remove('theme-ending');
-      if (badge) badge.textContent = `🏁 前奏 (${secName})`;
+      if (badge) badge.textContent = `🏁 前奏 (${secName} - ${currentBars} 小節)`;
       if (title) title.textContent = `${secName} 前奏智慧創作助理`;
-      if (desc) desc.textContent = '前奏是引導歌曲起跑的關鍵！您可以使用下方一鍵範本快速生成鼓棒計拍或流行和弦，也可以在下方捲軸自由編輯。';
+      if (desc) desc.textContent = '前奏為歌曲開場引子（可自由切換 2/4/8 小節）！您可以使用下方一鍵範本快速生成鼓棒計拍或流行和弦，也可以在下方捲軸自由編輯至 8 小節。';
+
+      if (barButtonsContainer) {
+        barButtonsContainer.innerHTML = `
+          <button class="btn-assistant-preset ${currentBars === 2 ? 'active-bar' : ''}" data-bar-btn="2">2 小節 (短引子)</button>
+          <button class="btn-assistant-preset ${currentBars === 4 ? 'active-bar' : ''}" data-bar-btn="4">4 小節 (標準)</button>
+          <button class="btn-assistant-preset ${currentBars === 8 ? 'active-bar' : ''}" data-bar-btn="8">8 小節 (長版前奏)</button>
+        `;
+        barButtonsContainer.querySelectorAll('[data-bar-btn]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const b = parseInt(btn.getAttribute('data-bar-btn') || '4', 10);
+            this.setSectionBars(b);
+          });
+        });
+      }
 
       if (presetContainer) {
         presetContainer.innerHTML = `
-          <button id="btn-preset-intro-countin" class="btn-assistant-preset" title="第 1 小節 4 拍 Hi-Hat 鼓棒計拍，第 2 小節過門輕敲">
+          <button id="btn-preset-intro-countin" class="btn-assistant-preset" title="第 1 小節 4 拍 Hi-Hat 鼓棒計拍，後續節奏推進交棒主歌">
             🥁 倒數計拍前奏 (Count-in)
           </button>
-          <button id="btn-preset-intro-harmonic" class="btn-assistant-preset" title="標準流行 2-5-1 和弦引導 (Dm7 -> G7 -> C)">
-            🎹 流行和弦前奏 (2-5-1)
+          <button id="btn-preset-intro-harmonic" class="btn-assistant-preset" title="流行和弦進行引導 (1-6-2-5 或 2-5-1)">
+            🎹 流行和弦前奏 (Harmonic)
           </button>
           <button id="btn-preset-intro-from-main" class="btn-assistant-preset" title="以 Main A 主歌為基礎，在開頭插入計拍">
             ✨ 沿用 Main A 開場
@@ -2538,8 +2555,8 @@ export class CreatorApp {
       if (auditionContainer) {
         const isChainedActive = this.chainedAuditionMode === 'intro-to-main';
         auditionContainer.innerHTML = `
-          <button id="btn-audition-intro-main" class="btn-assistant-audition ${isChainedActive ? 'active-audition' : ''}" title="先播放 Intro 前奏，接著自動無縫滑進 Main A 主歌！">
-            <span>${isChainedActive ? '⏸' : '🚀'}</span> ${isChainedActive ? '停止試聽' : '試聽前奏接主歌 (Intro ➜ Main A)'}
+          <button id="btn-audition-intro-main" class="btn-assistant-audition ${isChainedActive ? 'active-audition' : ''}" title="完整播放 ${currentBars} 小節前奏，接著自動無縫滑進 Main A 主歌！">
+            <span>${isChainedActive ? '⏸' : '🚀'}</span> ${isChainedActive ? '停止試聽' : `試聽前奏接主歌 (${currentBars}小節 ➜ Main)`}
           </button>
         `;
         auditionContainer.querySelector('#btn-audition-intro-main')?.addEventListener('click', () => {
@@ -2548,9 +2565,22 @@ export class CreatorApp {
       }
     } else if (isEnding) {
       panel.classList.add('theme-ending');
-      if (badge) badge.textContent = `🛑 尾奏 (${secName})`;
+      if (badge) badge.textContent = `🛑 尾奏 (${secName} - ${currentBars} 小節)`;
       if (title) title.textContent = `${secName} 尾奏智慧創作助理`;
       if (desc) desc.textContent = '尾奏為整首歌曲的終止式收尾！點擊下方範本可一鍵生成俐落大鈸收束或樂團大收尾，演奏完畢後實體琴將自動平穩停止伴奏。';
+
+      if (barButtonsContainer) {
+        barButtonsContainer.innerHTML = `
+          <button class="btn-assistant-preset ${currentBars === 2 ? 'active-bar' : ''}" data-bar-btn="2">2 小節 (俐落收尾)</button>
+          <button class="btn-assistant-preset ${currentBars === 4 ? 'active-bar' : ''}" data-bar-btn="4">4 小節 (漸慢加長)</button>
+        `;
+        barButtonsContainer.querySelectorAll('[data-bar-btn]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const b = parseInt(btn.getAttribute('data-bar-btn') || '2', 10);
+            this.setSectionBars(b);
+          });
+        });
+      }
 
       if (presetContainer) {
         presetContainer.innerHTML = `
@@ -2590,38 +2620,59 @@ export class CreatorApp {
   }
 
   /**
+   * 切換當前段落的小節數 (例如 2, 4, 8 小節)
+   */
+  public setSectionBars(bars: number) {
+    this.state.totalBars = bars;
+    const selectBars = document.getElementById('select-bars') as HTMLSelectElement | null;
+    if (selectBars) selectBars.value = bars.toString();
+
+    this.drumGrid?.setTotalBars(bars);
+    this.bassRoll?.setTotalBars(bars);
+    this.chordRoll?.setTotalBars(bars);
+    this.dynamicTracks.forEach(t => t.roll.setTotalBars(bars));
+
+    this.saveCurrentSectionToStore();
+    this.updateSectionSummary();
+    this.updateAssistantPanel();
+
+    this.setStatus(`📏 已將【${this.state.currentSection}】長度切換為 ${bars} 小節！可自由編寫至第 ${bars} 小節。`);
+  }
+
+  /**
    * 套用 Intro 或 Ending 一鍵智慧範本
    */
   public applySectionPreset(presetKey: string) {
     const stepsPerBar = this.drumGrid?.getStepsPerBar() || 16;
+    const chosenBars = this.state.totalBars || 4;
     let patternResult: GeneratedSectionPattern | null = null;
     let title = '';
 
     if (presetKey === 'intro-countin') {
-      patternResult = SectionPresetsEngine.generateIntroCountIn(2, stepsPerBar);
-      title = '倒數計拍前奏 (Count-in)';
+      patternResult = SectionPresetsEngine.generateIntroCountIn(chosenBars, stepsPerBar);
+      title = `倒數計拍前奏 (${chosenBars} 小節)`;
     } else if (presetKey === 'intro-harmonic') {
-      patternResult = SectionPresetsEngine.generateIntroHarmonic(2, stepsPerBar);
-      title = '流行和弦前奏 (2-5-1)';
+      patternResult = SectionPresetsEngine.generateIntroHarmonic(chosenBars, stepsPerBar);
+      title = `流行和弦前奏 (${chosenBars} 小節)`;
     } else if (presetKey === 'intro-from-main') {
       const mainStore = this.sections.get('Main A') || {
         name: 'Main A',
-        bars: 2,
+        bars: 4,
         drumPattern: this.drumGrid?.getPatternData() || new Map(),
         bassPattern: this.bassRoll?.getPatternData() || new Map(),
         chordPattern: this.chordRoll?.getPatternData() || new Map(),
       };
-      patternResult = SectionPresetsEngine.generateIntroFromMain(mainStore, 2, stepsPerBar);
-      title = '沿用 Main A 開場';
+      patternResult = SectionPresetsEngine.generateIntroFromMain(mainStore, chosenBars, stepsPerBar);
+      title = `沿用 Main A 開場 (${chosenBars} 小節)`;
     } else if (presetKey === 'ending-punch') {
-      patternResult = SectionPresetsEngine.generateEndingPunch(2, stepsPerBar);
-      title = '俐落大鈸收束 (Punch Ending)';
+      patternResult = SectionPresetsEngine.generateEndingPunch(chosenBars, stepsPerBar);
+      title = `俐落大鈸收束 (${chosenBars} 小節)`;
     } else if (presetKey === 'ending-climax') {
-      patternResult = SectionPresetsEngine.generateEndingClimax(2, stepsPerBar);
-      title = '樂團高潮大收尾 (Climax Finish)';
+      patternResult = SectionPresetsEngine.generateEndingClimax(chosenBars, stepsPerBar);
+      title = `樂團高潮大收尾 (${chosenBars} 小節)`;
     } else if (presetKey === 'ending-soft') {
-      patternResult = SectionPresetsEngine.generateEndingSoft(2, stepsPerBar);
-      title = '抒情溫柔淡出 (Soft Ending)';
+      patternResult = SectionPresetsEngine.generateEndingSoft(chosenBars, stepsPerBar);
+      title = `抒情溫柔淡出 (${chosenBars} 小節)`;
     }
 
     if (!patternResult) return;

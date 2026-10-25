@@ -1486,11 +1486,19 @@
       border-top: 1px solid rgba(148, 163, 184, 0.15);
     }
 
-    .assistant-presets-group, .assistant-audition-group {
+    .assistant-bars-group, .assistant-presets-group, .assistant-audition-group {
       display: flex;
       align-items: center;
       gap: 8px;
       flex-wrap: wrap;
+    }
+
+    .btn-assistant-preset.active-bar {
+      background: rgba(56, 189, 248, 0.3) !important;
+      border-color: #38bdf8 !important;
+      color: #fff !important;
+      font-weight: 800;
+      box-shadow: 0 0 8px rgba(56, 189, 248, 0.35);
     }
 
     .assistant-group-label {
@@ -1599,9 +1607,10 @@
       <div class="control-group">
         <label for="select-bars">小節長度</label>
         <select id="select-bars">
-          <option value="1">1 小節 (原型)</option>
+          <option value="1">1 小節 (原型/過門)</option>
+          <option value="2">2 小節 (短引子/尾奏)</option>
           <option value="4" selected>4 小節 (標準)</option>
-          <option value="8">8 小節 (加長)</option>
+          <option value="8">8 小節 (長版/8小節前奏)</option>
         </select>
       </div>
     </div>
@@ -1661,6 +1670,12 @@
           <p id="assistant-desc" class="assistant-desc">前奏是引導歌曲起跑的關鍵！您可以使用下方一鍵智慧範本快速生成鼓棒計拍或流行和弦，也可以在下方捲軸自由編輯。</p>
         </div>
         <div class="assistant-action-row">
+          <div class="assistant-bars-group">
+            <span class="assistant-group-label">📏 小節長度：</span>
+            <div id="assistant-bar-buttons" class="assistant-btn-wrap">
+              <!-- 按鈕由 TypeScript 標記 active 狀態 -->
+            </div>
+          </div>
           <div class="assistant-presets-group">
             <span class="assistant-group-label">✨ 一鍵套用範本：</span>
             <div id="assistant-preset-buttons" class="assistant-btn-wrap">

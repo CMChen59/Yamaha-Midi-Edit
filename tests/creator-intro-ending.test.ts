@@ -31,9 +31,34 @@ describe('SectionPresetsEngine 前奏與尾奏智慧生成引擎', () => {
     expect(snare[31]).toBe(true);
 
     // 第 2 小節貝斯與和弦進場
-    expect(pattern.bassPattern.get(16)).toBe(36); // C2
+    expect(pattern.bassPattern.get(16)).toBe(43); // G2
     expect(pattern.chordPattern.get(16)).toBeDefined();
-    expect(pattern.chordPattern.get(16)!.has(48)).toBe(true); // C3
+    expect(pattern.chordPattern.get(16)!.has(53)).toBe(true); // G7
+  });
+
+  it('generateIntroCountIn 支援 8 小節完整長版前奏 (128 steps) 且第 8 小節有終結過門', () => {
+    const pattern = SectionPresetsEngine.generateIntroCountIn(8, 16);
+    expect(pattern.name).toBe('Intro A');
+    expect(pattern.bars).toBe(8);
+
+    const hihat = pattern.drumPattern.get(42)!;
+    expect(hihat.length).toBe(128);
+
+    // 第 1 小節 (steps 0~15) 依然為 4 拍計拍
+    expect(hihat[0]).toBe(true);
+    expect(hihat[4]).toBe(true);
+    expect(hihat[8]).toBe(true);
+    expect(hihat[12]).toBe(true);
+
+    // 第 8 小節 (steps 112~127) 最後一拍為小鼓滾奏
+    const snare = pattern.drumPattern.get(38)!;
+    expect(snare[124]).toBe(true);
+    expect(snare[125]).toBe(true);
+    expect(snare[126]).toBe(true);
+    expect(snare[127]).toBe(true);
+
+    // 第 8 小節有導音 B2 (note 47) 準備引導進入 Main A 主歌
+    expect(pattern.bassPattern.get(112 + 14)).toBe(47);
   });
 
   it('generateIntroHarmonic 正確生成流行 2-5-1 和弦進行 (Dm7 -> G7)', () => {
