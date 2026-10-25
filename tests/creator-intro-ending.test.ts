@@ -77,6 +77,38 @@ describe('SectionPresetsEngine 前奏與尾奏智慧生成引擎', () => {
     const chordBar1 = pattern.chordPattern.get(16)!;
     expect(chordBar1.has(55)).toBe(true); // G3
     expect(chordBar1.has(59)).toBe(true); // B3
+
+    // 驗證第 2 小節 (最後一小節) 第 4 拍有小鼓過門加花與 B2 導音
+    const snare = pattern.drumPattern.get(38)!;
+    expect(snare[16 + 12]).toBe(true);
+    expect(snare[16 + 13]).toBe(true);
+    expect(snare[16 + 14]).toBe(true);
+    expect(snare[16 + 15]).toBe(true);
+    expect(pattern.bassPattern.get(16 + 14)).toBe(47); // B2 導音
+  });
+
+  it('generateIntroHarmonic 支援 4 小節 (經典 1-6-2-5)，第 4 小節具備切分大鼓、小鼓過門與 B2 導音', () => {
+    const pattern = SectionPresetsEngine.generateIntroHarmonic(4, 16);
+    expect(pattern.bars).toBe(4);
+
+    const snare = pattern.drumPattern.get(38)!;
+    const kick = pattern.drumPattern.get(36)!;
+    const lastBarOffset = 3 * 16; // 48
+
+    // 第 4 小節 (最後一小節) 切分大鼓推進
+    expect(kick[lastBarOffset + 0]).toBe(true);
+    expect(kick[lastBarOffset + 6]).toBe(true);
+    expect(kick[lastBarOffset + 8]).toBe(true);
+    expect(kick[lastBarOffset + 10]).toBe(true);
+
+    // 第 4 小節第 4 拍小鼓過門連擊 (steps 60, 61, 62, 63)
+    expect(snare[lastBarOffset + 12]).toBe(true);
+    expect(snare[lastBarOffset + 13]).toBe(true);
+    expect(snare[lastBarOffset + 14]).toBe(true);
+    expect(snare[lastBarOffset + 15]).toBe(true);
+
+    // B2 (note 47) 導音強烈引導進入主歌 C
+    expect(pattern.bassPattern.get(lastBarOffset + 14)).toBe(47);
   });
 
   it('generateEndingPunch 正確在第 2 小節第 1 拍置入大鈸重擊，其餘步驟留白留延音', () => {

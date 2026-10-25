@@ -76,6 +76,7 @@ export class SectionPresetsEngine {
       kick[lastBarOffset + 0] = true;
       kick[lastBarOffset + 6] = true;
       kick[lastBarOffset + 8] = true;
+      kick[lastBarOffset + 10] = true;
       snare[lastBarOffset + 4] = true;
       for (let s = 0; s < 12; s += 2) hihat[lastBarOffset + s] = true;
 
@@ -116,31 +117,15 @@ export class SectionPresetsEngine {
 
     // 定義流行和弦進行: C (I) -> Am (VI) -> Dm7 (II) -> G7 (V)
     const progression = [
-      { bass: 36, chord: [48, 52, 55] }, // C
-      { bass: 45, chord: [45, 48, 52] }, // Am
-      { bass: 38, chord: [50, 53, 57] }, // Dm
-      { bass: 43, chord: [53, 55, 59] }, // G7
+      { bass: 36, chord: [48, 52, 55] }, // C (I)
+      { bass: 45, chord: [45, 48, 52] }, // Am (VI)
+      { bass: 38, chord: [50, 53, 57] }, // Dm7 (II)
+      { bass: 43, chord: [53, 55, 59] }, // G7 (V)
     ];
 
     for (let b = 0; b < bars; b++) {
       const offset = b * stepsPerBar;
       const isLastBar = b === bars - 1;
-
-      // 鼓點安排
-      kick[offset + 0] = true;
-      kick[offset + 8] = true;
-      snare[offset + 4] = true;
-      if (!isLastBar) {
-        snare[offset + 12] = true;
-        for (let s = 0; s < stepsPerBar; s += 2) hihat[offset + s] = true;
-      } else {
-        // 最後小節最後一拍小鼓過門加花
-        for (let s = 0; s < 12; s += 2) hihat[offset + s] = true;
-        snare[offset + 12] = true;
-        snare[offset + 13] = true;
-        snare[offset + 14] = true;
-        snare[offset + 15] = true;
-      }
 
       // 和弦與貝斯安排
       let chordInfo;
@@ -154,6 +139,38 @@ export class SectionPresetsEngine {
       bassPattern.set(offset + 8, chordInfo.bass);
       chordPattern.set(offset + 0, new Set(chordInfo.chord));
       chordPattern.set(offset + 8, new Set(chordInfo.chord));
+
+      if (!isLastBar) {
+        // 常規伴奏節奏
+        kick[offset + 0] = true;
+        kick[offset + 8] = true;
+        snare[offset + 4] = true;
+        snare[offset + 12] = true;
+        for (let s = 0; s < stepsPerBar; s += 2) hihat[offset + s] = true;
+      } else {
+        // 最後 1 小節: 強烈切分推進 + 第 4 拍標誌性小鼓過門加花 + 貝斯半音導音引導進入 Main A
+        kick[offset + 0] = true;
+        kick[offset + 6] = true;  // 拍 2 後半切分
+        kick[offset + 8] = true;  // 拍 3 正拍
+        kick[offset + 10] = true; // 拍 3 後半切分
+        snare[offset + 4] = true; // 拍 2 小鼓
+
+        // 前 3 拍 Hi-Hat (0 ~ 11)，第 4 拍留空突出小鼓過門
+        for (let s = 0; s < 12; s += 2) hihat[offset + s] = true;
+
+        // 第 4 拍小鼓過門加花 (16分音符漸強連擊)
+        snare[offset + 12] = true;
+        snare[offset + 13] = true;
+        snare[offset + 14] = true;
+        snare[offset + 15] = true;
+
+        // 貝斯導音引導：第 4 拍後半 (step 14) 置入 B2 (47)，半音強烈導向主歌的 C2 (36)
+        bassPattern.set(offset + 14, 47);
+
+        // 終止小節強制鎖定為 G7 屬七和弦，製造極致解決張力
+        chordPattern.set(offset + 0, new Set([53, 55, 59]));
+        chordPattern.set(offset + 8, new Set([53, 55, 59]));
+      }
     }
 
     return {
@@ -356,6 +373,17 @@ export class SectionPresetsEngine {
     for (let beat = 0; beat < 4; beat++) {
       const step = Math.round(beat * (stepsPerBar / 4));
       hihat[step] = true;
+    }
+
+    // 最後 1 小節第 4 拍加入小鼓過門與導音，無縫銜接主歌
+    if (bars >= 2) {
+      const lastBarOffset = (bars - 1) * stepsPerBar;
+      const snare = drumPattern.get(38)!;
+      snare[lastBarOffset + 12] = true;
+      snare[lastBarOffset + 13] = true;
+      snare[lastBarOffset + 14] = true;
+      snare[lastBarOffset + 15] = true;
+      bassPattern.set(lastBarOffset + 14, 47); // B2 導音
     }
 
     return {

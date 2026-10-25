@@ -588,11 +588,13 @@ export class CreatorApp {
 
   /**
    * 切換編輯段落 (例如由 Main A 切換至 Main B)
+   * @param newSectionName 目標段落名稱
+   * @param preservePlayback 是否在切換時維持播放狀態 (用於實境連鎖試聽無縫切換)
    */
-  public switchSection(newSectionName: string) {
+  public switchSection(newSectionName: string, preservePlayback: boolean = false) {
     if (this.state.currentSection === newSectionName) return;
 
-    if (this.state.isPlaying) {
+    if (this.state.isPlaying && !preservePlayback) {
       this.stop();
     }
 
@@ -641,7 +643,9 @@ export class CreatorApp {
     });
 
     this.updateUI();
-    this.setStatus(`✓ 已切換至【${newSectionName}】段落 (${store.bars} 小節)`);
+    if (!preservePlayback) {
+      this.setStatus(`✓ 已切換至【${newSectionName}】段落 (${store.bars} 小節)`);
+    }
   }
 
   /**
@@ -2495,6 +2499,33 @@ export class CreatorApp {
     const isEnding = secName.startsWith('Ending');
 
     if (!isIntro && !isEnding) {
+      if (this.chainedAuditionMode) {
+        panel.style.display = 'block';
+        panel.classList.remove('theme-ending');
+        const badge = document.getElementById('assistant-badge');
+        const title = document.getElementById('assistant-title');
+        const desc = document.getElementById('assistant-desc');
+        const barButtonsContainer = document.getElementById('assistant-bar-buttons');
+        const presetContainer = document.getElementById('assistant-preset-buttons');
+        const auditionContainer = document.getElementById('assistant-audition-buttons');
+
+        if (badge) badge.textContent = `🚀 連鎖實境試聽中 (${this.chainedAuditionMode === 'intro-to-main' ? 'Intro ➜ Main' : 'Main ➜ Ending'})`;
+        if (title) title.textContent = `伴奏實境連鎖試聽演奏中`;
+        if (desc) desc.textContent = `✨ 完美交棒！目前已無縫進入【${secName} 主歌伴奏】實境試聽中。點擊下方按鈕隨時停止並回到編輯。`;
+        if (barButtonsContainer) barButtonsContainer.innerHTML = '';
+        if (presetContainer) presetContainer.innerHTML = '';
+        if (auditionContainer) {
+          auditionContainer.innerHTML = `
+            <button id="btn-stop-chained-live" class="btn-assistant-audition active-audition" style="background: #ef4444; border-color: #f87171;">
+              <span>⏸</span> 停止實境試聽 (停止播放)
+            </button>
+          `;
+          auditionContainer.querySelector('#btn-stop-chained-live')?.addEventListener('click', () => {
+            this.stop();
+          });
+        }
+        return;
+      }
       panel.style.display = 'none';
       return;
     }
@@ -2720,6 +2751,10 @@ export class CreatorApp {
       introStore = this.sections.get('Intro A')!;
     } else if (this.state.currentSection !== 'Intro A') {
       this.switchSection('Intro A');
+      introStore = this.sections.get('Intro A')!;
+    } else {
+      this.saveCurrentSectionToStore();
+      introStore = this.sections.get('Intro A')!;
     }
 
     this.chainedAuditionMode = 'intro-to-main';
@@ -2729,14 +2764,14 @@ export class CreatorApp {
     this.updatePlayButtonsUI();
 
     const stepsPerBar = this.drumGrid?.getStepsPerBar() || 16;
-    const introTotalSteps = (introStore.bars || 2) * stepsPerBar;
+    const introTotalSteps = (introStore.bars || this.state.totalBars || 4) * stepsPerBar;
     const stepIntervalMs = this.getStepIntervalMs();
 
     let currentPhase: 'intro' | 'main' = 'intro';
     let currentStep = 0;
     this.currentPlayStep = 0;
 
-    this.setStatus('🚀 正在實境試聽：【Intro A 前奏】倒數開場中...');
+    this.setStatus(`🚀 正在實境試聽：【Intro A 前奏】(${introStore.bars || 4} 小節) 倒數開場中...`);
 
     const tick = () => {
       if (!this.state.isPlaying || this.chainedAuditionMode !== 'intro-to-main') {
@@ -2748,6 +2783,7 @@ export class CreatorApp {
         this.drumGrid?.setPlayheadStep(currentStep);
         this.bassRoll?.setPlayheadStep(currentStep);
         this.chordRoll?.setPlayheadStep(currentStep);
+        this.dynamicTracks.forEach(t => t.roll.setPlayheadStep(currentStep));
 
         const drumNotes = this.drumGrid?.getActiveNotesAtStep(currentStep) || [];
         drumNotes.forEach(n => this.triggerDrumSound(n, 100, Math.max(30, Math.round(stepIntervalMs * 0.8))));
@@ -2757,22 +2793,34 @@ export class CreatorApp {
 
         const chordNotes = this.chordRoll?.getActiveNotesAtStep(currentStep) || [];
         chordNotes.forEach(n => this.triggerChordSound(n, 100, Math.max(120, Math.round(stepIntervalMs * 1.5))));
+
+        this.dynamicTracks.forEach((t, partId) => {
+          const notes = t.roll.getActiveNotesAtStep(currentStep);
+          for (const note of notes) {
+            t.roll.getSynth().playNote(note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
+            this.sendMidiDynamicTrackTrigger(partId, note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
+          }
+        });
 
         currentStep++;
         if (currentStep >= introTotalSteps) {
           // 前奏結束，無縫滑入 Main A！
           currentPhase = 'main';
           currentStep = 0;
-          this.switchSection('Main A');
+          this.switchSection('Main A', true);
+          this.state.isPlaying = true;
+          this.state.activePlayTrack = 'all';
+          this.updatePlayButtonsUI();
           this.setStatus('✨ 完美交棒！已自【Intro A】平滑進入【Main A 主歌伴奏】！');
         }
       } else {
-        const mainBars = this.sections.get('Main A')?.bars || 2;
+        const mainBars = this.sections.get('Main A')?.bars || this.state.totalBars || 2;
         const mainTotalSteps = mainBars * stepsPerBar;
 
         this.drumGrid?.setPlayheadStep(currentStep);
         this.bassRoll?.setPlayheadStep(currentStep);
         this.chordRoll?.setPlayheadStep(currentStep);
+        this.dynamicTracks.forEach(t => t.roll.setPlayheadStep(currentStep));
 
         const drumNotes = this.drumGrid?.getActiveNotesAtStep(currentStep) || [];
         drumNotes.forEach(n => this.triggerDrumSound(n, 100, Math.max(30, Math.round(stepIntervalMs * 0.8))));
@@ -2782,6 +2830,14 @@ export class CreatorApp {
 
         const chordNotes = this.chordRoll?.getActiveNotesAtStep(currentStep) || [];
         chordNotes.forEach(n => this.triggerChordSound(n, 100, Math.max(120, Math.round(stepIntervalMs * 1.5))));
+
+        this.dynamicTracks.forEach((t, partId) => {
+          const notes = t.roll.getActiveNotesAtStep(currentStep);
+          for (const note of notes) {
+            t.roll.getSynth().playNote(note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
+            this.sendMidiDynamicTrackTrigger(partId, note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
+          }
+        });
 
         currentStep = (currentStep + 1) % mainTotalSteps;
       }
@@ -2810,12 +2866,8 @@ export class CreatorApp {
       endingStore = this.sections.get('Ending A')!;
     }
 
-    // 確保有 Main A 並切換至 Main A
-    if (!this.sections.has('Main A')) {
-      this.switchSection('Main A');
-    } else {
-      this.switchSection('Main A');
-    }
+    // 確保切換至 Main A 作為引導
+    this.switchSection('Main A');
 
     this.chainedAuditionMode = 'main-to-ending';
     this.updateAssistantPanel();
@@ -2843,6 +2895,7 @@ export class CreatorApp {
         this.drumGrid?.setPlayheadStep(currentStep);
         this.bassRoll?.setPlayheadStep(currentStep);
         this.chordRoll?.setPlayheadStep(currentStep);
+        this.dynamicTracks.forEach(t => t.roll.setPlayheadStep(currentStep));
 
         const drumNotes = this.drumGrid?.getActiveNotesAtStep(currentStep) || [];
         drumNotes.forEach(n => this.triggerDrumSound(n, 100, Math.max(30, Math.round(stepIntervalMs * 0.8))));
@@ -2852,19 +2905,31 @@ export class CreatorApp {
 
         const chordNotes = this.chordRoll?.getActiveNotesAtStep(currentStep) || [];
         chordNotes.forEach(n => this.triggerChordSound(n, 100, Math.max(120, Math.round(stepIntervalMs * 1.5))));
+
+        this.dynamicTracks.forEach((t, partId) => {
+          const notes = t.roll.getActiveNotesAtStep(currentStep);
+          for (const note of notes) {
+            t.roll.getSynth().playNote(note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
+            this.sendMidiDynamicTrackTrigger(partId, note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
+          }
+        });
 
         currentStep++;
         if (currentStep >= leadInSteps) {
           // 切入 Ending A！
           currentPhase = 'ending';
           currentStep = 0;
-          this.switchSection('Ending A');
+          this.switchSection('Ending A', true);
+          this.state.isPlaying = true;
+          this.state.activePlayTrack = 'all';
+          this.updatePlayButtonsUI();
           this.setStatus('💥 進入【Ending A 尾奏】：大鈸收束演奏中...');
         }
       } else {
         this.drumGrid?.setPlayheadStep(currentStep);
         this.bassRoll?.setPlayheadStep(currentStep);
         this.chordRoll?.setPlayheadStep(currentStep);
+        this.dynamicTracks.forEach(t => t.roll.setPlayheadStep(currentStep));
 
         const drumNotes = this.drumGrid?.getActiveNotesAtStep(currentStep) || [];
         drumNotes.forEach(n => this.triggerDrumSound(n, 100, Math.max(30, Math.round(stepIntervalMs * 0.8))));
@@ -2875,10 +2940,17 @@ export class CreatorApp {
         const chordNotes = this.chordRoll?.getActiveNotesAtStep(currentStep) || [];
         chordNotes.forEach(n => this.triggerChordSound(n, 100, Math.max(120, Math.round(stepIntervalMs * 1.5))));
 
+        this.dynamicTracks.forEach((t, partId) => {
+          const notes = t.roll.getActiveNotesAtStep(currentStep);
+          for (const note of notes) {
+            t.roll.getSynth().playNote(note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
+            this.sendMidiDynamicTrackTrigger(partId, note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
+          }
+        });
+
         currentStep++;
         if (currentStep >= endingTotalSteps) {
           // 尾奏結束，自動平穩停止伴奏！
-          this.stopChainedAudition();
           this.stop();
           this.setStatus('⏹【Ending A 尾奏】演奏結束，伴奏已自動平穩停止！');
         }
