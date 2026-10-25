@@ -22,6 +22,7 @@ import { YamahaPadSynthesizer } from '../core/writer/pad-synthesizer';
 import { YamahaPadModifier } from '../core/writer/pad-modifier';
 import { YamahaWriter } from '../core/writer/yamaha-writer';
 import { MixerPanel, type MixerChannelInfo } from './mixer-panel';
+import { SectionPresetsEngine, type GeneratedSectionPattern } from './section-presets-engine';
 
 export type CreatorMode = 'STY' | 'PAD';
 
@@ -107,6 +108,8 @@ export class CreatorApp {
   private soloChannels: Set<string> = new Set();
   private playbackTimer: any = null;
   private currentPlayStep: number = 0;
+  private chainedAuditionMode: 'intro-to-main' | 'main-to-ending' | null = null;
+  private chainedTimer: any = null;
 
   // 多段落狀態記憶庫 (Section Name -> SectionStore)
   private sections: Map<string, SectionStore> = new Map();
@@ -1554,6 +1557,7 @@ export class CreatorApp {
   }
 
   private pause() {
+    this.stopChainedAudition();
     this.state.isPlaying = false;
     this.stopPlaybackTimer();
     this.updatePlayButtonsUI();
@@ -1561,6 +1565,7 @@ export class CreatorApp {
   }
 
   private stop() {
+    this.stopChainedAudition();
     this.state.isPlaying = false;
     this.state.activePlayTrack = null;
     this.stopPlaybackTimer();
@@ -2475,6 +2480,371 @@ export class CreatorApp {
     this.refreshSectionOptions();
     this.updateSectionSummary();
     this.updateComputerAudioUI();
+    this.updateAssistantPanel();
+  }
+
+  /**
+   * 更新前奏 (Intro) 與尾奏 (Ending) 智慧創作引導面板
+   */
+  private updateAssistantPanel() {
+    const panel = document.getElementById('section-assistant-panel');
+    if (!panel) return;
+
+    const secName = this.state.currentSection;
+    const isIntro = secName.startsWith('Intro');
+    const isEnding = secName.startsWith('Ending');
+
+    if (!isIntro && !isEnding) {
+      panel.style.display = 'none';
+      return;
+    }
+
+    panel.style.display = 'block';
+    const badge = document.getElementById('assistant-badge');
+    const title = document.getElementById('assistant-title');
+    const desc = document.getElementById('assistant-desc');
+    const presetContainer = document.getElementById('assistant-preset-buttons');
+    const auditionContainer = document.getElementById('assistant-audition-buttons');
+
+    if (isIntro) {
+      panel.classList.remove('theme-ending');
+      if (badge) badge.textContent = `🏁 前奏 (${secName})`;
+      if (title) title.textContent = `${secName} 前奏智慧創作助理`;
+      if (desc) desc.textContent = '前奏是引導歌曲起跑的關鍵！您可以使用下方一鍵範本快速生成鼓棒計拍或流行和弦，也可以在下方捲軸自由編輯。';
+
+      if (presetContainer) {
+        presetContainer.innerHTML = `
+          <button id="btn-preset-intro-countin" class="btn-assistant-preset" title="第 1 小節 4 拍 Hi-Hat 鼓棒計拍，第 2 小節過門輕敲">
+            🥁 倒數計拍前奏 (Count-in)
+          </button>
+          <button id="btn-preset-intro-harmonic" class="btn-assistant-preset" title="標準流行 2-5-1 和弦引導 (Dm7 -> G7 -> C)">
+            🎹 流行和弦前奏 (2-5-1)
+          </button>
+          <button id="btn-preset-intro-from-main" class="btn-assistant-preset" title="以 Main A 主歌為基礎，在開頭插入計拍">
+            ✨ 沿用 Main A 開場
+          </button>
+        `;
+        presetContainer.querySelector('#btn-preset-intro-countin')?.addEventListener('click', () => {
+          this.applySectionPreset('intro-countin');
+        });
+        presetContainer.querySelector('#btn-preset-intro-harmonic')?.addEventListener('click', () => {
+          this.applySectionPreset('intro-harmonic');
+        });
+        presetContainer.querySelector('#btn-preset-intro-from-main')?.addEventListener('click', () => {
+          this.applySectionPreset('intro-from-main');
+        });
+      }
+
+      if (auditionContainer) {
+        const isChainedActive = this.chainedAuditionMode === 'intro-to-main';
+        auditionContainer.innerHTML = `
+          <button id="btn-audition-intro-main" class="btn-assistant-audition ${isChainedActive ? 'active-audition' : ''}" title="先播放 Intro 前奏，接著自動無縫滑進 Main A 主歌！">
+            <span>${isChainedActive ? '⏸' : '🚀'}</span> ${isChainedActive ? '停止試聽' : '試聽前奏接主歌 (Intro ➜ Main A)'}
+          </button>
+        `;
+        auditionContainer.querySelector('#btn-audition-intro-main')?.addEventListener('click', () => {
+          this.toggleAuditionIntroToMain();
+        });
+      }
+    } else if (isEnding) {
+      panel.classList.add('theme-ending');
+      if (badge) badge.textContent = `🛑 尾奏 (${secName})`;
+      if (title) title.textContent = `${secName} 尾奏智慧創作助理`;
+      if (desc) desc.textContent = '尾奏為整首歌曲的終止式收尾！點擊下方範本可一鍵生成俐落大鈸收束或樂團大收尾，演奏完畢後實體琴將自動平穩停止伴奏。';
+
+      if (presetContainer) {
+        presetContainer.innerHTML = `
+          <button id="btn-preset-ending-punch" class="btn-assistant-preset" title="第 1 拍大鈸強音 (Crash) + 重擊三和弦定音">
+            💥 俐落大鈸收束 (Punch)
+          </button>
+          <button id="btn-preset-ending-climax" class="btn-assistant-preset" title="狂熱連擊切分節奏 + 雙重 Crash 大鈸震撼結尾">
+            🥁 樂團高潮大收尾 (Climax)
+          </button>
+          <button id="btn-preset-ending-soft" class="btn-assistant-preset" title="輕柔 Ride 鈸與鋼琴分解和弦，安靜收尾">
+            🌊 抒情溫柔淡出 (Soft)
+          </button>
+        `;
+        presetContainer.querySelector('#btn-preset-ending-punch')?.addEventListener('click', () => {
+          this.applySectionPreset('ending-punch');
+        });
+        presetContainer.querySelector('#btn-preset-ending-climax')?.addEventListener('click', () => {
+          this.applySectionPreset('ending-climax');
+        });
+        presetContainer.querySelector('#btn-preset-ending-soft')?.addEventListener('click', () => {
+          this.applySectionPreset('ending-soft');
+        });
+      }
+
+      if (auditionContainer) {
+        const isChainedActive = this.chainedAuditionMode === 'main-to-ending';
+        auditionContainer.innerHTML = `
+          <button id="btn-audition-main-ending" class="btn-assistant-audition ${isChainedActive ? 'active-audition' : ''}" title="先播放 1 小節 Main A 帶出節奏，接著切入 Ending 尾奏並自動停止！">
+            <span>${isChainedActive ? '⏸' : '🛑'}</span> ${isChainedActive ? '停止試聽' : '試聽主歌接尾奏 (Main A ➜ Ending A)'}
+          </button>
+        `;
+        auditionContainer.querySelector('#btn-audition-main-ending')?.addEventListener('click', () => {
+          this.toggleAuditionMainToEnding();
+        });
+      }
+    }
+  }
+
+  /**
+   * 套用 Intro 或 Ending 一鍵智慧範本
+   */
+  public applySectionPreset(presetKey: string) {
+    const stepsPerBar = this.drumGrid?.getStepsPerBar() || 16;
+    let patternResult: GeneratedSectionPattern | null = null;
+    let title = '';
+
+    if (presetKey === 'intro-countin') {
+      patternResult = SectionPresetsEngine.generateIntroCountIn(2, stepsPerBar);
+      title = '倒數計拍前奏 (Count-in)';
+    } else if (presetKey === 'intro-harmonic') {
+      patternResult = SectionPresetsEngine.generateIntroHarmonic(2, stepsPerBar);
+      title = '流行和弦前奏 (2-5-1)';
+    } else if (presetKey === 'intro-from-main') {
+      const mainStore = this.sections.get('Main A') || {
+        name: 'Main A',
+        bars: 2,
+        drumPattern: this.drumGrid?.getPatternData() || new Map(),
+        bassPattern: this.bassRoll?.getPatternData() || new Map(),
+        chordPattern: this.chordRoll?.getPatternData() || new Map(),
+      };
+      patternResult = SectionPresetsEngine.generateIntroFromMain(mainStore, 2, stepsPerBar);
+      title = '沿用 Main A 開場';
+    } else if (presetKey === 'ending-punch') {
+      patternResult = SectionPresetsEngine.generateEndingPunch(2, stepsPerBar);
+      title = '俐落大鈸收束 (Punch Ending)';
+    } else if (presetKey === 'ending-climax') {
+      patternResult = SectionPresetsEngine.generateEndingClimax(2, stepsPerBar);
+      title = '樂團高潮大收尾 (Climax Finish)';
+    } else if (presetKey === 'ending-soft') {
+      patternResult = SectionPresetsEngine.generateEndingSoft(2, stepsPerBar);
+      title = '抒情溫柔淡出 (Soft Ending)';
+    }
+
+    if (!patternResult) return;
+
+    // 更新總小節數
+    this.state.totalBars = patternResult.bars;
+    const selectBars = document.getElementById('select-bars') as HTMLSelectElement | null;
+    if (selectBars) selectBars.value = patternResult.bars.toString();
+
+    this.drumGrid?.setTotalBars(patternResult.bars);
+    this.bassRoll?.setTotalBars(patternResult.bars);
+    this.chordRoll?.setTotalBars(patternResult.bars);
+    this.dynamicTracks.forEach(t => t.roll.setTotalBars(patternResult!.bars));
+
+    // 套用音符
+    this.drumGrid?.setPatternData(patternResult.drumPattern);
+    this.bassRoll?.setPatternData(patternResult.bassPattern);
+    this.chordRoll?.setPatternData(patternResult.chordPattern);
+
+    // 存入 Store
+    this.saveCurrentSectionToStore();
+    this.updateSectionSummary();
+    this.refreshSectionOptions();
+    this.updateAssistantPanel();
+
+    this.setStatus(`✨ 已成功套用【${title}】智慧範本！可在捲軸微調或點擊試聽。`);
+  }
+
+  /**
+   * 試聽前奏接主歌：Intro A 播放完畢後無縫切入 Main A
+   */
+  public toggleAuditionIntroToMain() {
+    if (this.chainedAuditionMode === 'intro-to-main') {
+      this.stop();
+      return;
+    }
+
+    this.stop();
+
+    // 確保有 Intro A
+    let introStore = this.sections.get('Intro A');
+    if (!introStore || !this.checkSectionHasNotes('Intro A')) {
+      this.switchSection('Intro A');
+      this.applySectionPreset('intro-countin');
+      introStore = this.sections.get('Intro A')!;
+    } else if (this.state.currentSection !== 'Intro A') {
+      this.switchSection('Intro A');
+    }
+
+    this.chainedAuditionMode = 'intro-to-main';
+    this.updateAssistantPanel();
+    this.state.isPlaying = true;
+    this.state.activePlayTrack = 'all';
+    this.updatePlayButtonsUI();
+
+    const stepsPerBar = this.drumGrid?.getStepsPerBar() || 16;
+    const introTotalSteps = (introStore.bars || 2) * stepsPerBar;
+    const stepIntervalMs = this.getStepIntervalMs();
+
+    let currentPhase: 'intro' | 'main' = 'intro';
+    let currentStep = 0;
+    this.currentPlayStep = 0;
+
+    this.setStatus('🚀 正在實境試聽：【Intro A 前奏】倒數開場中...');
+
+    const tick = () => {
+      if (!this.state.isPlaying || this.chainedAuditionMode !== 'intro-to-main') {
+        this.stopChainedAudition();
+        return;
+      }
+
+      if (currentPhase === 'intro') {
+        this.drumGrid?.setPlayheadStep(currentStep);
+        this.bassRoll?.setPlayheadStep(currentStep);
+        this.chordRoll?.setPlayheadStep(currentStep);
+
+        const drumNotes = this.drumGrid?.getActiveNotesAtStep(currentStep) || [];
+        drumNotes.forEach(n => this.triggerDrumSound(n, 100, Math.max(30, Math.round(stepIntervalMs * 0.8))));
+
+        const bassNotes = this.bassRoll?.getActiveNotesAtStep(currentStep) || [];
+        bassNotes.forEach(n => this.triggerBassSound(n, 100, Math.max(80, Math.round(stepIntervalMs * 1.5))));
+
+        const chordNotes = this.chordRoll?.getActiveNotesAtStep(currentStep) || [];
+        chordNotes.forEach(n => this.triggerChordSound(n, 100, Math.max(120, Math.round(stepIntervalMs * 1.5))));
+
+        currentStep++;
+        if (currentStep >= introTotalSteps) {
+          // 前奏結束，無縫滑入 Main A！
+          currentPhase = 'main';
+          currentStep = 0;
+          this.switchSection('Main A');
+          this.setStatus('✨ 完美交棒！已自【Intro A】平滑進入【Main A 主歌伴奏】！');
+        }
+      } else {
+        const mainBars = this.sections.get('Main A')?.bars || 2;
+        const mainTotalSteps = mainBars * stepsPerBar;
+
+        this.drumGrid?.setPlayheadStep(currentStep);
+        this.bassRoll?.setPlayheadStep(currentStep);
+        this.chordRoll?.setPlayheadStep(currentStep);
+
+        const drumNotes = this.drumGrid?.getActiveNotesAtStep(currentStep) || [];
+        drumNotes.forEach(n => this.triggerDrumSound(n, 100, Math.max(30, Math.round(stepIntervalMs * 0.8))));
+
+        const bassNotes = this.bassRoll?.getActiveNotesAtStep(currentStep) || [];
+        bassNotes.forEach(n => this.triggerBassSound(n, 100, Math.max(80, Math.round(stepIntervalMs * 1.5))));
+
+        const chordNotes = this.chordRoll?.getActiveNotesAtStep(currentStep) || [];
+        chordNotes.forEach(n => this.triggerChordSound(n, 100, Math.max(120, Math.round(stepIntervalMs * 1.5))));
+
+        currentStep = (currentStep + 1) % mainTotalSteps;
+      }
+    };
+
+    tick();
+    this.chainedTimer = setInterval(tick, stepIntervalMs);
+  }
+
+  /**
+   * 試聽主歌接尾奏：Main A 播放 1 小節後切入 Ending A，演奏完畢自動平穩停止
+   */
+  public toggleAuditionMainToEnding() {
+    if (this.chainedAuditionMode === 'main-to-ending') {
+      this.stop();
+      return;
+    }
+
+    this.stop();
+
+    // 確保有 Ending A
+    let endingStore = this.sections.get('Ending A');
+    if (!endingStore || !this.checkSectionHasNotes('Ending A')) {
+      this.switchSection('Ending A');
+      this.applySectionPreset('ending-punch');
+      endingStore = this.sections.get('Ending A')!;
+    }
+
+    // 確保有 Main A 並切換至 Main A
+    if (!this.sections.has('Main A')) {
+      this.switchSection('Main A');
+    } else {
+      this.switchSection('Main A');
+    }
+
+    this.chainedAuditionMode = 'main-to-ending';
+    this.updateAssistantPanel();
+    this.state.isPlaying = true;
+    this.state.activePlayTrack = 'all';
+    this.updatePlayButtonsUI();
+
+    const stepsPerBar = this.drumGrid?.getStepsPerBar() || 16;
+    const leadInSteps = stepsPerBar; // 播放 1 小節 Main A 作為引導
+    const endingTotalSteps = (endingStore.bars || 2) * stepsPerBar;
+    const stepIntervalMs = this.getStepIntervalMs();
+
+    let currentPhase: 'lead-in' | 'ending' = 'lead-in';
+    let currentStep = 0;
+
+    this.setStatus('🛑 正在播放【Main A】引導，準備切入【Ending A 尾奏】...');
+
+    const tick = () => {
+      if (!this.state.isPlaying || this.chainedAuditionMode !== 'main-to-ending') {
+        this.stopChainedAudition();
+        return;
+      }
+
+      if (currentPhase === 'lead-in') {
+        this.drumGrid?.setPlayheadStep(currentStep);
+        this.bassRoll?.setPlayheadStep(currentStep);
+        this.chordRoll?.setPlayheadStep(currentStep);
+
+        const drumNotes = this.drumGrid?.getActiveNotesAtStep(currentStep) || [];
+        drumNotes.forEach(n => this.triggerDrumSound(n, 100, Math.max(30, Math.round(stepIntervalMs * 0.8))));
+
+        const bassNotes = this.bassRoll?.getActiveNotesAtStep(currentStep) || [];
+        bassNotes.forEach(n => this.triggerBassSound(n, 100, Math.max(80, Math.round(stepIntervalMs * 1.5))));
+
+        const chordNotes = this.chordRoll?.getActiveNotesAtStep(currentStep) || [];
+        chordNotes.forEach(n => this.triggerChordSound(n, 100, Math.max(120, Math.round(stepIntervalMs * 1.5))));
+
+        currentStep++;
+        if (currentStep >= leadInSteps) {
+          // 切入 Ending A！
+          currentPhase = 'ending';
+          currentStep = 0;
+          this.switchSection('Ending A');
+          this.setStatus('💥 進入【Ending A 尾奏】：大鈸收束演奏中...');
+        }
+      } else {
+        this.drumGrid?.setPlayheadStep(currentStep);
+        this.bassRoll?.setPlayheadStep(currentStep);
+        this.chordRoll?.setPlayheadStep(currentStep);
+
+        const drumNotes = this.drumGrid?.getActiveNotesAtStep(currentStep) || [];
+        drumNotes.forEach(n => this.triggerDrumSound(n, 100, Math.max(30, Math.round(stepIntervalMs * 0.8))));
+
+        const bassNotes = this.bassRoll?.getActiveNotesAtStep(currentStep) || [];
+        bassNotes.forEach(n => this.triggerBassSound(n, 100, Math.max(80, Math.round(stepIntervalMs * 1.5))));
+
+        const chordNotes = this.chordRoll?.getActiveNotesAtStep(currentStep) || [];
+        chordNotes.forEach(n => this.triggerChordSound(n, 100, Math.max(120, Math.round(stepIntervalMs * 1.5))));
+
+        currentStep++;
+        if (currentStep >= endingTotalSteps) {
+          // 尾奏結束，自動平穩停止伴奏！
+          this.stopChainedAudition();
+          this.stop();
+          this.setStatus('⏹【Ending A 尾奏】演奏結束，伴奏已自動平穩停止！');
+        }
+      }
+    };
+
+    tick();
+    this.chainedTimer = setInterval(tick, stepIntervalMs);
+  }
+
+  private stopChainedAudition() {
+    if (this.chainedTimer) {
+      clearInterval(this.chainedTimer);
+      this.chainedTimer = null;
+    }
+    this.chainedAuditionMode = null;
+    this.updateAssistantPanel();
   }
 }
 

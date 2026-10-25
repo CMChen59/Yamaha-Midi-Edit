@@ -368,10 +368,21 @@ export class YamahaTemplateStyleSynthesizer {
       const secTicksPerStep = Math.round(ticksPerBar / secStepsPerBar);
 
       for (let b = 0; b < secBars; b++) {
-        // 如果是自動衍生過門且原模式有多小節，取最後一小節作為過門基礎
-        const userBar = (isAutoDerivedFill && patternBars > 1)
-          ? (patternBars - 1)
-          : (b % patternBars);
+        // 若為 Ending 尾奏段落且超過使用者定義之小節數，後續小節維持留白延音，不重複滾奏
+        if (sec.name.startsWith('Ending') && b >= patternBars) {
+          continue;
+        }
+
+        // 決定當前小節對應使用者輸入的哪一小節
+        let userBar = b % patternBars;
+        if (isAutoDerivedFill && patternBars > 1) {
+          // 自動過門取最後一小節
+          userBar = patternBars - 1;
+        } else if (sec.name.startsWith('Intro') && patternBars > 1 && b >= patternBars) {
+          // 前奏首小節為倒數計拍，超出小節數時延續最後一小節的節奏推進
+          userBar = patternBars - 1;
+        }
+
         const barOffset = b * ticksPerBar;
 
         // 3.1 鼓點 (Ch 10 / index 9)
