@@ -2,12 +2,18 @@
  * Yamaha PSR-SX920 專注創作台 (V2)
  * 極簡零延遲打擊樂合成音效引擎 (Drum Synthesizer)
  * 基於 Web Audio API 實現即時物理建模發聲，無需外掛龐大採樣檔案。
+ * 支援獨立音軌立體聲聲相 (StereoPannerNode) 與軌道主音量 (GainNode) 調控。
  */
 
 export class DrumSynth {
   private static muted: boolean = false;
+  private isInstanceMuted: boolean = false;
   private ctx: AudioContext | null = null;
   private noiseBuffer: AudioBuffer | null = null;
+  private channelGain: GainNode | null = null;
+  private pannerNode: StereoPannerNode | null = null;
+  private volume: number = 100; // 0 ~ 127 (Yamaha PSR-SX920 Rhythm 2 預設 100)
+  private pan: number = 64;     // 0 ~ 127 (中央 64)
 
   public static setMuted(muted: boolean) {
     DrumSynth.muted = muted;
@@ -19,6 +25,21 @@ export class DrumSynth {
 
   public setMuted(muted: boolean) {
     DrumSynth.muted = muted;
+  }
+
+  public setChannelMuted(muted: boolean) {
+    this.isInstanceMuted = muted;
+    if (this.channelGain && this.ctx) {
+      const now = this.ctx.currentTime;
+      const targetGain = muted ? 0 : (this.volume / 127);
+      this.channelGain.gain.cancelScheduledValues(now);
+      this.channelGain.gain.setValueAtTime(this.channelGain.gain.value, now);
+      this.channelGain.gain.linearRampToValueAtTime(targetGain, now + 0.02);
+    }
+  }
+
+  public isChannelMuted(): boolean {
+    return this.isInstanceMuted;
   }
 
   constructor() {
@@ -47,6 +68,56 @@ export class DrumSynth {
     }
   }
 
+  private getOutputNode(): AudioNode {
+    const ctx = this.ensureContext();
+    if (!this.channelGain) {
+      this.channelGain = ctx.createGain();
+      const currentGain = this.isInstanceMuted ? 0 : (this.volume / 127);
+      this.channelGain.gain.setValueAtTime(currentGain, ctx.currentTime);
+
+      if (typeof ctx.createStereoPanner === 'function') {
+        this.pannerNode = ctx.createStereoPanner();
+        const panValue = Math.max(-1, Math.min(1, (this.pan - 64) / 64));
+        this.pannerNode.pan.setValueAtTime(panValue, ctx.currentTime);
+        this.channelGain.connect(this.pannerNode);
+        this.pannerNode.connect(ctx.destination);
+      } else {
+        this.channelGain.connect(ctx.destination);
+      }
+    }
+    return this.channelGain;
+  }
+
+  public setVolume(vol: number) {
+    this.volume = Math.max(0, Math.min(127, Math.round(vol)));
+    if (this.channelGain && this.ctx) {
+      const now = this.ctx.currentTime;
+      const targetGain = this.isInstanceMuted ? 0 : (this.volume / 127);
+      this.channelGain.gain.cancelScheduledValues(now);
+      this.channelGain.gain.setValueAtTime(this.channelGain.gain.value, now);
+      this.channelGain.gain.linearRampToValueAtTime(targetGain, now + 0.02);
+    }
+  }
+
+  public getVolume(): number {
+    return this.volume;
+  }
+
+  public setPan(pan: number) {
+    this.pan = Math.max(0, Math.min(127, Math.round(pan)));
+    if (this.pannerNode && this.ctx) {
+      const now = this.ctx.currentTime;
+      const panValue = Math.max(-1, Math.min(1, (this.pan - 64) / 64));
+      this.pannerNode.pan.cancelScheduledValues(now);
+      this.pannerNode.pan.setValueAtTime(this.pannerNode.pan.value, now);
+      this.pannerNode.pan.linearRampToValueAtTime(panValue, now + 0.02);
+    }
+  }
+
+  public getPan(): number {
+    return this.pan;
+  }
+
   /**
    * 播放大鼓 (Kick Drum / MIDI 36)
    */
@@ -65,7 +136,7 @@ export class DrumSynth {
     gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
 
     osc.connect(gainNode);
-    gainNode.connect(ctx.destination);
+    gainNode.connect(this.getOutputNode());
 
     osc.start(now);
     osc.stop(now + 0.32);
@@ -89,7 +160,7 @@ export class DrumSynth {
     oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
 
     osc.connect(oscGain);
-    oscGain.connect(ctx.destination);
+    oscGain.connect(this.getOutputNode());
     osc.start(now);
     osc.stop(now + 0.13);
 
@@ -107,7 +178,7 @@ export class DrumSynth {
 
       noise.connect(filter);
       filter.connect(noiseGain);
-      noiseGain.connect(ctx.destination);
+      noiseGain.connect(this.getOutputNode());
 
       noise.start(now);
       noise.stop(now + 0.22);
@@ -132,7 +203,7 @@ export class DrumSynth {
     gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
 
     osc.connect(gainNode);
-    gainNode.connect(ctx.destination);
+    gainNode.connect(this.getOutputNode());
     osc.start(now);
     osc.stop(now + 0.05);
   }
@@ -161,7 +232,7 @@ export class DrumSynth {
 
       noise.connect(filter);
       filter.connect(gainNode);
-      gainNode.connect(ctx.destination);
+      gainNode.connect(this.getOutputNode());
 
       noise.start(now + offset);
       noise.stop(now + offset + (i === 2 ? 0.16 : 0.03));
@@ -191,7 +262,7 @@ export class DrumSynth {
 
     noise.connect(filter);
     filter.connect(gainNode);
-    gainNode.connect(ctx.destination);
+    gainNode.connect(this.getOutputNode());
 
     noise.start(now);
     noise.stop(now + 0.06);
@@ -220,7 +291,7 @@ export class DrumSynth {
 
     noise.connect(filter);
     filter.connect(gainNode);
-    gainNode.connect(ctx.destination);
+    gainNode.connect(this.getOutputNode());
 
     noise.start(now);
     noise.stop(now + 0.38);
@@ -250,7 +321,7 @@ export class DrumSynth {
 
     noise.connect(filter);
     filter.connect(gainNode);
-    gainNode.connect(ctx.destination);
+    gainNode.connect(this.getOutputNode());
 
     noise.start(now);
     noise.stop(now + 1.25);
@@ -271,7 +342,7 @@ export class DrumSynth {
     oscGain.gain.setValueAtTime(gain * 0.35, now);
     oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
     osc.connect(oscGain);
-    oscGain.connect(ctx.destination);
+    oscGain.connect(this.getOutputNode());
     osc.start(now);
     osc.stop(now + 0.62);
 
@@ -288,7 +359,7 @@ export class DrumSynth {
 
       noise.connect(filter);
       filter.connect(noiseGain);
-      noiseGain.connect(ctx.destination);
+      noiseGain.connect(this.getOutputNode());
       noise.start(now);
       noise.stop(now + 0.72);
     }
@@ -312,7 +383,7 @@ export class DrumSynth {
     gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
 
     osc.connect(gainNode);
-    gainNode.connect(ctx.destination);
+    gainNode.connect(this.getOutputNode());
 
     osc.start(now);
     osc.stop(now + 0.38);
@@ -322,7 +393,7 @@ export class DrumSynth {
    * 根據 MIDI 音符號碼觸發對應樂器
    */
   public playNote(note: number, velocity: number = 100) {
-    if (DrumSynth.muted) return;
+    if (DrumSynth.muted || this.isInstanceMuted) return;
     switch (note) {
       case 35:
       case 36: // B0/C1 Kick

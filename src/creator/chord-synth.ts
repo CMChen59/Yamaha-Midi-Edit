@@ -9,9 +9,13 @@
 
 export class ChordSynth {
   private static muted: boolean = false;
+  private isInstanceMuted: boolean = false;
   private static sharedCtx: AudioContext | null = null;
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
+  private pannerNode: StereoPannerNode | null = null;
+  private volume: number = 90; // 0 ~ 127 (Yamaha PSR-SX920 Chord 1 預設 90)
+  private pan: number = 52;    // 0 ~ 127 (Yamaha PSR-SX920 Chord 1 預設 52 = L12)
   private currentCategory: string = 'Piano';
   private currentVoiceId: string = 'concert-grand';
 
@@ -25,6 +29,21 @@ export class ChordSynth {
 
   public setMuted(muted: boolean) {
     ChordSynth.muted = muted;
+  }
+
+  public setChannelMuted(muted: boolean) {
+    this.isInstanceMuted = muted;
+    if (this.masterGain && this.ctx) {
+      const now = this.ctx.currentTime;
+      const targetGain = muted ? 0 : (this.volume / 127) * 0.75;
+      this.masterGain.gain.cancelScheduledValues(now);
+      this.masterGain.gain.setValueAtTime(this.masterGain.gain.value, now);
+      this.masterGain.gain.linearRampToValueAtTime(targetGain, now + 0.02);
+    }
+  }
+
+  public isChannelMuted(): boolean {
+    return this.isInstanceMuted;
   }
 
   constructor() {
@@ -56,12 +75,52 @@ export class ChordSynth {
     this.ctx = ChordSynth.sharedCtx;
     if (!this.masterGain && this.ctx) {
       this.masterGain = this.ctx.createGain();
-      this.masterGain.gain.setValueAtTime(0.65, this.ctx.currentTime);
-      this.masterGain.connect(this.ctx.destination);
+      const currentGain = this.isInstanceMuted ? 0 : (this.volume / 127) * 0.75;
+      this.masterGain.gain.setValueAtTime(currentGain, this.ctx.currentTime);
+
+      if (typeof this.ctx.createStereoPanner === 'function') {
+        this.pannerNode = this.ctx.createStereoPanner();
+        const panValue = Math.max(-1, Math.min(1, (this.pan - 64) / 64));
+        this.pannerNode.pan.setValueAtTime(panValue, this.ctx.currentTime);
+        this.masterGain.connect(this.pannerNode);
+        this.pannerNode.connect(this.ctx.destination);
+      } else {
+        this.masterGain.connect(this.ctx.destination);
+      }
     }
     if (this.ctx && this.ctx.state === 'suspended') {
       this.ctx.resume();
     }
+  }
+
+  public setVolume(vol: number) {
+    this.volume = Math.max(0, Math.min(127, Math.round(vol)));
+    if (this.masterGain && this.ctx) {
+      const now = this.ctx.currentTime;
+      const targetGain = this.isInstanceMuted ? 0 : (this.volume / 127) * 0.75;
+      this.masterGain.gain.cancelScheduledValues(now);
+      this.masterGain.gain.setValueAtTime(this.masterGain.gain.value, now);
+      this.masterGain.gain.linearRampToValueAtTime(targetGain, now + 0.02);
+    }
+  }
+
+  public getVolume(): number {
+    return this.volume;
+  }
+
+  public setPan(pan: number) {
+    this.pan = Math.max(0, Math.min(127, Math.round(pan)));
+    if (this.pannerNode && this.ctx) {
+      const now = this.ctx.currentTime;
+      const panValue = Math.max(-1, Math.min(1, (this.pan - 64) / 64));
+      this.pannerNode.pan.cancelScheduledValues(now);
+      this.pannerNode.pan.setValueAtTime(this.pannerNode.pan.value, now);
+      this.pannerNode.pan.linearRampToValueAtTime(panValue, now + 0.02);
+    }
+  }
+
+  public getPan(): number {
+    return this.pan;
   }
 
   private midiToFreq(note: number): number {
@@ -75,7 +134,7 @@ export class ChordSynth {
    * @param durationMs 發聲長度 (毫秒)
    */
   public playNote(note: number, velocity: number = 100, durationMs: number = 450) {
-    if (ChordSynth.muted) return;
+    if (ChordSynth.muted || this.isInstanceMuted) return;
     this.initAudio();
     if (!this.ctx || !this.masterGain) return;
 

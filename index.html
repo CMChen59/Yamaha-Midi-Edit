@@ -1006,6 +1006,290 @@
       border-radius: 50%;
       background: var(--accent-green);
     }
+
+    /* ========================================================
+       🎛️ 混音台 (Mixer Panel) 專屬樣式
+       ======================================================== */
+    .mixer-console-panel {
+      transition: all 0.3s ease-in-out;
+    }
+
+    .mixer-panel-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 16px 20px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+      animation: mixerSlideDown 0.25s ease-out;
+    }
+
+    @keyframes mixerSlideDown {
+      from {
+        opacity: 0;
+        transform: translateY(-8px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .mixer-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+      padding-bottom: 12px;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .mixer-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .mixer-title-icon {
+      font-size: 1.8rem;
+    }
+
+    .mixer-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .mixer-subtitle {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .mixer-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .mixer-tool-btn {
+      padding: 6px 14px;
+      background: rgba(15, 23, 42, 0.7);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      color: #cbd5e1;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .mixer-tool-btn:hover {
+      background: rgba(56, 189, 248, 0.15);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .mixer-tool-panic {
+      color: #f43f5e;
+      border-color: rgba(244, 63, 94, 0.4);
+    }
+
+    .mixer-tool-panic:hover {
+      background: rgba(244, 63, 94, 0.2);
+      border-color: #f43f5e;
+      color: #fff;
+    }
+
+    .mixer-strips-container {
+      display: flex;
+      gap: 12px;
+      overflow-x: auto;
+      padding: 6px 2px 14px 2px;
+    }
+
+    .mixer-channel-strip {
+      flex: 0 0 115px;
+      background: rgba(15, 23, 42, 0.75);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 10px;
+      padding: 10px 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      position: relative;
+    }
+
+    .strip-header {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding-top: 6px;
+      text-align: center;
+    }
+
+    .strip-ch-tag {
+      font-size: 0.68rem;
+      font-weight: 800;
+      padding: 2px 6px;
+      border-radius: 4px;
+      letter-spacing: 0.5px;
+    }
+
+    .strip-name {
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: #fff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }
+
+    .strip-voice-badge {
+      font-size: 0.68rem;
+      color: #94a3b8;
+      background: rgba(30, 41, 59, 0.8);
+      border: 1px solid rgba(148, 163, 184, 0.15);
+      padding: 2px 6px;
+      border-radius: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }
+
+    .strip-pan-section {
+      width: 100%;
+      background: rgba(30, 41, 59, 0.5);
+      border: 1px solid rgba(148, 163, 184, 0.15);
+      border-radius: 6px;
+      padding: 6px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .strip-pan-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.68rem;
+      font-weight: 700;
+      color: #94a3b8;
+    }
+
+    .strip-pan-val {
+      color: #38bdf8;
+      cursor: pointer;
+    }
+
+    .strip-pan-val:hover {
+      text-decoration: underline;
+    }
+
+    .strip-pan-slider {
+      width: 100%;
+      height: 4px;
+      cursor: pointer;
+      accent-color: #38bdf8;
+    }
+
+    .strip-fader-section {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 0;
+    }
+
+    .strip-vol-meter-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      position: relative;
+    }
+
+    .strip-scale {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      height: 120px;
+      font-size: 0.55rem;
+      color: #64748b;
+      user-select: none;
+      text-align: right;
+    }
+
+    .strip-fader-slider {
+      writing-mode: vertical-lr;
+      direction: rtl;
+      -webkit-appearance: slider-vertical;
+      width: 24px;
+      height: 120px;
+      cursor: pointer;
+      accent-color: var(--track-color, #38bdf8);
+    }
+
+    .strip-vol-val-wrap {
+      background: #0f172a;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 4px;
+      padding: 2px 8px;
+    }
+
+    .strip-vol-val {
+      font-size: 0.8rem;
+      font-weight: 800;
+      color: #f8fafc;
+      font-family: monospace;
+    }
+
+    .strip-buttons-section {
+      width: 100%;
+      display: flex;
+      gap: 6px;
+      justify-content: center;
+    }
+
+    .mixer-btn-mute, .mixer-btn-solo {
+      flex: 1;
+      padding: 4px 0;
+      border-radius: 4px;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      background: #1e293b;
+      color: #94a3b8;
+      font-size: 0.72rem;
+      font-weight: 800;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .mixer-btn-mute:hover, .mixer-btn-solo:hover {
+      background: #334155;
+      color: #fff;
+    }
+
+    .mixer-btn-muted-active {
+      background: #ef4444 !important;
+      color: #fff !important;
+      border-color: #ef4444 !important;
+      box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+    }
+
+    .mixer-btn-solo-active {
+      background: #10b981 !important;
+      color: #fff !important;
+      border-color: #10b981 !important;
+      box-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+    }
   </style>
 </head>
 <body>
@@ -1060,6 +1344,9 @@
       <button id="btn-quick-add-track-nav" class="btn-secondary" style="border-color: #38bdf8; color: #38bdf8; background: rgba(56, 189, 248, 0.15); font-weight: 700;" title="快速跳至新增伴奏音軌區 (可加選 Chord 2, Pad, Phrase 1, Phrase 2)">
         <span>➕</span> 新增聲部 (Add CH)
       </button>
+      <button id="btn-toggle-mixer" class="btn-secondary" style="border-color: #f59e0b; color: #f59e0b; background: rgba(245, 158, 11, 0.15); font-weight: 700;" title="開啟/收合視覺化伴奏混音台 (Yamaha Mixer Console)">
+        <span>🎛️</span> 混音台 (Mixer)
+      </button>
       <button id="btn-export-file" class="btn-primary">
         🚀 匯出為 .STY
       </button>
@@ -1094,6 +1381,11 @@
           <span id="label-computer-audio">電腦: 🔊 發聲中</span>
         </button>
       </div>
+    </section>
+
+    <!-- 視覺化伴奏混音台主畫板容器 (Mixer Console) -->
+    <section id="mixer-panel-container" class="sequencer-panel mixer-console-panel" style="display: none; padding: 0; background: transparent; border: none;">
+      <!-- 混音台動態渲染於此 -->
     </section>
 
     <!-- 步進網格主畫板容器 (鼓組) -->

@@ -10,6 +10,18 @@ export interface TemplateVoiceConfig {
   pc: number;
 }
 
+export interface TemplatePartMixer {
+  volume: number; // 0 ~ 127
+  pan: number;    // 0 ~ 127 (64 = Center)
+}
+
+export interface TemplateMixerConfig {
+  drum?: TemplatePartMixer;
+  bass?: TemplatePartMixer;
+  chord?: TemplatePartMixer;
+  dynamicTracks?: Record<string, TemplatePartMixer>;
+}
+
 export interface TemplateSectionInput {
   name: string;
   bars: number;
@@ -30,6 +42,7 @@ export interface TemplateStyleExportOptions {
   chordVoice: TemplateVoiceConfig;
   dynamicVoices?: Record<string, TemplateVoiceConfig>;
   sections: TemplateSectionInput[];
+  mixer?: TemplateMixerConfig;
 }
 
 export class YamahaTemplateStyleSynthesizer {
@@ -61,6 +74,30 @@ export class YamahaTemplateStyleSynthesizer {
     options.sections.forEach(s => userSectionMap.set(s.name, s));
 
     // 2. 收集非音符事件，並在 SInt 區塊內更新音色 PC/Bank，在開頭更新曲名與 Tempo
+    // 定義 Yamaha PSR-SX920 混音標準 (CC 7 音量與 CC 10 聲相)
+    const targetVolMap: Record<number, number> = {
+      9: options.mixer?.drum?.volume ?? 100,
+      10: options.mixer?.bass?.volume ?? 95,
+      11: options.mixer?.chord?.volume ?? 90,
+      12: options.mixer?.dynamicTracks?.Chord2?.volume ?? 85,
+      13: options.mixer?.dynamicTracks?.Pad?.volume ?? 80,
+      14: options.mixer?.dynamicTracks?.Phrase1?.volume ?? 85,
+      15: options.mixer?.dynamicTracks?.Phrase2?.volume ?? 80,
+    };
+
+    const targetPanMap: Record<number, number> = {
+      9: options.mixer?.drum?.pan ?? 64,
+      10: options.mixer?.bass?.pan ?? 64,
+      11: options.mixer?.chord?.pan ?? 52, // L12 偏左 12 度
+      12: options.mixer?.dynamicTracks?.Chord2?.pan ?? 76, // R12 偏右 12 度
+      13: options.mixer?.dynamicTracks?.Pad?.pan ?? 64, // 置中
+      14: options.mixer?.dynamicTracks?.Phrase1?.pan ?? 44, // L20 偏左 20 度
+      15: options.mixer?.dynamicTracks?.Phrase2?.pan ?? 84, // R20 偏右 20 度
+    };
+
+    const handledVolChannels = new Set<number>();
+    const handledPanChannels = new Set<number>();
+
     interface TimedEvent {
       absTick: number;
       priority: number;
@@ -105,10 +142,21 @@ export class YamahaTemplateStyleSynthesizer {
         continue;
       }
 
-      // 在 SInt 小節內 (tick < ticksPerBar) 更新各聲部之 Bank MSB (CC 0), Bank LSB (CC 32), 與 Program Change (PC)
+      // 在 SInt 小節內 (tick < ticksPerBar) 更新各聲部之 Bank MSB (CC 0), Bank LSB (CC 32), 與 Program Change (PC) 以及 Volume (CC 7) 與 Pan (CC 10)
       if (curTick < ticksPerBar) {
         const ch = ev.channel;
         if (ch !== undefined) {
+          // 更新 CC 7 (Volume 音量)
+          if (ev.type === 'controlChange' && ev.controller === 7 && targetVolMap[ch] !== undefined) {
+            ev.value = Math.max(0, Math.min(127, Math.round(targetVolMap[ch])));
+            handledVolChannels.add(ch);
+          }
+          // 更新 CC 10 (Pan 聲相)
+          else if (ev.type === 'controlChange' && ev.controller === 10 && targetPanMap[ch] !== undefined) {
+            ev.value = Math.max(0, Math.min(127, Math.round(targetPanMap[ch])));
+            handledPanChannels.add(ch);
+          }
+
           // Channel 9 (Rhythm 2 / 鼓組)
           if (ch === 9) {
             if (ev.type === 'controlChange' && ev.controller === 0) {
@@ -183,6 +231,29 @@ export class YamahaTemplateStyleSynthesizer {
       const priority = ev.type === 'sysex' ? 1 : ev.type === 'meta' && ev.metaType === 0x06 ? 20 : 10;
       timedEvents.push({ absTick: curTick, priority, event: ev });
     }
+
+    // 2.1 確保 SInt 小節中所有啟用之聲部皆具備 CC 7 (Volume) 與 CC 10 (Pan) 控制器事件
+    Object.entries(targetVolMap).forEach(([chStr, vol]) => {
+      const ch = Number(chStr);
+      if (!handledVolChannels.has(ch)) {
+        timedEvents.push({
+          absTick: 178,
+          priority: 10,
+          event: { delta: 0, type: 'controlChange', channel: ch, controller: 7, value: vol },
+        });
+      }
+    });
+
+    Object.entries(targetPanMap).forEach(([chStr, pan]) => {
+      const ch = Number(chStr);
+      if (!handledPanChannels.has(ch)) {
+        timedEvents.push({
+          absTick: 183,
+          priority: 10,
+          event: { delta: 0, type: 'controlChange', channel: ch, controller: 10, value: pan },
+        });
+      }
+    });
 
     // 3. 將使用者的樂音編入範本的所有段落中
     // 範本段落：Main A-D, Fill In AA-DD, Intro A-C, Ending A

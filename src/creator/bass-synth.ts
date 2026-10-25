@@ -3,12 +3,17 @@
  * 輕量純 Web Audio 類比低音合成器 (Bass Synth)
  * 支援多款貝斯物理模型：電貝斯 (Finger / Pick)、原聲低音大提琴 (Acoustic Upright)、
  * 擊弦貝斯 (Slap) 與合成重低音 (Sub Bass / Synth Bass)
+ * 支援獨立音軌立體聲聲相 (StereoPannerNode) 與軌道主音量 (GainNode) 調控。
  */
 
 export class BassSynth {
   private static muted: boolean = false;
+  private isInstanceMuted: boolean = false;
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
+  private pannerNode: StereoPannerNode | null = null;
+  private volume: number = 95; // 0 ~ 127 (Yamaha PSR-SX920 Bass 預設 95)
+  private pan: number = 64;    // 0 ~ 127 (中央 64)
   private currentCategory: string = 'Electric';
   private currentVoiceId: string = 'finger-bass';
 
@@ -22,6 +27,21 @@ export class BassSynth {
 
   public setMuted(muted: boolean) {
     BassSynth.muted = muted;
+  }
+
+  public setChannelMuted(muted: boolean) {
+    this.isInstanceMuted = muted;
+    if (this.masterGain && this.ctx) {
+      const now = this.ctx.currentTime;
+      const targetGain = muted ? 0 : (this.volume / 127) * 0.8;
+      this.masterGain.gain.cancelScheduledValues(now);
+      this.masterGain.gain.setValueAtTime(this.masterGain.gain.value, now);
+      this.masterGain.gain.linearRampToValueAtTime(targetGain, now + 0.02);
+    }
+  }
+
+  public isChannelMuted(): boolean {
+    return this.isInstanceMuted;
   }
 
   constructor() {
@@ -42,12 +62,52 @@ export class BassSynth {
       const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
       this.ctx = new AudioCtxClass();
       this.masterGain = this.ctx.createGain();
-      this.masterGain.gain.setValueAtTime(0.7, this.ctx.currentTime);
-      this.masterGain.connect(this.ctx.destination);
+      const currentGain = this.isInstanceMuted ? 0 : (this.volume / 127) * 0.8;
+      this.masterGain.gain.setValueAtTime(currentGain, this.ctx.currentTime);
+
+      if (typeof this.ctx.createStereoPanner === 'function') {
+        this.pannerNode = this.ctx.createStereoPanner();
+        const panValue = Math.max(-1, Math.min(1, (this.pan - 64) / 64));
+        this.pannerNode.pan.setValueAtTime(panValue, this.ctx.currentTime);
+        this.masterGain.connect(this.pannerNode);
+        this.pannerNode.connect(this.ctx.destination);
+      } else {
+        this.masterGain.connect(this.ctx.destination);
+      }
     }
     if (this.ctx.state === 'suspended') {
       this.ctx.resume();
     }
+  }
+
+  public setVolume(vol: number) {
+    this.volume = Math.max(0, Math.min(127, Math.round(vol)));
+    if (this.masterGain && this.ctx) {
+      const now = this.ctx.currentTime;
+      const targetGain = this.isInstanceMuted ? 0 : (this.volume / 127) * 0.8;
+      this.masterGain.gain.cancelScheduledValues(now);
+      this.masterGain.gain.setValueAtTime(this.masterGain.gain.value, now);
+      this.masterGain.gain.linearRampToValueAtTime(targetGain, now + 0.02);
+    }
+  }
+
+  public getVolume(): number {
+    return this.volume;
+  }
+
+  public setPan(pan: number) {
+    this.pan = Math.max(0, Math.min(127, Math.round(pan)));
+    if (this.pannerNode && this.ctx) {
+      const now = this.ctx.currentTime;
+      const panValue = Math.max(-1, Math.min(1, (this.pan - 64) / 64));
+      this.pannerNode.pan.cancelScheduledValues(now);
+      this.pannerNode.pan.setValueAtTime(this.pannerNode.pan.value, now);
+      this.pannerNode.pan.linearRampToValueAtTime(panValue, now + 0.02);
+    }
+  }
+
+  public getPan(): number {
+    return this.pan;
   }
 
   private midiToFreq(note: number): number {
@@ -55,7 +115,7 @@ export class BassSynth {
   }
 
   public playNote(note: number, velocity: number = 100, durationMs: number = 240) {
-    if (BassSynth.muted) return;
+    if (BassSynth.muted || this.isInstanceMuted) return;
     this.initAudio();
     if (!this.ctx || !this.masterGain) return;
 
@@ -77,17 +137,69 @@ export class BassSynth {
 
       const osc2 = this.ctx.createOscillator();
       osc2.type = 'sine';
-      osc2.frequency.setValueAtTime(freq, now);
+      osc2.frequency.setValueAtTime(freq * 0.5, now); // 次低音
 
-      const filter = this.ctx.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(Math.min(1800, freq * 3.5), now);
+      const bodyFilter = this.ctx.createBiquadFilter();
+      bodyFilter.type = 'peaking';
+      bodyFilter.frequency.setValueAtTime(180, now);
+      bodyFilter.Q.setValueAtTime(2.0, now);
+      bodyFilter.gain.setValueAtTime(4.5, now);
+
+      const lowpass = this.ctx.createBiquadFilter();
+      lowpass.type = 'lowpass';
+      lowpass.frequency.setValueAtTime(Math.min(3200, freq * 6), now);
 
       const ampGain = this.ctx.createGain();
       ampGain.gain.setValueAtTime(0.0001, now);
-      ampGain.gain.linearRampToValueAtTime(velRatio * 0.95, now + 0.012);
-      ampGain.gain.exponentialRampToValueAtTime(velRatio * 0.45, now + 0.18);
-      ampGain.gain.exponentialRampToValueAtTime(0.0001, now + durSec + 0.04);
+      ampGain.gain.linearRampToValueAtTime(velRatio * 0.85, now + 0.015);
+      ampGain.gain.exponentialRampToValueAtTime(velRatio * 0.45, now + 0.2);
+      ampGain.gain.exponentialRampToValueAtTime(0.0001, now + durSec);
+
+      osc1.connect(bodyFilter);
+      osc2.connect(bodyFilter);
+      bodyFilter.connect(lowpass);
+      lowpass.connect(ampGain);
+      ampGain.connect(this.masterGain);
+
+      osc1.start(now);
+      osc2.start(now);
+      osc1.stop(now + durSec + 0.05);
+      osc2.stop(now + durSec + 0.05);
+
+      setTimeout(() => {
+        try {
+          osc1.disconnect();
+          osc2.disconnect();
+          bodyFilter.disconnect();
+          lowpass.disconnect();
+          ampGain.disconnect();
+        } catch (_) {}
+      }, (durSec + 0.08) * 1000);
+
+    } else if (isSynth) {
+      // 合成貝斯 (Sub / Synth Bass)：厚重方波 + 鋸齒波，帶有經典 Moog 24dB 低通濾波器包絡
+      const osc1 = this.ctx.createOscillator();
+      osc1.type = 'sawtooth';
+      osc1.frequency.setValueAtTime(freq, now);
+
+      const osc2 = this.ctx.createOscillator();
+      osc2.type = 'square';
+      osc2.frequency.setValueAtTime(freq, now);
+      osc2.detune.setValueAtTime(8, now); // 8 cent 微失諧營造肥厚感
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.Q.setValueAtTime(6.0, now); // 諧振峰值
+      const cutoffStart = Math.min(8000, freq * 8 * velRatio);
+      const cutoffEnd = Math.max(120, freq * 1.5);
+      filter.frequency.setValueAtTime(cutoffStart, now);
+      filter.frequency.exponentialRampToValueAtTime(cutoffEnd, now + 0.18);
+
+      const ampGain = this.ctx.createGain();
+      ampGain.gain.setValueAtTime(0.0001, now);
+      ampGain.gain.linearRampToValueAtTime(velRatio * 0.95, now + 0.008);
+      ampGain.gain.exponentialRampToValueAtTime(velRatio * 0.6, now + 0.12);
+      ampGain.gain.exponentialRampToValueAtTime(0.0001, now + durSec);
 
       osc1.connect(filter);
       osc2.connect(filter);
@@ -96,8 +208,8 @@ export class BassSynth {
 
       osc1.start(now);
       osc2.start(now);
-      osc1.stop(now + durSec + 0.08);
-      osc2.stop(now + durSec + 0.08);
+      osc1.stop(now + durSec + 0.05);
+      osc2.stop(now + durSec + 0.05);
 
       setTimeout(() => {
         try {
@@ -106,43 +218,10 @@ export class BassSynth {
           filter.disconnect();
           ampGain.disconnect();
         } catch (_) {}
-      }, (durSec + 0.1) * 1000);
-
-    } else if (isSynth) {
-      // 合成貝斯：Sub Bass 808 或是 Moog 鋸齒諧振貝斯
-      const osc = this.ctx.createOscillator();
-      osc.type = this.currentVoiceId.includes('808') ? 'sine' : 'sawtooth';
-      osc.frequency.setValueAtTime(freq, now);
-
-      const filter = this.ctx.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.Q.setValueAtTime(5.0, now);
-      filter.frequency.setValueAtTime(freq * 8 * velRatio, now);
-      filter.frequency.exponentialRampToValueAtTime(freq * 2, now + 0.15);
-
-      const ampGain = this.ctx.createGain();
-      ampGain.gain.setValueAtTime(0.0001, now);
-      ampGain.gain.linearRampToValueAtTime(velRatio * 1.0, now + 0.005);
-      ampGain.gain.exponentialRampToValueAtTime(velRatio * 0.5, now + 0.2);
-      ampGain.gain.exponentialRampToValueAtTime(0.0001, now + durSec);
-
-      osc.connect(filter);
-      filter.connect(ampGain);
-      ampGain.connect(this.masterGain);
-
-      osc.start(now);
-      osc.stop(now + durSec + 0.05);
-
-      setTimeout(() => {
-        try {
-          osc.disconnect();
-          filter.disconnect();
-          ampGain.disconnect();
-        } catch (_) {}
       }, (durSec + 0.08) * 1000);
 
     } else {
-      // 標準電貝斯 (Finger Bass / Pick Bass / Slap Bass)
+      // 電貝斯 (Finger / Pick / Slap)：經典 4 弦電貝斯，雙振盪器 (鋸齒 + 三角)
       const osc1 = this.ctx.createOscillator();
       osc1.type = 'sawtooth';
       osc1.frequency.setValueAtTime(freq, now);

@@ -21,6 +21,7 @@ import { YamahaTemplateStyleSynthesizer, type TemplateSectionInput } from '../co
 import { YamahaPadSynthesizer } from '../core/writer/pad-synthesizer';
 import { YamahaPadModifier } from '../core/writer/pad-modifier';
 import { YamahaWriter } from '../core/writer/yamaha-writer';
+import { MixerPanel, type MixerChannelInfo } from './mixer-panel';
 
 export type CreatorMode = 'STY' | 'PAD';
 
@@ -101,6 +102,9 @@ export class CreatorApp {
   private bassRoll: PianoRollLite | null = null;
   private chordRoll: ChordRollLite | null = null;
   private dynamicTracks: Map<string, DynamicChordTrack> = new Map();
+  private mixerPanel: MixerPanel | null = null;
+  private mutedChannels: Set<string> = new Set();
+  private soloChannels: Set<string> = new Set();
   private playbackTimer: any = null;
   private currentPlayStep: number = 0;
 
@@ -175,6 +179,21 @@ export class CreatorApp {
     bassSynth.setVoice(this.state.selectedBassVoice);
 
     this.updateAddChannelButtonsUI();
+
+    // 初始化視覺化伴奏混音台
+    const mixerContainer = document.getElementById('mixer-panel-container');
+    if (mixerContainer) {
+      this.mixerPanel = new MixerPanel(mixerContainer, {
+        onVolumeChange: (id, vol) => this.onMixerVolumeChange(id, vol),
+        onPanChange: (id, pan) => this.onMixerPanChange(id, pan),
+        onMuteToggle: (id, muted) => this.onMixerMuteToggle(id, muted),
+        onSoloToggle: (id, solo) => this.onMixerSoloToggle(id, solo),
+        onResetDefaults: () => this.resetMixerToGoldenDefaults(),
+        onPanic: () => this.panicMixer(),
+        onVisibilityChange: (vis) => this.updateMixerButtonState(vis),
+      });
+      this.refreshMixerChannels();
+    }
   }
 
   /**
@@ -237,6 +256,22 @@ export class CreatorApp {
       roll.setPatternData(currentStore.dynamicPatterns[partId]);
     }
 
+    // 設定原廠黃金配比預設音量與聲相
+    const dynSynth = roll.getSynth();
+    if (partId === 'Chord2') {
+      dynSynth.setVolume(85);
+      dynSynth.setPan(76); // R12
+    } else if (partId === 'Pad') {
+      dynSynth.setVolume(80);
+      dynSynth.setPan(64); // C
+    } else if (partId === 'Phrase1') {
+      dynSynth.setVolume(85);
+      dynSynth.setPan(44); // L20
+    } else if (partId === 'Phrase2') {
+      dynSynth.setVolume(80);
+      dynSynth.setPan(84); // R20
+    }
+
     const dynTrack: DynamicChordTrack = {
       partId,
       container: trackContainer,
@@ -245,15 +280,20 @@ export class CreatorApp {
     };
     this.dynamicTracks.set(partId, dynTrack);
 
-    // 若已連線實體琴，同步發送音色切換
+    // 若已連線實體琴，同步發送音色切換與混音設定
     if (this.state.isMidiConnected) {
       midiManager.sendVoiceChange(config.channel, {
         msb: initVoice.msb,
         lsb: initVoice.lsb,
         pc: initVoice.pc,
       });
+      midiManager.sendMixerControllers(config.channel, {
+        volume: dynSynth.getVolume(),
+        pan: dynSynth.getPan(),
+      });
     }
 
+    this.refreshMixerChannels();
     this.updateAddChannelButtonsUI();
     this.updateSectionSummary();
     this.refreshSectionOptions();
@@ -282,6 +322,10 @@ export class CreatorApp {
 
     track.container.remove();
     this.dynamicTracks.delete(partId);
+    this.mutedChannels.delete(partId);
+    this.soloChannels.delete(partId);
+    this.applyMixerAudioStates();
+    this.refreshMixerChannels();
 
     // 同步清空各段落中此音軌的 Pattern
     this.sections.forEach(s => {
@@ -337,6 +381,7 @@ export class CreatorApp {
     if (found) {
       track.selectedVoice = found;
       track.roll.getSynth().setVoice(found);
+      this.mixerPanel?.updateVoiceName(partId, found.name);
       const config = AVAILABLE_CHORD_TRACK_CONFIGS[partId];
       if (this.state.isMidiConnected && config) {
         midiManager.sendVoiceChange(config.channel, {
@@ -353,6 +398,7 @@ export class CreatorApp {
    * 發送動態伴奏音軌的 Web MIDI 音符觸發
    */
   private sendMidiDynamicTrackTrigger(partId: string, note: number, velocity: number = 100, durMs: number = 350) {
+    if (this.isChannelEffectiveMuted(partId)) return;
     if (this.state.isMidiConnected) {
       const config = AVAILABLE_CHORD_TRACK_CONFIGS[partId];
       if (config) {
@@ -373,6 +419,7 @@ export class CreatorApp {
     if (found) {
       this.state.selectedDrumKit = found;
       this.syncDrumKitToKeyboard();
+      this.mixerPanel?.updateVoiceName('drum', found.name);
       this.setStatus(`✓ 已切換鼓組【${found.name}】(琴端代碼: PC ${found.panelPc}, Bank ${found.msb}-${found.lsb})`);
     }
   }
@@ -386,6 +433,7 @@ export class CreatorApp {
       this.state.selectedBassVoice = found;
       bassSynth.setVoice(found);
       this.syncBassVoiceToKeyboard();
+      this.mixerPanel?.updateVoiceName('bass', found.name);
       this.setStatus(`✓ 已切換貝斯【${found.name}】(琴端代碼: PC ${found.panelPc}, Bank ${found.msb}-${found.lsb})`);
     }
   }
@@ -399,6 +447,7 @@ export class CreatorApp {
       this.state.selectedChordVoice = found;
       chordSynth.setVoice(found);
       this.syncChordVoiceToKeyboard();
+      this.mixerPanel?.updateVoiceName('chord', found.name);
       this.setStatus(`✓ 已切換和弦【${found.name}】(琴端代碼: PC ${found.panelPc}, Bank ${found.msb}-${found.lsb})`);
     }
   }
@@ -795,6 +844,7 @@ export class CreatorApp {
       chordSynth.setVoice(preset);
       this.chordRoll?.setVoice(preset);
       this.syncChordVoiceToKeyboard();
+      this.mixerPanel?.updateVoiceName('chord', preset.name);
       this.setStatus(`✓ 已自音色庫套用和弦音色【${preset.name}】(琴端: PC ${preset.panelPc}, Bank ${preset.msb}-${preset.lsb})`);
     } else if (this.currentVoiceSearchTarget === 'bass') {
       const id = `voice-${voice.msb}-${voice.lsb}-${voice.pc}`;
@@ -818,6 +868,7 @@ export class CreatorApp {
       bassSynth.setVoice(preset);
       this.bassRoll?.setVoice(preset);
       this.syncBassVoiceToKeyboard();
+      this.mixerPanel?.updateVoiceName('bass', preset.name);
       this.setStatus(`✓ 已自音色庫套用貝斯音色【${preset.name}】(琴端: PC ${preset.panelPc}, Bank ${preset.msb}-${preset.lsb})`);
     } else {
       const id = `voice-${voice.msb}-${voice.lsb}-${voice.pc}`;
@@ -842,6 +893,7 @@ export class CreatorApp {
         dynTrack.selectedVoice = preset;
         dynTrack.roll.getSynth().setVoice(preset);
         dynTrack.roll.setVoice(preset);
+        this.mixerPanel?.updateVoiceName(this.currentVoiceSearchTarget, preset.name);
         const config = AVAILABLE_CHORD_TRACK_CONFIGS[this.currentVoiceSearchTarget];
         if (this.state.isMidiConnected && config) {
           midiManager.sendVoiceChange(config.channel, {
@@ -1002,6 +1054,7 @@ export class CreatorApp {
           });
         }
       });
+      this.syncMixerControllersToKeyboard();
       this.setStatus(`✓ 已連線 PSR-SX920 [${outputDevice.name}]，鼓點、貝斯、和弦與所有聲部將同步直接由琴端喇叭發聲！`);
     } else {
       this.state.isMidiConnected = false;
@@ -1170,6 +1223,7 @@ export class CreatorApp {
   }
 
   private sendMidiDrumTrigger(note: number, velocity: number = 100, durMs: number = 80) {
+    if (this.isChannelEffectiveMuted('drum')) return;
     if (this.state.isMidiConnected) {
       const ch = this.state.midiRoutingMode === 'direct_ch1' ? 0 : 9;
       midiManager.sendNoteOn(ch, note, velocity);
@@ -1180,6 +1234,7 @@ export class CreatorApp {
   }
 
   private sendMidiBassTrigger(note: number, velocity: number = 100, durMs: number = 240) {
+    if (this.isChannelEffectiveMuted('bass')) return;
     if (this.state.isMidiConnected) {
       const ch = this.state.midiRoutingMode === 'direct_ch1' ? 0 : 10;
       midiManager.sendNoteOn(ch, note, velocity);
@@ -1190,6 +1245,7 @@ export class CreatorApp {
   }
 
   private sendMidiChordTrigger(note: number, velocity: number = 100, durMs: number = 350) {
+    if (this.isChannelEffectiveMuted('chord')) return;
     if (this.state.isMidiConnected) {
       const ch = this.state.midiRoutingMode === 'direct_ch1' ? 0 : 11;
       midiManager.sendNoteOn(ch, note, velocity);
@@ -1367,6 +1423,20 @@ export class CreatorApp {
     // 快捷跳轉至新增聲部操作區
     document.getElementById('btn-quick-add-track-nav')?.addEventListener('click', () => {
       this.scrollToAddChannelPanel();
+    });
+
+    // 視覺化混音台開關按鈕
+    const btnToggleMixer = document.getElementById('btn-toggle-mixer');
+    btnToggleMixer?.addEventListener('click', () => {
+      if (this.mixerPanel) {
+        const isVis = this.mixerPanel.toggle();
+        if (isVis) {
+          document.getElementById('mixer-panel-container')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          this.setStatus('🎛️ 混音台已開啟：可直接推動直立推桿調整各聲部音量與立體聲聲相');
+        } else {
+          this.setStatus('混音台已收合。');
+        }
+      }
     });
 
     // 動態新增伴奏聲部按鈕 (Chord 2, Pad, Phrase 1, Phrase 2)
@@ -1718,6 +1788,16 @@ export class CreatorApp {
           });
         });
 
+        // 收集各動態伴奏聲部之當前混音音量與立體聲聲相
+        const dynamicMixer: Record<string, { volume: number; pan: number }> = {};
+        this.dynamicTracks.forEach((t, partId) => {
+          const s = t.roll.getSynth();
+          dynamicMixer[partId] = {
+            volume: s.getVolume(),
+            pan: s.getPan(),
+          };
+        });
+
         // 採用經過實體 Yamaha PSR-SX920 驗證通過的黃金範本進行合成，確保原廠格式 100% 完整相容
         binaryBytes = YamahaTemplateStyleSynthesizer.synthesizeFromTemplate({
           styleName: finalFilename.replace(/\.sty$/i, ''),
@@ -1741,6 +1821,12 @@ export class CreatorApp {
           },
           dynamicVoices,
           sections: sectionsInput,
+          mixer: {
+            drum: { volume: drumSynth.getVolume(), pan: drumSynth.getPan() },
+            bass: { volume: bassSynth.getVolume(), pan: bassSynth.getPan() },
+            chord: { volume: chordSynth.getVolume(), pan: chordSynth.getPan() },
+            dynamicTracks: dynamicMixer,
+          },
         });
       } else {
         // --- 匯出 PAD 多功能打擊板 ---
@@ -1865,6 +1951,295 @@ export class CreatorApp {
     const el = document.getElementById('status-text');
     if (el) {
       el.textContent = msg;
+    }
+  }
+
+  /**
+   * 建立當前伴奏混音台通道條資訊清單
+   */
+  private buildMixerChannelList(): MixerChannelInfo[] {
+    const list: MixerChannelInfo[] = [
+      {
+        id: 'drum',
+        name: 'Rhythm 2',
+        subName: '鼓組',
+        chNumber: 10,
+        midiChannel: 9,
+        icon: '🥁',
+        color: '#38bdf8',
+        voiceName: this.state.selectedDrumKit.name,
+        volume: drumSynth.getVolume(),
+        pan: drumSynth.getPan(),
+        muted: this.mutedChannels.has('drum'),
+        solo: this.soloChannels.has('drum'),
+      },
+      {
+        id: 'bass',
+        name: 'Bass',
+        subName: '貝斯',
+        chNumber: 11,
+        midiChannel: 10,
+        icon: '🎸',
+        color: '#10b981',
+        voiceName: this.state.selectedBassVoice.name,
+        volume: bassSynth.getVolume(),
+        pan: bassSynth.getPan(),
+        muted: this.mutedChannels.has('bass'),
+        solo: this.soloChannels.has('bass'),
+      },
+      {
+        id: 'chord',
+        name: 'Chord 1',
+        subName: '和弦 1',
+        chNumber: 12,
+        midiChannel: 11,
+        icon: '🎹',
+        color: '#a855f7',
+        voiceName: this.state.selectedChordVoice.name,
+        volume: chordSynth.getVolume(),
+        pan: chordSynth.getPan(),
+        muted: this.mutedChannels.has('chord'),
+        solo: this.soloChannels.has('chord'),
+      },
+    ];
+
+    // 動態伴奏音軌 (Chord 2, Pad, Phrase 1, Phrase 2)
+    const partOrder: Array<'Chord2' | 'Pad' | 'Phrase1' | 'Phrase2'> = ['Chord2', 'Pad', 'Phrase1', 'Phrase2'];
+    partOrder.forEach(partId => {
+      const dynTrack = this.dynamicTracks.get(partId);
+      if (dynTrack) {
+        const cfg = AVAILABLE_CHORD_TRACK_CONFIGS[partId];
+        const color = partId === 'Chord2' ? '#f97316' : (partId === 'Pad' ? '#06b6d4' : (partId === 'Phrase1' ? '#eab308' : '#ec4899'));
+        list.push({
+          id: partId,
+          name: cfg ? cfg.trackId.toUpperCase() : partId,
+          subName: cfg ? cfg.title.replace(/\(.*\)/, '').trim() : partId,
+          chNumber: cfg ? cfg.panelCh : 13,
+          midiChannel: cfg ? cfg.channel : 12,
+          icon: cfg ? cfg.icon : '🎵',
+          color,
+          voiceName: dynTrack.selectedVoice.name,
+          volume: dynTrack.roll.getSynth().getVolume(),
+          pan: dynTrack.roll.getSynth().getPan(),
+          muted: this.mutedChannels.has(partId),
+          solo: this.soloChannels.has(partId),
+        });
+      }
+    });
+
+    return list;
+  }
+
+  /**
+   * 刷新混音台所有通道條顯示
+   */
+  public refreshMixerChannels() {
+    if (this.mixerPanel) {
+      this.mixerPanel.setChannels(this.buildMixerChannelList());
+    }
+  }
+
+  /**
+   * 判斷某聲部在當前 Solo/Mute 狀態下是否實質靜音
+   */
+  public isChannelEffectiveMuted(id: string): boolean {
+    if (this.soloChannels.size > 0) {
+      if (!this.soloChannels.has(id)) return true;
+      return this.mutedChannels.has(id);
+    }
+    return this.mutedChannels.has(id);
+  }
+
+  /**
+   * 套用混音台音訊與 MIDI 發聲狀態至各合成器與琴端
+   */
+  private applyMixerAudioStates() {
+    const drumMuted = this.isChannelEffectiveMuted('drum');
+    drumSynth.setChannelMuted(drumMuted);
+    if (this.state.isMidiConnected) {
+      midiManager.sendMixerControllers(9, { volume: drumMuted ? 0 : drumSynth.getVolume() });
+    }
+
+    const bassMuted = this.isChannelEffectiveMuted('bass');
+    bassSynth.setChannelMuted(bassMuted);
+    if (this.state.isMidiConnected) {
+      midiManager.sendMixerControllers(10, { volume: bassMuted ? 0 : bassSynth.getVolume() });
+    }
+
+    const chordMuted = this.isChannelEffectiveMuted('chord');
+    chordSynth.setChannelMuted(chordMuted);
+    if (this.state.isMidiConnected) {
+      midiManager.sendMixerControllers(11, { volume: chordMuted ? 0 : chordSynth.getVolume() });
+    }
+
+    this.dynamicTracks.forEach((t, partId) => {
+      const dynMuted = this.isChannelEffectiveMuted(partId);
+      t.roll.getSynth().setChannelMuted(dynMuted);
+      const cfg = AVAILABLE_CHORD_TRACK_CONFIGS[partId];
+      if (this.state.isMidiConnected && cfg) {
+        midiManager.sendMixerControllers(cfg.channel, { volume: dynMuted ? 0 : t.roll.getSynth().getVolume() });
+      }
+    });
+  }
+
+  /**
+   * 同步所有聲部當前混音推桿 (CC 7) 與聲相 (CC 10) 至實體琴
+   */
+  public syncMixerControllersToKeyboard() {
+    if (!this.state.isMidiConnected) return;
+    const drumVol = this.isChannelEffectiveMuted('drum') ? 0 : drumSynth.getVolume();
+    midiManager.sendMixerControllers(9, { volume: drumVol, pan: drumSynth.getPan() });
+
+    const bassVol = this.isChannelEffectiveMuted('bass') ? 0 : bassSynth.getVolume();
+    midiManager.sendMixerControllers(10, { volume: bassVol, pan: bassSynth.getPan() });
+
+    const chordVol = this.isChannelEffectiveMuted('chord') ? 0 : chordSynth.getVolume();
+    midiManager.sendMixerControllers(11, { volume: chordVol, pan: chordSynth.getPan() });
+
+    this.dynamicTracks.forEach((t, partId) => {
+      const cfg = AVAILABLE_CHORD_TRACK_CONFIGS[partId];
+      if (cfg) {
+        const dynVol = this.isChannelEffectiveMuted(partId) ? 0 : t.roll.getSynth().getVolume();
+        midiManager.sendMixerControllers(cfg.channel, { volume: dynVol, pan: t.roll.getSynth().getPan() });
+      }
+    });
+  }
+
+  private onMixerVolumeChange(id: string, vol: number) {
+    if (id === 'drum') {
+      drumSynth.setVolume(vol);
+      if (this.state.isMidiConnected && !this.isChannelEffectiveMuted('drum')) {
+        midiManager.sendMixerControllers(9, { volume: vol });
+      }
+    } else if (id === 'bass') {
+      bassSynth.setVolume(vol);
+      if (this.state.isMidiConnected && !this.isChannelEffectiveMuted('bass')) {
+        midiManager.sendMixerControllers(10, { volume: vol });
+      }
+    } else if (id === 'chord') {
+      chordSynth.setVolume(vol);
+      if (this.state.isMidiConnected && !this.isChannelEffectiveMuted('chord')) {
+        midiManager.sendMixerControllers(11, { volume: vol });
+      }
+    } else if (this.dynamicTracks.has(id)) {
+      const t = this.dynamicTracks.get(id)!;
+      t.roll.getSynth().setVolume(vol);
+      const cfg = AVAILABLE_CHORD_TRACK_CONFIGS[id];
+      if (this.state.isMidiConnected && cfg && !this.isChannelEffectiveMuted(id)) {
+        midiManager.sendMixerControllers(cfg.channel, { volume: vol });
+      }
+    }
+  }
+
+  private onMixerPanChange(id: string, pan: number) {
+    if (id === 'drum') {
+      drumSynth.setPan(pan);
+      if (this.state.isMidiConnected) {
+        midiManager.sendMixerControllers(9, { pan });
+      }
+    } else if (id === 'bass') {
+      bassSynth.setPan(pan);
+      if (this.state.isMidiConnected) {
+        midiManager.sendMixerControllers(10, { pan });
+      }
+    } else if (id === 'chord') {
+      chordSynth.setPan(pan);
+      if (this.state.isMidiConnected) {
+        midiManager.sendMixerControllers(11, { pan });
+      }
+    } else if (this.dynamicTracks.has(id)) {
+      const t = this.dynamicTracks.get(id)!;
+      t.roll.getSynth().setPan(pan);
+      const cfg = AVAILABLE_CHORD_TRACK_CONFIGS[id];
+      if (this.state.isMidiConnected && cfg) {
+        midiManager.sendMixerControllers(cfg.channel, { pan });
+      }
+    }
+  }
+
+  private onMixerMuteToggle(id: string, muted: boolean) {
+    if (muted) {
+      this.mutedChannels.add(id);
+    } else {
+      this.mutedChannels.delete(id);
+    }
+    this.applyMixerAudioStates();
+  }
+
+  private onMixerSoloToggle(id: string, solo: boolean) {
+    if (solo) {
+      this.soloChannels.add(id);
+    } else {
+      this.soloChannels.delete(id);
+    }
+    this.applyMixerAudioStates();
+  }
+
+  public resetMixerToGoldenDefaults() {
+    drumSynth.setVolume(100);
+    drumSynth.setPan(64);
+
+    bassSynth.setVolume(95);
+    bassSynth.setPan(64);
+
+    chordSynth.setVolume(90);
+    chordSynth.setPan(52); // L12
+
+    if (this.dynamicTracks.has('Chord2')) {
+      const t = this.dynamicTracks.get('Chord2')!;
+      t.roll.getSynth().setVolume(85);
+      t.roll.getSynth().setPan(76); // R12
+    }
+    if (this.dynamicTracks.has('Pad')) {
+      const t = this.dynamicTracks.get('Pad')!;
+      t.roll.getSynth().setVolume(80);
+      t.roll.getSynth().setPan(64); // C
+    }
+    if (this.dynamicTracks.has('Phrase1')) {
+      const t = this.dynamicTracks.get('Phrase1')!;
+      t.roll.getSynth().setVolume(85);
+      t.roll.getSynth().setPan(44); // L20
+    }
+    if (this.dynamicTracks.has('Phrase2')) {
+      const t = this.dynamicTracks.get('Phrase2')!;
+      t.roll.getSynth().setVolume(80);
+      t.roll.getSynth().setPan(84); // R20
+    }
+
+    this.mutedChannels.clear();
+    this.soloChannels.clear();
+    this.applyMixerAudioStates();
+
+    if (this.state.isMidiConnected) {
+      this.syncMixerControllersToKeyboard();
+    }
+
+    this.refreshMixerChannels();
+    this.setStatus('✨ 已將所有伴奏聲部重設為 Yamaha PSR-SX920 原廠推薦黃金配比 (鼓100/C, 貝95/C, 琴90/L12, 吉85/R12)！');
+  }
+
+  public panicMixer() {
+    if (this.state.isPlaying) {
+      this.stop();
+    }
+    if (this.state.isMidiConnected) {
+      midiManager.panicAllChannels();
+    }
+    this.setStatus('🔇 已發送全聲部防掛音中斷 (Panic) 與即時靜音指令！');
+  }
+
+  private updateMixerButtonState(visible: boolean) {
+    const btn = document.getElementById('btn-toggle-mixer');
+    if (btn) {
+      if (visible) {
+        btn.classList.add('active');
+        btn.style.background = '#f59e0b';
+        btn.style.color = '#0f172a';
+      } else {
+        btn.classList.remove('active');
+        btn.style.background = 'rgba(245, 158, 11, 0.15)';
+        btn.style.color = '#f59e0b';
+      }
     }
   }
 
