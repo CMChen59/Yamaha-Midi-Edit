@@ -110,6 +110,8 @@ export class CreatorApp {
   private currentPlayStep: number = 0;
   private chainedAuditionMode: 'intro-to-main' | 'main-to-ending' | null = null;
   private chainedTimer: any = null;
+  private soloAuditionMode: boolean = false;
+  private soloAuditionTimer: any = null;
 
   // 多段落狀態記憶庫 (Section Name -> SectionStore)
   private sections: Map<string, SectionStore> = new Map();
@@ -1562,6 +1564,7 @@ export class CreatorApp {
 
   private pause() {
     this.stopChainedAudition();
+    this.stopSoloAudition();
     this.state.isPlaying = false;
     this.stopPlaybackTimer();
     this.updatePlayButtonsUI();
@@ -1570,6 +1573,7 @@ export class CreatorApp {
 
   private stop() {
     this.stopChainedAudition();
+    this.stopSoloAudition();
     this.state.isPlaying = false;
     this.state.activePlayTrack = null;
     this.stopPlaybackTimer();
@@ -2584,12 +2588,19 @@ export class CreatorApp {
       }
 
       if (auditionContainer) {
+        const isSoloActive = this.soloAuditionMode;
         const isChainedActive = this.chainedAuditionMode === 'intro-to-main';
         auditionContainer.innerHTML = `
+          <button id="btn-audition-solo-intro" class="btn-assistant-audition btn-solo-audition ${isSoloActive ? 'active-audition' : ''}" title="單獨完整試聽 ${secName} 前奏（共 ${currentBars} 小節），播完自動停止，不串接主歌">
+            <span>${isSoloActive ? '⏸' : '▶'}</span> ${isSoloActive ? '停止試聽' : `單獨試聽前奏 (${currentBars}小節)`}
+          </button>
           <button id="btn-audition-intro-main" class="btn-assistant-audition ${isChainedActive ? 'active-audition' : ''}" title="完整播放 ${currentBars} 小節前奏，接著自動無縫滑進 Main A 主歌！">
             <span>${isChainedActive ? '⏸' : '🚀'}</span> ${isChainedActive ? '停止試聽' : `試聽前奏接主歌 (${currentBars}小節 ➜ Main)`}
           </button>
         `;
+        auditionContainer.querySelector('#btn-audition-solo-intro')?.addEventListener('click', () => {
+          this.toggleAuditionSoloSection();
+        });
         auditionContainer.querySelector('#btn-audition-intro-main')?.addEventListener('click', () => {
           this.toggleAuditionIntroToMain();
         });
@@ -2637,12 +2648,19 @@ export class CreatorApp {
       }
 
       if (auditionContainer) {
+        const isSoloActive = this.soloAuditionMode;
         const isChainedActive = this.chainedAuditionMode === 'main-to-ending';
         auditionContainer.innerHTML = `
+          <button id="btn-audition-solo-ending" class="btn-assistant-audition btn-solo-audition ${isSoloActive ? 'active-audition' : ''}" title="單獨完整試聽 ${secName} 尾奏（共 ${currentBars} 小節），演奏完畢自動平穩停止，不串接主歌">
+            <span>${isSoloActive ? '⏸' : '▶'}</span> ${isSoloActive ? '停止試聽' : `單獨試聽尾奏 (${currentBars}小節)`}
+          </button>
           <button id="btn-audition-main-ending" class="btn-assistant-audition ${isChainedActive ? 'active-audition' : ''}" title="先播放 1 小節 Main A 帶出節奏，接著切入 Ending 尾奏並自動停止！">
             <span>${isChainedActive ? '⏸' : '🛑'}</span> ${isChainedActive ? '停止試聽' : '試聽主歌接尾奏 (Main A ➜ Ending A)'}
           </button>
         `;
+        auditionContainer.querySelector('#btn-audition-solo-ending')?.addEventListener('click', () => {
+          this.toggleAuditionSoloSection();
+        });
         auditionContainer.querySelector('#btn-audition-main-ending')?.addEventListener('click', () => {
           this.toggleAuditionMainToEnding();
         });
@@ -2730,6 +2748,86 @@ export class CreatorApp {
     this.updateAssistantPanel();
 
     this.setStatus(`✨ 已成功套用【${title}】智慧範本！可在捲軸微調或點擊試聽。`);
+  }
+
+  /**
+   * 單獨試聽當前段落 (例如單獨試聽 Intro A 或 Ending A，完整播放 1 遍後自動平穩停止，不串接主歌)
+   */
+  public toggleAuditionSoloSection() {
+    if (this.soloAuditionMode) {
+      this.stop();
+      return;
+    }
+
+    this.stop();
+
+    const secName = this.state.currentSection;
+    this.soloAuditionMode = true;
+    this.state.isPlaying = true;
+    this.state.activePlayTrack = 'all';
+    this.updatePlayButtonsUI();
+    this.updateAssistantPanel();
+
+    const stepsPerBar = this.drumGrid?.getStepsPerBar() || 16;
+    const totalSteps = this.state.totalBars * stepsPerBar;
+    const stepIntervalMs = this.getStepIntervalMs();
+
+    let currentStep = 0;
+    this.currentPlayStep = 0;
+
+    const isIntro = secName.startsWith('Intro');
+    const isEnding = secName.startsWith('Ending');
+    const typeLabel = isIntro ? '前奏' : isEnding ? '尾奏' : '段落';
+
+    this.setStatus(`▶ 正在單獨試聽【${secName} ${typeLabel}】(共 ${this.state.totalBars} 小節)，演奏完畢自動平穩停止...`);
+
+    const tick = () => {
+      if (!this.state.isPlaying || !this.soloAuditionMode) {
+        this.stopSoloAudition();
+        return;
+      }
+
+      this.drumGrid?.setPlayheadStep(currentStep);
+      this.bassRoll?.setPlayheadStep(currentStep);
+      this.chordRoll?.setPlayheadStep(currentStep);
+      this.dynamicTracks.forEach(t => t.roll.setPlayheadStep(currentStep));
+
+      const drumNotes = this.drumGrid?.getActiveNotesAtStep(currentStep) || [];
+      drumNotes.forEach(n => this.triggerDrumSound(n, 100, Math.max(30, Math.round(stepIntervalMs * 0.8))));
+
+      const bassNotes = this.bassRoll?.getActiveNotesAtStep(currentStep) || [];
+      bassNotes.forEach(n => this.triggerBassSound(n, 100, Math.max(80, Math.round(stepIntervalMs * 1.5))));
+
+      const chordNotes = this.chordRoll?.getActiveNotesAtStep(currentStep) || [];
+      chordNotes.forEach(n => this.triggerChordSound(n, 100, Math.max(120, Math.round(stepIntervalMs * 1.5))));
+
+      this.dynamicTracks.forEach((t, partId) => {
+        const notes = t.roll.getActiveNotesAtStep(currentStep);
+        for (const note of notes) {
+          t.roll.getSynth().playNote(note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
+          this.sendMidiDynamicTrackTrigger(partId, note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
+        }
+      });
+
+      currentStep++;
+      if (currentStep >= totalSteps) {
+        // 播完 1 遍後自動平穩停止！
+        this.stop();
+        this.setStatus(`⏹【${secName} ${typeLabel}】單獨試聽完畢，已自動平穩停止！`);
+      }
+    };
+
+    tick();
+    this.soloAuditionTimer = setInterval(tick, stepIntervalMs);
+  }
+
+  private stopSoloAudition() {
+    if (this.soloAuditionTimer) {
+      clearInterval(this.soloAuditionTimer);
+      this.soloAuditionTimer = null;
+    }
+    this.soloAuditionMode = false;
+    this.updateAssistantPanel();
   }
 
   /**

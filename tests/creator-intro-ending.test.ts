@@ -266,4 +266,21 @@ describe('YamahaTemplateStyleSynthesizer 前奏與尾奏 STY 二進位匯出整�
     expect(notesBySection.get('Intro A')).toBeGreaterThan(0);
     expect(notesBySection.get('Ending A')).toBeGreaterThan(0);
   });
+
+  it('前奏與尾奏能各自作為獨立段落進行獨立單獨試聽，音符資料與步進長度完整', () => {
+    const intro4 = SectionPresetsEngine.generateIntroHarmonic(4, 16);
+    expect(intro4.bars).toBe(4);
+    // 總步數為 64 步
+    const drumKick = intro4.drumPattern.get(36)!;
+    expect(drumKick.length).toBe(64);
+    expect(intro4.bassPattern.size).toBeGreaterThan(0);
+    expect(intro4.chordPattern.size).toBeGreaterThan(0);
+
+    const ending2 = SectionPresetsEngine.generateEndingPunch(2, 16);
+    expect(ending2.bars).toBe(2);
+    // 總步數為 32 步
+    const endingCrash = ending2.drumPattern.get(49)!;
+    expect(endingCrash.length).toBe(32);
+    expect(endingCrash[16]).toBe(true); // 第 2 小節第 1 拍定音
+  });
 });
