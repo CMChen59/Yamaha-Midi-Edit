@@ -128,6 +128,8 @@ describe('MixerPanel 視覺化混音台', () => {
     callbacks = {
       onVolumeChange: vi.fn(),
       onPanChange: vi.fn(),
+      onReverbChange: vi.fn(),
+      onChorusChange: vi.fn(),
       onMuteToggle: vi.fn(),
       onSoloToggle: vi.fn(),
       onResetDefaults: vi.fn(),
@@ -151,6 +153,47 @@ describe('MixerPanel 視覺化混音台', () => {
     expect(panel.formatPan(52)).toBe('L12');
     expect(panel.formatPan(76)).toBe('R12');
     expect(panel.formatPan(127)).toBe('R63');
+  });
+
+  it('支援設定包含 Reverb 與 Chorus 之通道條資料 (setChannels)', () => {
+    const panel = new MixerPanel(container, callbacks);
+    const testChannels: MixerChannelInfo[] = [
+      {
+        id: 'drum',
+        name: 'Rhythm 2',
+        subName: '鼓組',
+        chNumber: 10,
+        midiChannel: 9,
+        icon: '🥁',
+        color: '#38bdf8',
+        voiceName: 'Standard Kit 1',
+        volume: 100,
+        pan: 64,
+        reverb: 40,
+        chorus: 0,
+        muted: false,
+        solo: false,
+      },
+      {
+        id: 'chord',
+        name: 'Chord 1',
+        subName: '和弦 1',
+        chNumber: 12,
+        midiChannel: 11,
+        icon: '🎹',
+        color: '#a855f7',
+        voiceName: 'Concert Grand',
+        volume: 90,
+        pan: 52,
+        reverb: 65,
+        chorus: 20,
+        muted: false,
+        solo: false,
+      },
+    ];
+
+    panel.setChannels(testChannels);
+    expect(panel).toBeDefined();
   });
 
   it('toggle() 正確切換可見性並觸發 onVisibilityChange', () => {

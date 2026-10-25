@@ -90,4 +90,34 @@ describe('Step 1: 合成器獨立音量 (Volume) 與立體聲聲相 (Pan) 控制
     expect(chord2Synth.getVolume()).toBe(85);
     expect(chord2Synth.getPan()).toBe(76);
   });
+
+  it('6. 鼓組、貝斯與和弦合成器具備標準預設 Reverb (CC 91) 與 Chorus (CC 93)', () => {
+    // 鼓組預設 Rev 40, Cho 0
+    expect(drumSynth.getReverb()).toBe(40);
+    expect(drumSynth.getChorus()).toBe(0);
+
+    // 貝斯預設 Rev 20, Cho 0
+    expect(bassSynth.getReverb()).toBe(20);
+    expect(bassSynth.getChorus()).toBe(0);
+
+    // 鋼琴/和弦預設 Rev 65, Cho 20
+    expect(chordSynth.getReverb()).toBe(65);
+    expect(chordSynth.getChorus()).toBe(20);
+  });
+
+  it('7. 能正確動態調整與限制 Reverb 與 Chorus (0 ~ 127)', () => {
+    chordSynth.setReverb(80);
+    expect(chordSynth.getReverb()).toBe(80);
+    chordSynth.setReverb(200);
+    expect(chordSynth.getReverb()).toBe(127);
+    chordSynth.setReverb(-10);
+    expect(chordSynth.getReverb()).toBe(0);
+
+    chordSynth.setChorus(55);
+    expect(chordSynth.getChorus()).toBe(55);
+    chordSynth.setChorus(150);
+    expect(chordSynth.getChorus()).toBe(127);
+    chordSynth.setChorus(-5);
+    expect(chordSynth.getChorus()).toBe(0);
+  });
 });

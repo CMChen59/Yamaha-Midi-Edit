@@ -25,11 +25,11 @@ describe('Step 2: STY 檔案匯出混音控制器 (CC 7 音量與 CC 10 聲相) 
       },
       sections: dummySections,
       mixer: {
-        drum: { volume: 118, pan: 60 },
-        bass: { volume: 88, pan: 70 },
-        chord: { volume: 105, pan: 40 },
+        drum: { volume: 118, pan: 60, reverb: 45, chorus: 10 },
+        bass: { volume: 88, pan: 70, reverb: 25, chorus: 5 },
+        chord: { volume: 105, pan: 40, reverb: 70, chorus: 35 },
         dynamicTracks: {
-          Chord2: { volume: 75, pan: 80 },
+          Chord2: { volume: 75, pan: 80, reverb: 55, chorus: 45 },
         },
       },
     });
@@ -44,6 +44,8 @@ describe('Step 2: STY 檔案匯出混音控制器 (CC 7 音量與 CC 10 聲相) 
     let curTick = 0;
     const volByChannel = new Map<number, number>();
     const panByChannel = new Map<number, number>();
+    const revByChannel = new Map<number, number>();
+    const choByChannel = new Map<number, number>();
 
     for (const ev of tr0.events) {
       curTick += ev.delta;
@@ -54,6 +56,10 @@ describe('Step 2: STY 檔案匯出混音控制器 (CC 7 音量與 CC 10 聲相) 
           volByChannel.set(ev.channel, ev.value!);
         } else if (ev.controller === 10) {
           panByChannel.set(ev.channel, ev.value!);
+        } else if (ev.controller === 91) {
+          revByChannel.set(ev.channel, ev.value!);
+        } else if (ev.controller === 93) {
+          choByChannel.set(ev.channel, ev.value!);
         }
       }
     }
@@ -69,9 +75,21 @@ describe('Step 2: STY 檔案匯出混音控制器 (CC 7 音量與 CC 10 聲相) 
     expect(panByChannel.get(10)).toBe(70); // 貝斯
     expect(panByChannel.get(11)).toBe(40); // 和弦 1
     expect(panByChannel.get(12)).toBe(80); // 和弦 2
+
+    // 驗證各軌道空間殘響 (CC 91)
+    expect(revByChannel.get(9)).toBe(45); // 鼓組
+    expect(revByChannel.get(10)).toBe(25); // 貝斯
+    expect(revByChannel.get(11)).toBe(70); // 和弦 1
+    expect(revByChannel.get(12)).toBe(55); // 和弦 2
+
+    // 驗證各軌道合唱效果 (CC 93)
+    expect(choByChannel.get(9)).toBe(10); // 鼓組
+    expect(choByChannel.get(10)).toBe(5); // 貝斯
+    expect(choByChannel.get(11)).toBe(35); // 和弦 1
+    expect(choByChannel.get(12)).toBe(45); // 和弦 2
   });
 
-  it('2. 未傳入 mixer 參數時，自動套用 Yamaha 原廠黃金平衡配比 (如 Chord 1 L12, Chord 2 R12)', () => {
+  it('2. 未傳入 mixer 參數時，自動套用 Yamaha 原廠黃金平衡配比 (如 Chord 1 L12, Chord 2 R12, Rev, Cho)', () => {
     const bytes = YamahaTemplateStyleSynthesizer.synthesizeFromTemplate({
       styleName: 'Mixer Default STY',
       bpm: 120,
@@ -88,6 +106,8 @@ describe('Step 2: STY 檔案匯出混音控制器 (CC 7 音量與 CC 10 聲相) 
     let curTick = 0;
     const volByChannel = new Map<number, number>();
     const panByChannel = new Map<number, number>();
+    const revByChannel = new Map<number, number>();
+    const choByChannel = new Map<number, number>();
 
     for (const ev of tr0.events) {
       curTick += ev.delta;
@@ -98,6 +118,10 @@ describe('Step 2: STY 檔案匯出混音控制器 (CC 7 音量與 CC 10 聲相) 
           volByChannel.set(ev.channel, ev.value!);
         } else if (ev.controller === 10) {
           panByChannel.set(ev.channel, ev.value!);
+        } else if (ev.controller === 91) {
+          revByChannel.set(ev.channel, ev.value!);
+        } else if (ev.controller === 93) {
+          choByChannel.set(ev.channel, ev.value!);
         }
       }
     }
@@ -112,5 +136,15 @@ describe('Step 2: STY 檔案匯出混音控制器 (CC 7 音量與 CC 10 聲相) 
     expect(panByChannel.get(10)).toBe(64); // 中央
     expect(panByChannel.get(11)).toBe(52); // L12
     expect(panByChannel.get(12)).toBe(76); // R12
+
+    expect(revByChannel.get(9)).toBe(40); // 鼓組
+    expect(revByChannel.get(10)).toBe(20); // 貝斯
+    expect(revByChannel.get(11)).toBe(65); // 和弦 1
+    expect(revByChannel.get(12)).toBe(50); // 和弦 2
+
+    expect(choByChannel.get(9)).toBe(0); // 鼓組
+    expect(choByChannel.get(10)).toBe(0); // 貝斯
+    expect(choByChannel.get(11)).toBe(20); // 和弦 1
+    expect(choByChannel.get(12)).toBe(40); // 和弦 2
   });
 });

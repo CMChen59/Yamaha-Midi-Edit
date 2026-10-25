@@ -11,8 +11,10 @@ export interface TemplateVoiceConfig {
 }
 
 export interface TemplatePartMixer {
-  volume: number; // 0 ~ 127
-  pan: number;    // 0 ~ 127 (64 = Center)
+  volume: number;  // 0 ~ 127 (CC 7)
+  pan: number;     // 0 ~ 127 (CC 10, 64 = Center)
+  reverb?: number; // 0 ~ 127 (CC 91 殘響發送量)
+  chorus?: number; // 0 ~ 127 (CC 93 合唱發送量)
 }
 
 export interface TemplateMixerConfig {
@@ -74,7 +76,7 @@ export class YamahaTemplateStyleSynthesizer {
     options.sections.forEach(s => userSectionMap.set(s.name, s));
 
     // 2. 收集非音符事件，並在 SInt 區塊內更新音色 PC/Bank，在開頭更新曲名與 Tempo
-    // 定義 Yamaha PSR-SX920 混音標準 (CC 7 音量與 CC 10 聲相)
+    // 定義 Yamaha PSR-SX920 混音標準 (CC 7 音量、CC 10 聲相、CC 91 殘響、CC 93 合唱)
     const targetVolMap: Record<number, number> = {
       9: options.mixer?.drum?.volume ?? 100,
       10: options.mixer?.bass?.volume ?? 95,
@@ -95,8 +97,30 @@ export class YamahaTemplateStyleSynthesizer {
       15: options.mixer?.dynamicTracks?.Phrase2?.pan ?? 84, // R20 偏右 20 度
     };
 
+    const targetRevMap: Record<number, number> = {
+      9: options.mixer?.drum?.reverb ?? 40,
+      10: options.mixer?.bass?.reverb ?? 20,
+      11: options.mixer?.chord?.reverb ?? 65,
+      12: options.mixer?.dynamicTracks?.Chord2?.reverb ?? 50,
+      13: options.mixer?.dynamicTracks?.Pad?.reverb ?? 75,
+      14: options.mixer?.dynamicTracks?.Phrase1?.reverb ?? 60,
+      15: options.mixer?.dynamicTracks?.Phrase2?.reverb ?? 60,
+    };
+
+    const targetChoMap: Record<number, number> = {
+      9: options.mixer?.drum?.chorus ?? 0,
+      10: options.mixer?.bass?.chorus ?? 0,
+      11: options.mixer?.chord?.chorus ?? 20,
+      12: options.mixer?.dynamicTracks?.Chord2?.chorus ?? 40,
+      13: options.mixer?.dynamicTracks?.Pad?.chorus ?? 50,
+      14: options.mixer?.dynamicTracks?.Phrase1?.chorus ?? 20,
+      15: options.mixer?.dynamicTracks?.Phrase2?.chorus ?? 30,
+    };
+
     const handledVolChannels = new Set<number>();
     const handledPanChannels = new Set<number>();
+    const handledRevChannels = new Set<number>();
+    const handledChoChannels = new Set<number>();
 
     interface TimedEvent {
       absTick: number;
@@ -155,6 +179,16 @@ export class YamahaTemplateStyleSynthesizer {
           else if (ev.type === 'controlChange' && ev.controller === 10 && targetPanMap[ch] !== undefined) {
             ev.value = Math.max(0, Math.min(127, Math.round(targetPanMap[ch])));
             handledPanChannels.add(ch);
+          }
+          // 更新 CC 91 (Reverb 空間殘響發送量)
+          else if (ev.type === 'controlChange' && ev.controller === 91 && targetRevMap[ch] !== undefined) {
+            ev.value = Math.max(0, Math.min(127, Math.round(targetRevMap[ch])));
+            handledRevChannels.add(ch);
+          }
+          // 更新 CC 93 (Chorus 合唱效果發送量)
+          else if (ev.type === 'controlChange' && ev.controller === 93 && targetChoMap[ch] !== undefined) {
+            ev.value = Math.max(0, Math.min(127, Math.round(targetChoMap[ch])));
+            handledChoChannels.add(ch);
           }
 
           // Channel 9 (Rhythm 2 / 鼓組)
@@ -232,7 +266,7 @@ export class YamahaTemplateStyleSynthesizer {
       timedEvents.push({ absTick: curTick, priority, event: ev });
     }
 
-    // 2.1 確保 SInt 小節中所有啟用之聲部皆具備 CC 7 (Volume) 與 CC 10 (Pan) 控制器事件
+    // 2.1 確保 SInt 小節中所有啟用之聲部皆具備 CC 7 (Volume), CC 10 (Pan), CC 91 (Reverb), CC 93 (Chorus) 控制器事件
     Object.entries(targetVolMap).forEach(([chStr, vol]) => {
       const ch = Number(chStr);
       if (!handledVolChannels.has(ch)) {
@@ -251,6 +285,28 @@ export class YamahaTemplateStyleSynthesizer {
           absTick: 183,
           priority: 10,
           event: { delta: 0, type: 'controlChange', channel: ch, controller: 10, value: pan },
+        });
+      }
+    });
+
+    Object.entries(targetRevMap).forEach(([chStr, rev]) => {
+      const ch = Number(chStr);
+      if (!handledRevChannels.has(ch)) {
+        timedEvents.push({
+          absTick: 188,
+          priority: 10,
+          event: { delta: 0, type: 'controlChange', channel: ch, controller: 91, value: rev },
+        });
+      }
+    });
+
+    Object.entries(targetChoMap).forEach(([chStr, cho]) => {
+      const ch = Number(chStr);
+      if (!handledChoChannels.has(ch)) {
+        timedEvents.push({
+          absTick: 193,
+          priority: 10,
+          event: { delta: 0, type: 'controlChange', channel: ch, controller: 93, value: cho },
         });
       }
     });

@@ -16,6 +16,8 @@ export class ChordSynth {
   private pannerNode: StereoPannerNode | null = null;
   private volume: number = 90; // 0 ~ 127 (Yamaha PSR-SX920 Chord 1 預設 90)
   private pan: number = 52;    // 0 ~ 127 (Yamaha PSR-SX920 Chord 1 預設 52 = L12)
+  private reverb: number = 65; // 0 ~ 127 (CC 91 殘響，Yamaha 鋼琴/和弦預設 65)
+  private chorus: number = 20; // 0 ~ 127 (CC 93 合唱，Yamaha 鋼琴/和弦預設 20)
   private currentCategory: string = 'Piano';
   private currentVoiceId: string = 'concert-grand';
 
@@ -121,6 +123,22 @@ export class ChordSynth {
 
   public getPan(): number {
     return this.pan;
+  }
+
+  public setReverb(rev: number) {
+    this.reverb = Math.max(0, Math.min(127, Math.round(rev)));
+  }
+
+  public getReverb(): number {
+    return this.reverb;
+  }
+
+  public setChorus(cho: number) {
+    this.chorus = Math.max(0, Math.min(127, Math.round(cho)));
+  }
+
+  public getChorus(): number {
+    return this.chorus;
   }
 
   private midiToFreq(note: number): number {

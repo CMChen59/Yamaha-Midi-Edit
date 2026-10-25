@@ -14,6 +14,8 @@ export class BassSynth {
   private pannerNode: StereoPannerNode | null = null;
   private volume: number = 95; // 0 ~ 127 (Yamaha PSR-SX920 Bass 預設 95)
   private pan: number = 64;    // 0 ~ 127 (中央 64)
+  private reverb: number = 20; // 0 ~ 127 (CC 91 殘響，Yamaha 貝斯預設 20)
+  private chorus: number = 0;  // 0 ~ 127 (CC 93 合唱，Yamaha 貝斯預設 0)
   private currentCategory: string = 'Electric';
   private currentVoiceId: string = 'finger-bass';
 
@@ -108,6 +110,22 @@ export class BassSynth {
 
   public getPan(): number {
     return this.pan;
+  }
+
+  public setReverb(rev: number) {
+    this.reverb = Math.max(0, Math.min(127, Math.round(rev)));
+  }
+
+  public getReverb(): number {
+    return this.reverb;
+  }
+
+  public setChorus(cho: number) {
+    this.chorus = Math.max(0, Math.min(127, Math.round(cho)));
+  }
+
+  public getChorus(): number {
+    return this.chorus;
   }
 
   private midiToFreq(note: number): number {

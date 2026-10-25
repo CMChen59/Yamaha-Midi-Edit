@@ -1202,6 +1202,65 @@
       accent-color: #38bdf8;
     }
 
+    /* 效果器發送量控制區 (REV & CHO) */
+    .strip-fx-section {
+      width: 100%;
+      background: rgba(30, 41, 59, 0.45);
+      border: 1px solid rgba(148, 163, 184, 0.12);
+      border-radius: 6px;
+      padding: 5px 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .strip-fx-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .strip-fx-tag {
+      font-size: 0.65rem;
+      font-weight: 800;
+      width: 24px;
+      text-align: left;
+      user-select: none;
+    }
+
+    .strip-fx-tag-rev {
+      color: #c084fc; /* 紫羅蘭色標註空間殘響 Reverb */
+    }
+
+    .strip-fx-tag-cho {
+      color: #38bdf8; /* 天藍色標註合唱合音 Chorus */
+    }
+
+    .strip-fx-slider {
+      flex: 1;
+      height: 3px;
+      cursor: pointer;
+      min-width: 0;
+    }
+
+    .strip-fx-slider-rev {
+      accent-color: #c084fc;
+    }
+
+    .strip-fx-slider-cho {
+      accent-color: #38bdf8;
+    }
+
+    .strip-fx-val {
+      font-size: 0.68rem;
+      font-weight: 700;
+      color: #cbd5e1;
+      font-family: monospace;
+      width: 24px;
+      text-align: right;
+      user-select: none;
+    }
+
     .strip-fader-section {
       display: flex;
       flex-direction: column;

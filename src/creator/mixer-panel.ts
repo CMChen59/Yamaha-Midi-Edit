@@ -16,6 +16,8 @@ export interface MixerChannelInfo {
   voiceName: string;
   volume: number; // 0 ~ 127
   pan: number;    // 0 ~ 127 (64 = Center)
+  reverb: number; // 0 ~ 127 (CC 91)
+  chorus: number; // 0 ~ 127 (CC 93)
   muted: boolean;
   solo: boolean;
 }
@@ -23,6 +25,8 @@ export interface MixerChannelInfo {
 export interface MixerPanelCallbacks {
   onVolumeChange: (id: string, volume: number) => void;
   onPanChange: (id: string, pan: number) => void;
+  onReverbChange: (id: string, reverb: number) => void;
+  onChorusChange: (id: string, chorus: number) => void;
   onMuteToggle: (id: string, muted: boolean) => void;
   onSoloToggle: (id: string, solo: boolean) => void;
   onResetDefaults: () => void;
@@ -76,6 +80,28 @@ export class MixerPanel {
       if (slider) slider.value = String(ch.pan);
       const valEl = this.container.querySelector<HTMLElement>(`[data-pan-val="${id}"]`);
       if (valEl) valEl.textContent = this.formatPan(ch.pan);
+    }
+  }
+
+  public updateReverb(id: string, reverb: number) {
+    const ch = this.channels.get(id);
+    if (ch) {
+      ch.reverb = Math.max(0, Math.min(127, Math.round(reverb)));
+      const slider = this.container.querySelector<HTMLInputElement>(`[data-rev-slider="${id}"]`);
+      if (slider) slider.value = String(ch.reverb);
+      const valEl = this.container.querySelector<HTMLElement>(`[data-rev-val="${id}"]`);
+      if (valEl) valEl.textContent = String(ch.reverb);
+    }
+  }
+
+  public updateChorus(id: string, chorus: number) {
+    const ch = this.channels.get(id);
+    if (ch) {
+      ch.chorus = Math.max(0, Math.min(127, Math.round(chorus)));
+      const slider = this.container.querySelector<HTMLInputElement>(`[data-cho-slider="${id}"]`);
+      if (slider) slider.value = String(ch.chorus);
+      const valEl = this.container.querySelector<HTMLElement>(`[data-cho-val="${id}"]`);
+      if (valEl) valEl.textContent = String(ch.chorus);
     }
   }
 
@@ -202,6 +228,36 @@ export class MixerPanel {
           />
         </div>
 
+        <!-- 效果器發送量 (Reverb CC 91 / Chorus CC 93) -->
+        <div class="strip-fx-section">
+          <div class="strip-fx-row">
+            <span class="strip-fx-tag strip-fx-tag-rev" title="空間殘響發送量 (CC 91: 0~127，模擬音樂廳空間景深)">REV</span>
+            <input
+              type="range"
+              min="0"
+              max="127"
+              value="${ch.reverb}"
+              class="strip-fx-slider strip-fx-slider-rev"
+              data-rev-slider="${ch.id}"
+              title="調整空間殘響 (Reverb CC 91: 0~127)"
+            />
+            <span class="strip-fx-val" data-rev-val="${ch.id}">${ch.reverb}</span>
+          </div>
+          <div class="strip-fx-row">
+            <span class="strip-fx-tag strip-fx-tag-cho" title="合唱/合音發送量 (CC 93: 0~127，增加立體聲厚度與空氣感)">CHO</span>
+            <input
+              type="range"
+              min="0"
+              max="127"
+              value="${ch.chorus}"
+              class="strip-fx-slider strip-fx-slider-cho"
+              data-cho-slider="${ch.id}"
+              title="調整合唱效果 (Chorus CC 93: 0~127)"
+            />
+            <span class="strip-fx-val" data-cho-val="${ch.id}">${ch.chorus}</span>
+          </div>
+        </div>
+
         <!-- 音量 (Volume) 直立推桿區 -->
         <div class="strip-fader-section">
           <div class="strip-vol-meter-wrap">
@@ -255,6 +311,26 @@ export class MixerPanel {
         if (panSlider) panSlider.value = '64';
         if (panValEl) panValEl.textContent = 'C';
         this.callbacks.onPanChange(ch.id, 64);
+      });
+
+      // 綁定 Reverb (CC 91) 互動
+      const revSlider = strip.querySelector<HTMLInputElement>(`[data-rev-slider="${ch.id}"]`);
+      const revValEl = strip.querySelector<HTMLElement>(`[data-rev-val="${ch.id}"]`);
+      revSlider?.addEventListener('input', (e) => {
+        const val = Number((e.target as HTMLInputElement).value);
+        ch.reverb = val;
+        if (revValEl) revValEl.textContent = String(val);
+        this.callbacks.onReverbChange(ch.id, val);
+      });
+
+      // 綁定 Chorus (CC 93) 互動
+      const choSlider = strip.querySelector<HTMLInputElement>(`[data-cho-slider="${ch.id}"]`);
+      const choValEl = strip.querySelector<HTMLElement>(`[data-cho-val="${ch.id}"]`);
+      choSlider?.addEventListener('input', (e) => {
+        const val = Number((e.target as HTMLInputElement).value);
+        ch.chorus = val;
+        if (choValEl) choValEl.textContent = String(val);
+        this.callbacks.onChorusChange(ch.id, val);
       });
 
       // 綁定 Volume Fader 互動
