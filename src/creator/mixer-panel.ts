@@ -29,6 +29,8 @@ export interface MixerPanelCallbacks {
   onChorusChange: (id: string, chorus: number) => void;
   onMuteToggle: (id: string, muted: boolean) => void;
   onSoloToggle: (id: string, solo: boolean) => void;
+  onTrackPlayToggle?: (id: string) => void;
+  onPlayAllToggle?: () => void;
   onResetDefaults: () => void;
   onPanic: () => void;
   onVisibilityChange?: (visible: boolean) => void;
@@ -135,6 +137,40 @@ export class MixerPanel {
     }
   }
 
+  public setTrackPlaying(id: string, isPlaying: boolean) {
+    const btn = this.container.querySelector<HTMLElement>(`[data-play-btn="${id}"]`);
+    const icon = this.container.querySelector<HTMLElement>(`[data-play-icon="${id}"]`);
+    const text = this.container.querySelector<HTMLElement>(`[data-play-text="${id}"]`);
+    if (btn) {
+      if (isPlaying) {
+        btn.classList.add('mixer-btn-play-active');
+        if (icon) icon.textContent = '⏸';
+        if (text) text.textContent = '暫停';
+      } else {
+        btn.classList.remove('mixer-btn-play-active');
+        if (icon) icon.textContent = '▶';
+        if (text) text.textContent = '試聽';
+      }
+    }
+  }
+
+  public setPlayAllState(isPlaying: boolean) {
+    const btn = this.container.querySelector<HTMLElement>('#btn-mixer-play-all');
+    const icon = this.container.querySelector<HTMLElement>('#mixer-play-all-icon');
+    const text = this.container.querySelector<HTMLElement>('#mixer-play-all-text');
+    if (btn) {
+      if (isPlaying) {
+        btn.classList.add('mixer-btn-play-active');
+        if (icon) icon.textContent = '⏸';
+        if (text) text.textContent = '暫停全曲';
+      } else {
+        btn.classList.remove('mixer-btn-play-active');
+        if (icon) icon.textContent = '▶';
+        if (text) text.textContent = '播放全曲';
+      }
+    }
+  }
+
   public toggle(forceVisible?: boolean) {
     this.isVisibleState = forceVisible !== undefined ? forceVisible : !this.isVisibleState;
     if (this.isVisibleState) {
@@ -175,6 +211,9 @@ export class MixerPanel {
         </div>
       </div>
       <div class="mixer-header-actions">
+        <button id="btn-mixer-play-all" class="mixer-tool-btn mixer-tool-play-all" title="播放/暫停全曲伴奏 (點擊試聽整體混音配比)">
+          <span id="mixer-play-all-icon">▶</span> <span id="mixer-play-all-text">播放全曲</span>
+        </button>
         <button id="btn-mixer-reset-golden" class="mixer-tool-btn" title="將所有聲部重設為 Yamaha PSR-SX920 原廠推薦黃金配比 (鼓100/C, 貝95/C, 琴90/L12, 吉85/R12)">
           <span>✨</span> 原廠黃金配比
         </button>
@@ -209,6 +248,14 @@ export class MixerPanel {
           <div class="strip-voice-badge" data-voice-badge="${ch.id}" title="${ch.voiceName}">
             ${ch.voiceName}
           </div>
+        </div>
+
+        <!-- 試聽播放按鈕 (Audition Play) -->
+        <div class="strip-audition-section">
+          <button class="mixer-btn-play-track" data-play-btn="${ch.id}" title="試聽此聲部 (點擊單獨播放/暫停)">
+            <span class="mixer-play-icon" data-play-icon="${ch.id}">▶</span>
+            <span class="mixer-play-text" data-play-text="${ch.id}">試聽</span>
+          </button>
         </div>
 
         <!-- 聲相 (Pan) 控制區 -->
@@ -367,6 +414,12 @@ export class MixerPanel {
         this.callbacks.onSoloToggle(ch.id, ch.solo);
       });
 
+      // 綁定試聽播放 (Audition)
+      const playBtn = strip.querySelector<HTMLElement>(`[data-play-btn="${ch.id}"]`);
+      playBtn?.addEventListener('click', () => {
+        this.callbacks.onTrackPlayToggle?.(ch.id);
+      });
+
       stripsContainer.appendChild(strip);
     });
 
@@ -374,6 +427,11 @@ export class MixerPanel {
     this.container.appendChild(wrapper);
 
     // 綁定頂部工具按鈕
+    const btnPlayAll = wrapper.querySelector('#btn-mixer-play-all');
+    btnPlayAll?.addEventListener('click', () => {
+      this.callbacks.onPlayAllToggle?.();
+    });
+
     const btnReset = wrapper.querySelector('#btn-mixer-reset-golden');
     btnReset?.addEventListener('click', () => {
       this.callbacks.onResetDefaults();

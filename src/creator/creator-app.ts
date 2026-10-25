@@ -190,6 +190,8 @@ export class CreatorApp {
         onChorusChange: (id, cho) => this.onMixerChorusChange(id, cho),
         onMuteToggle: (id, muted) => this.onMixerMuteToggle(id, muted),
         onSoloToggle: (id, solo) => this.onMixerSoloToggle(id, solo),
+        onTrackPlayToggle: (id) => this.onMixerTrackPlayToggle(id),
+        onPlayAllToggle: () => this.togglePlay(),
         onResetDefaults: () => this.resetMixerToGoldenDefaults(),
         onPanic: () => this.panicMixer(),
         onVisibilityChange: (vis) => this.updateMixerButtonState(vis),
@@ -1594,6 +1596,15 @@ export class CreatorApp {
     this.dynamicTracks.forEach((t, partId) => {
       t.roll.setSoloPlayState(isPlaying && track === partId);
     });
+
+    // 混音台全曲與各聲部試聽按鈕狀態連動同步
+    this.mixerPanel?.setPlayAllState(isPlaying && track === 'all');
+    this.mixerPanel?.setTrackPlaying('drum', isPlaying && track === 'drum');
+    this.mixerPanel?.setTrackPlaying('bass', isPlaying && track === 'bass');
+    this.mixerPanel?.setTrackPlaying('chord', isPlaying && track === 'chord');
+    this.dynamicTracks.forEach((_, partId) => {
+      this.mixerPanel?.setTrackPlaying(partId, isPlaying && track === partId);
+    });
   }
 
   private getStepIntervalMs(): number {
@@ -2326,6 +2337,113 @@ export class CreatorApp {
 
     this.refreshMixerChannels();
     this.setStatus('✨ 已將所有伴奏聲部重設為 Yamaha PSR-SX920 原廠推薦黃金配比 (含音量、聲相、Reverb 與 Chorus 效果器)！');
+  }
+
+  /**
+   * 混音台單軌試聽按鈕點擊處理
+   */
+  private onMixerTrackPlayToggle(trackId: string) {
+    if (this.state.isPlaying && this.state.activePlayTrack === trackId) {
+      this.pause();
+      return;
+    }
+
+    // 若該軌處於靜音狀態，貼心自動解除靜音
+    if (this.mutedChannels.has(trackId)) {
+      this.mutedChannels.delete(trackId);
+      this.mixerPanel?.updateMuted(trackId, false);
+      this.applyMixerAudioStates();
+    }
+
+    let hasNotes = false;
+    if (trackId === 'drum') {
+      hasNotes = this.drumGrid?.hasNotes() || false;
+    } else if (trackId === 'bass') {
+      hasNotes = this.bassRoll?.hasNotes() || false;
+    } else if (trackId === 'chord') {
+      hasNotes = this.chordRoll?.hasNotes() || false;
+    } else if (this.dynamicTracks.has(trackId)) {
+      hasNotes = this.dynamicTracks.get(trackId)!.roll.hasNotes();
+    }
+
+    if (hasNotes) {
+      this.toggleSoloPlay(trackId);
+    } else {
+      this.playTrackDemoPhrase(trackId);
+    }
+  }
+
+  /**
+   * 當軌道尚未輸入音符時，播放快速示範音，讓使用者即時試聽調整後的音量、聲相與效果器
+   */
+  private playTrackDemoPhrase(trackId: string) {
+    if (this.state.isPlaying) {
+      this.stop();
+    }
+
+    let trackTitle = trackId;
+    if (trackId === 'drum') trackTitle = '鼓組 (Rhythm 2)';
+    else if (trackId === 'bass') trackTitle = '貝斯 (Bass)';
+    else if (trackId === 'chord') trackTitle = '和弦 1 (Chord 1)';
+    else if (this.dynamicTracks.has(trackId)) {
+      const cfg = AVAILABLE_CHORD_TRACK_CONFIGS[trackId];
+      trackTitle = `${cfg?.title || trackId}`;
+    }
+
+    this.mixerPanel?.setTrackPlaying(trackId, true);
+
+    if (trackId === 'drum') {
+      // 依序示範: Kick -> HiHat -> Snare -> HiHat
+      const demoHits = [
+        { note: 36, delay: 0 },
+        { note: 42, delay: 180 },
+        { note: 38, delay: 360 },
+        { note: 42, delay: 540 },
+      ];
+      demoHits.forEach(h => {
+        setTimeout(() => {
+          this.triggerDrumSound(h.note, 100, 150);
+        }, h.delay);
+      });
+      setTimeout(() => {
+        this.mixerPanel?.setTrackPlaying(trackId, false);
+      }, 750);
+    } else if (trackId === 'bass') {
+      // 依序示範根音與五度: C2 (36) -> G2 (43) -> C3 (48)
+      const bassNotes = [
+        { note: 36, delay: 0 },
+        { note: 43, delay: 240 },
+        { note: 48, delay: 480 },
+      ];
+      bassNotes.forEach(n => {
+        setTimeout(() => {
+          this.triggerBassSound(n.note, 100, 220);
+        }, n.delay);
+      });
+      setTimeout(() => {
+        this.mixerPanel?.setTrackPlaying(trackId, false);
+      }, 750);
+    } else if (trackId === 'chord') {
+      // 示範 C Major 和弦 (C3 48, E3 52, G3 55)
+      [48, 52, 55].forEach(note => {
+        this.triggerChordSound(note, 100, 600);
+      });
+      setTimeout(() => {
+        this.mixerPanel?.setTrackPlaying(trackId, false);
+      }, 650);
+    } else if (this.dynamicTracks.has(trackId)) {
+      // 動態軌道和弦音色示範
+      const t = this.dynamicTracks.get(trackId)!;
+      [48, 52, 55].forEach(note => {
+        t.roll.getSynth().playNote(note, 100, 600);
+        this.sendMidiDynamicTrackTrigger(trackId, note, 100, 600);
+      });
+      setTimeout(() => {
+        this.mixerPanel?.setTrackPlaying(trackId, false);
+      }, 650);
+    }
+
+    this.setStatus(`🔊 已播放【${trackTitle}】試聽示範音（若要循環播放，可在下方編輯區點選音符）`);
   }
 
   public panicMixer() {

@@ -11,7 +11,7 @@ class MockNode {
   public tagName: string;
   public className: string = '';
   public id: string = '';
-  public innerHTML: string = '';
+  private _innerHTML: string = '';
   public textContent: string = '';
   public value: string = '';
   public style: Record<string, any> = { display: '', setProperty: () => {} };
@@ -21,6 +21,50 @@ class MockNode {
 
   constructor(tagName: string) {
     this.tagName = tagName.toUpperCase();
+  }
+
+  public get innerHTML(): string {
+    return this._innerHTML;
+  }
+
+  public set innerHTML(html: string) {
+    this._innerHTML = html;
+    this.children = [];
+    if (!html) return;
+
+    const cleanHtml = html.replace(/<!--[\s\S]*?-->/g, '').trim();
+    // 匹配 HTML 開標籤與自閉合標籤或配對閉標籤
+    const tagRegex = /<([a-zA-Z0-9]+)([^>]*?)(?:\/>|>([\s\S]*?)<\/\1>)/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = tagRegex.exec(cleanHtml)) !== null) {
+      const tagName = match[1];
+      const attrStr = match[2];
+      const innerContent = match[3];
+
+      const child = new MockNode(tagName);
+
+      const attrRegex = /([a-zA-Z0-9_-]+)(?:=["']([^"']*)["'])?/g;
+      let attrMatch: RegExpExecArray | null;
+      while ((attrMatch = attrRegex.exec(attrStr)) !== null) {
+        const name = attrMatch[1];
+        const val = attrMatch[2] ?? '';
+        if (name === 'id') child.id = val;
+        else if (name === 'class') child.className = val;
+        else if (name === 'value') child.value = val;
+        child.setAttribute(name, val);
+      }
+
+      if (innerContent !== undefined) {
+        if (innerContent.includes('<')) {
+          child.innerHTML = innerContent;
+        } else {
+          child.textContent = innerContent.trim();
+        }
+      }
+
+      this.children.push(child);
+    }
   }
 
   public appendChild(child: MockNode) {
@@ -132,6 +176,8 @@ describe('MixerPanel 視覺化混音台', () => {
       onChorusChange: vi.fn(),
       onMuteToggle: vi.fn(),
       onSoloToggle: vi.fn(),
+      onTrackPlayToggle: vi.fn(),
+      onPlayAllToggle: vi.fn(),
       onResetDefaults: vi.fn(),
       onPanic: vi.fn(),
       onVisibilityChange: vi.fn(),
@@ -209,5 +255,93 @@ describe('MixerPanel 視覺化混音台', () => {
     expect(panel.isVisible()).toBe(false);
     expect(container.style.display).toBe('none');
     expect(callbacks.onVisibilityChange).toHaveBeenCalledWith(false);
+  });
+
+  it('支援點擊軌道試聽按鈕並觸發 onTrackPlayToggle', () => {
+    const panel = new MixerPanel(container, callbacks);
+    panel.setChannels([
+      {
+        id: 'drum',
+        name: 'Rhythm 2',
+        subName: '鼓組',
+        chNumber: 10,
+        midiChannel: 9,
+        icon: '🥁',
+        color: '#38bdf8',
+        voiceName: 'Standard Kit 1',
+        volume: 100,
+        pan: 64,
+        reverb: 40,
+        chorus: 0,
+        muted: false,
+        solo: false,
+      },
+    ]);
+
+    const playBtn = container.querySelector('[data-play-btn="drum"]');
+    expect(playBtn).toBeDefined();
+    playBtn.click();
+    expect(callbacks.onTrackPlayToggle).toHaveBeenCalledWith('drum');
+  });
+
+  it('支援點擊標頭播放全曲按鈕並觸發 onPlayAllToggle', () => {
+    new MixerPanel(container, callbacks);
+    const playAllBtn = container.querySelector('#btn-mixer-play-all');
+    expect(playAllBtn).toBeDefined();
+    playAllBtn.click();
+    expect(callbacks.onPlayAllToggle).toHaveBeenCalled();
+  });
+
+  it('setTrackPlaying 正確切換播放狀態 class 與圖標文字', () => {
+    const panel = new MixerPanel(container, callbacks);
+    panel.setChannels([
+      {
+        id: 'drum',
+        name: 'Rhythm 2',
+        subName: '鼓組',
+        chNumber: 10,
+        midiChannel: 9,
+        icon: '🥁',
+        color: '#38bdf8',
+        voiceName: 'Standard Kit 1',
+        volume: 100,
+        pan: 64,
+        reverb: 40,
+        chorus: 0,
+        muted: false,
+        solo: false,
+      },
+    ]);
+
+    const playBtn = container.querySelector('[data-play-btn="drum"]');
+    const playIcon = container.querySelector('[data-play-icon="drum"]');
+    const playText = container.querySelector('[data-play-text="drum"]');
+
+    panel.setTrackPlaying('drum', true);
+    expect(playBtn.classList.contains('mixer-btn-play-active')).toBe(true);
+    expect(playIcon.textContent).toBe('⏸');
+    expect(playText.textContent).toBe('暫停');
+
+    panel.setTrackPlaying('drum', false);
+    expect(playBtn.classList.contains('mixer-btn-play-active')).toBe(false);
+    expect(playIcon.textContent).toBe('▶');
+    expect(playText.textContent).toBe('試聽');
+  });
+
+  it('setPlayAllState 正確切換全曲播放按鈕狀態 class 與文字', () => {
+    const panel = new MixerPanel(container, callbacks);
+    const playAllBtn = container.querySelector('#btn-mixer-play-all');
+    const playAllIcon = container.querySelector('#mixer-play-all-icon');
+    const playAllText = container.querySelector('#mixer-play-all-text');
+
+    panel.setPlayAllState(true);
+    expect(playAllBtn.classList.contains('mixer-btn-play-active')).toBe(true);
+    expect(playAllIcon.textContent).toBe('⏸');
+    expect(playAllText.textContent).toBe('暫停全曲');
+
+    panel.setPlayAllState(false);
+    expect(playAllBtn.classList.contains('mixer-btn-play-active')).toBe(false);
+    expect(playAllIcon.textContent).toBe('▶');
+    expect(playAllText.textContent).toBe('播放全曲');
   });
 });
