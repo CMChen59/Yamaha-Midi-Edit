@@ -727,6 +727,13 @@ export class CreatorApp {
 
     // 4. 同步更新小節數與網格
     this.state.totalBars = store.bars;
+    if (!preservePlayback) {
+      this.currentPlayStep = 0;
+      this.drumGrid?.setPlayheadStep(null);
+      this.bassRoll?.setPlayheadStep(null);
+      this.chordRoll?.setPlayheadStep(null);
+      this.dynamicTracks.forEach(t => t.roll.setPlayheadStep(null));
+    }
     const selectBars = document.getElementById('select-bars') as HTMLSelectElement | null;
     if (selectBars) {
       this.ensureBarsOptionExists(selectBars, store.bars);
@@ -1630,6 +1637,22 @@ export class CreatorApp {
       }
     });
 
+    document.getElementById('btn-bpm-half')?.addEventListener('click', () => {
+      const newBpm = Math.max(40, Math.round(this.state.bpm / 2));
+      this.state.bpm = newBpm;
+      if (inputBpm) inputBpm.value = newBpm.toString();
+      this.setStatus(`速度減半切換為 ${this.state.bpm} BPM`);
+      if (this.state.isPlaying) this.restartPlaybackTimer();
+    });
+
+    document.getElementById('btn-bpm-double')?.addEventListener('click', () => {
+      const newBpm = Math.min(260, Math.round(this.state.bpm * 2));
+      this.state.bpm = newBpm;
+      if (inputBpm) inputBpm.value = newBpm.toString();
+      this.setStatus(`速度倍增切換為 ${this.state.bpm} BPM`);
+      if (this.state.isPlaying) this.restartPlaybackTimer();
+    });
+
     const selectBars = document.getElementById('select-bars') as HTMLSelectElement | null;
     selectBars?.addEventListener('change', () => {
       if (selectBars.value === 'custom') {
@@ -1804,6 +1827,8 @@ export class CreatorApp {
   }
 
   private play(track: string = 'all') {
+    this.stopChainedAudition();
+    this.stopSoloAudition();
     this.state.isPlaying = true;
     this.state.activePlayTrack = track;
     this.updatePlayButtonsUI();

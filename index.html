@@ -1703,7 +1703,11 @@
 
       <div class="control-group">
         <label for="input-bpm">BPM 速度</label>
-        <input type="number" id="input-bpm" min="40" max="260" value="120">
+        <div style="display: flex; align-items: center; gap: 4px;">
+          <input type="number" id="input-bpm" min="40" max="260" value="120" style="width: 72px;">
+          <button id="btn-bpm-half" class="btn-secondary" style="padding: 4px 6px; font-size: 0.72rem; border-radius: 4px;" title="速度減半 (½x)">½x</button>
+          <button id="btn-bpm-double" class="btn-secondary" style="padding: 4px 6px; font-size: 0.72rem; border-radius: 4px;" title="速度加倍 (2x)">2x</button>
+        </div>
       </div>
 
       <div class="control-group">

@@ -9,6 +9,22 @@ describe('Yamaha STY 段落亮燈與資料底層邏輯深度剖析', () => {
     const filePath = path.resolve(__dirname, '../public/samples/1024_容易受傷的女人.sty');
     const buf = fs.readFileSync(filePath);
     const parsed = YamahaParser.parse(new Uint8Array(buf), 'STY');
+    console.log('PARSED BPM:', parsed.bpm, 'division:', parsed.division);
+
+    // 檢查 Main A 的鼓組與時鐘
+    const mainA = parsed.sections.find(s => s.name === 'Main A')!;
+    let tCur = 0;
+    console.log('=== MAIN A DRUM EVENTS (first 2 bars) ===');
+    for (const ev of parsed.tracks[0].events) {
+      tCur += ev.delta;
+      if (tCur >= mainA.startTick && tCur < mainA.startTick + 1920 * 8) {
+        if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0 && (ev.channel === 9 || ev.channel === 8)) {
+          const rel = tCur - mainA.startTick;
+          const beat = (rel / 1920) + 1;
+          console.log(`Tick ${rel} (Beat ${beat.toFixed(2)}): Note ${ev.noteNumber} Vel ${ev.velocity}`);
+        }
+      }
+    }
 
     console.log('=== 1024_容易受傷的女人.sty 段落詳細清單 ===');
     for (const s of parsed.sections) {
@@ -78,6 +94,22 @@ describe('Yamaha STY 段落亮燈與資料底層邏輯深度剖析', () => {
     const filePath = path.resolve(__dirname, '../public/samples/1024_容易受傷的女人.sty');
     const buf = fs.readFileSync(filePath);
     const parsed = YamahaParser.parse(new Uint8Array(buf), 'STY');
+    console.log('PARSED BPM:', parsed.bpm, 'division:', parsed.division);
+
+    // 檢查 Main A 的鼓組與時鐘
+    const mainA = parsed.sections.find(s => s.name === 'Main A')!;
+    let tCur = 0;
+    console.log('=== MAIN A DRUM EVENTS (first 2 bars) ===');
+    for (const ev of parsed.tracks[0].events) {
+      tCur += ev.delta;
+      if (tCur >= mainA.startTick && tCur < mainA.startTick + 1920 * 8) {
+        if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0 && (ev.channel === 9 || ev.channel === 8)) {
+          const rel = tCur - mainA.startTick;
+          const beat = (rel / 1920) + 1;
+          console.log(`Tick ${rel} (Beat ${beat.toFixed(2)}): Note ${ev.noteNumber} Vel ${ev.velocity}`);
+        }
+      }
+    }
 
     console.log('=== CASM Mappings for all sections ===');
     console.log(parsed.casmMappings);
