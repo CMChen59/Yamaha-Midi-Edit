@@ -131,6 +131,9 @@ export class ChordRollLite {
 
   // 快取當前啟用的播放指針 DOM 元素，消除高頻全樹 querySelectorAll 延遲
   private activePlayheadElements: HTMLElement[] = [];
+  private stepElementsMap: Map<number, HTMLElement[]> = new Map();
+  private stepHeaderMap: Map<number, HTMLElement> = new Map();
+  private stickyHeaderElement: HTMLElement | null = null;
 
   private onPatternChange?: () => void;
   private onTriggerNote?: (note: number, velocity: number) => void;
@@ -539,7 +542,8 @@ export class ChordRollLite {
     }
 
     if (stepIndex !== null && stepIndex >= 0) {
-      const current = this.container.querySelectorAll<HTMLElement>(`[data-chord-step="${stepIndex}"], [data-step="${stepIndex}"]`);
+      const cached = this.stepElementsMap.get(stepIndex);
+      const current = (cached && cached.length > 0) ? cached : this.container.querySelectorAll<HTMLElement>(`[data-chord-step="${stepIndex}"], [data-step="${stepIndex}"]`);
       current.forEach((el) => {
         el.classList.add('active-playhead');
         this.activePlayheadElements.push(el);
@@ -575,14 +579,14 @@ export class ChordRollLite {
       return;
     }
 
-    const targetHeader = this.container.querySelector<HTMLElement>(`[data-chord-step="${stepIndex}"], [data-step="${stepIndex}"]`);
+    const targetHeader = this.stepHeaderMap.get(stepIndex) || this.container.querySelector<HTMLElement>(`[data-chord-step="${stepIndex}"], [data-step="${stepIndex}"]`);
     if (!targetHeader || typeof targetHeader.getBoundingClientRect !== 'function' || typeof this.container.getBoundingClientRect !== 'function') {
       return;
     }
 
     const panelRect = this.container.getBoundingClientRect();
     const targetRect = targetHeader.getBoundingClientRect();
-    const stickyHeader = this.container.querySelector<HTMLElement>('.row-header-label, .piano-key-label');
+    const stickyHeader = this.stickyHeaderElement || this.container.querySelector<HTMLElement>('.row-header-label, .piano-key-label');
     const stickyRight = (stickyHeader && typeof stickyHeader.getBoundingClientRect === 'function')
       ? stickyHeader.getBoundingClientRect().right
       : panelRect.left + 230;
@@ -594,7 +598,7 @@ export class ChordRollLite {
       const nextBarStart = Math.min(this.totalBars - 1, currentBar + 1) * stepsPerBar;
       const alignStep = (stepIndex % stepsPerBar >= stepsPerBar / 2) ? nextBarStart : currentBar * stepsPerBar;
 
-      let alignHeader = this.container.querySelector<HTMLElement>(`[data-chord-step="${alignStep}"], [data-step="${alignStep}"]`);
+      let alignHeader = this.stepHeaderMap.get(alignStep) || this.container.querySelector<HTMLElement>(`[data-chord-step="${alignStep}"], [data-step="${alignStep}"]`);
       if (!alignHeader || typeof alignHeader.getBoundingClientRect !== 'function' || alignHeader.getBoundingClientRect().left <= stickyRight) {
         alignHeader = targetHeader;
       }
@@ -639,6 +643,9 @@ export class ChordRollLite {
 
   public render(): void {
     this.activePlayheadElements = [];
+    this.stepElementsMap.clear();
+    this.stepHeaderMap.clear();
+    this.stickyHeaderElement = null;
     this.container.innerHTML = '';
 
     const stepsPerBar = this.getStepsPerBar();
@@ -776,6 +783,7 @@ export class ChordRollLite {
       </span>
     `;
     headerRow.appendChild(headerCorner);
+    this.stickyHeaderElement = headerCorner;
 
     const headerStepsContainer = document.createElement('div');
     headerStepsContainer.className = 'steps-container';
@@ -795,6 +803,13 @@ export class ChordRollLite {
           stepHeader.className = `step-header-cell chord-header-cell ${subClass}`;
           stepHeader.dataset.chordStep = `${stepIdx}`;
           stepHeader.dataset.step = `${stepIdx}`;
+          this.stepHeaderMap.set(stepIdx, stepHeader);
+          let hArr = this.stepElementsMap.get(stepIdx);
+          if (!hArr) {
+            hArr = [];
+            this.stepElementsMap.set(stepIdx, hArr);
+          }
+          hArr.push(stepHeader);
 
           if (sub === 0) {
             stepHeader.innerHTML = `<span class="beat-num">${beat + 1}</span>`;
@@ -875,6 +890,14 @@ export class ChordRollLite {
             const cell = document.createElement('div');
             cell.className = `step-cell chord-cell ${subClass}`;
             cell.dataset.chordStep = `${stepIdx}`;
+            cell.dataset.step = `${stepIdx}`;
+
+            let cArr = this.stepElementsMap.get(stepIdx);
+            if (!cArr) {
+              cArr = [];
+              this.stepElementsMap.set(stepIdx, cArr);
+            }
+            cArr.push(cell);
 
             const activeSet = this.pattern.get(stepIdx);
             const isActive = activeSet ? activeSet.has(pitch.note) : false;

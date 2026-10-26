@@ -71,6 +71,9 @@ export class DrumStepGrid {
 
   // 快取當前啟用的播放指針 DOM 元素，消除高頻全樹 querySelectorAll 延遲
   private activePlayheadElements: HTMLElement[] = [];
+  private stepElementsMap: Map<number, HTMLElement[]> = new Map();
+  private stepHeaderMap: Map<number, HTMLElement> = new Map();
+  private stickyHeaderElement: HTMLElement | null = null;
 
   // 當前畫面上啟用的打擊樂行
   private activeVoices: DrumVoiceOption[] = getStandardDefaultDrumVoices();
@@ -543,8 +546,9 @@ export class DrumStepGrid {
     }
 
     if (stepIndex !== null && stepIndex >= 0) {
-      // 2. 標記當前步進元素並快取
-      const current = this.container.querySelectorAll<HTMLElement>(`[data-step="${stepIndex}"]`);
+      // 2. 標記當前步進元素並快取 (優先查閱 O(1) 快取 Map，杜絕全樹遍歷)
+      const cached = this.stepElementsMap.get(stepIndex);
+      const current = (cached && cached.length > 0) ? cached : this.container.querySelectorAll<HTMLElement>(`[data-step="${stepIndex}"]`);
       current.forEach(el => {
         el.classList.add('active-playhead');
         this.activePlayheadElements.push(el);
@@ -583,14 +587,14 @@ export class DrumStepGrid {
       return;
     }
 
-    const targetHeader = this.container.querySelector<HTMLElement>(`.step-header-cell[data-step="${stepIndex}"]`);
+    const targetHeader = this.stepHeaderMap.get(stepIndex) || this.container.querySelector<HTMLElement>(`.step-header-cell[data-step="${stepIndex}"]`);
     if (!targetHeader || typeof targetHeader.getBoundingClientRect !== 'function' || typeof this.container.getBoundingClientRect !== 'function') {
       return;
     }
 
     const panelRect = this.container.getBoundingClientRect();
     const targetRect = targetHeader.getBoundingClientRect();
-    const stickyHeader = this.container.querySelector<HTMLElement>('.row-header-label');
+    const stickyHeader = this.stickyHeaderElement || this.container.querySelector<HTMLElement>('.row-header-label');
     const stickyRight = (stickyHeader && typeof stickyHeader.getBoundingClientRect === 'function')
       ? stickyHeader.getBoundingClientRect().right
       : panelRect.left + 230;
@@ -602,7 +606,7 @@ export class DrumStepGrid {
       const nextBarStart = Math.min(this.totalBars - 1, currentBar + 1) * stepsPerBar;
       const alignStep = (stepIndex % stepsPerBar >= stepsPerBar / 2) ? nextBarStart : currentBar * stepsPerBar;
 
-      let alignHeader = this.container.querySelector<HTMLElement>(`.step-header-cell[data-step="${alignStep}"]`);
+      let alignHeader = this.stepHeaderMap.get(alignStep) || this.container.querySelector<HTMLElement>(`.step-header-cell[data-step="${alignStep}"]`);
       if (!alignHeader || typeof alignHeader.getBoundingClientRect !== 'function' || alignHeader.getBoundingClientRect().left <= stickyRight) {
         alignHeader = targetHeader;
       }
@@ -630,6 +634,9 @@ export class DrumStepGrid {
    */
   public render(): void {
     this.activePlayheadElements = [];
+    this.stepElementsMap.clear();
+    this.stepHeaderMap.clear();
+    this.stickyHeaderElement = null;
     this.container.innerHTML = '';
 
     const stepsPerBar = this.getStepsPerBar();
@@ -744,6 +751,7 @@ export class DrumStepGrid {
     headerLabelCell.className = 'row-header-label';
     headerLabelCell.innerHTML = `<span style="font-size: 0.82rem; color: #38bdf8; font-weight: 700;">🥁 打擊樂器 / 拍子</span>`;
     headerRow.appendChild(headerLabelCell);
+    this.stickyHeaderElement = headerLabelCell;
 
     const headerStepsContainer = document.createElement('div');
     headerStepsContainer.className = 'steps-container';
@@ -762,6 +770,13 @@ export class DrumStepGrid {
           const subClass = sub === 0 ? 'beat-start eighth-cell' : (sub === 2 && stepsPerBeat === 4 ? 'eighth-offbeat eighth-cell' : (stepsPerBeat === 4 ? 'sixteenth-cell' : ''));
           stepHeader.className = `step-header-cell ${subClass}`;
           stepHeader.dataset.step = `${stepIdx}`;
+          this.stepHeaderMap.set(stepIdx, stepHeader);
+          let hArr = this.stepElementsMap.get(stepIdx);
+          if (!hArr) {
+            hArr = [];
+            this.stepElementsMap.set(stepIdx, hArr);
+          }
+          hArr.push(stepHeader);
 
           if (sub === 0) {
             stepHeader.innerHTML = `<span class="beat-num">${beat + 1}</span>`;
@@ -861,6 +876,13 @@ export class DrumStepGrid {
             cell.className = `step-cell ${isFilled ? 'step-active' : ''} ${subClass}`;
             cell.dataset.step = `${stepIdx}`;
             cell.dataset.note = `${inst.note}`;
+
+            let cArr = this.stepElementsMap.get(stepIdx);
+            if (!cArr) {
+              cArr = [];
+              this.stepElementsMap.set(stepIdx, cArr);
+            }
+            cArr.push(cell);
 
             if (isFilled) {
               cell.style.backgroundColor = inst.color;

@@ -6,6 +6,8 @@
  * 支援獨立音軌立體聲聲相 (StereoPannerNode) 與軌道主音量 (GainNode) 調控。
  */
 
+import { getSharedAudioContext } from './shared-audio-context';
+
 export class BassSynth {
   private static muted: boolean = false;
   private isInstanceMuted: boolean = false;
@@ -61,24 +63,31 @@ export class BassSynth {
 
   private initAudio() {
     if (!this.ctx) {
-      const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
-      this.ctx = new AudioCtxClass();
-      this.masterGain = this.ctx.createGain();
-      const currentGain = this.isInstanceMuted ? 0 : (this.volume / 127) * 0.8;
-      this.masterGain.gain.setValueAtTime(currentGain, this.ctx.currentTime);
+      const shared = getSharedAudioContext();
+      if (shared) {
+        this.ctx = shared;
+      } else if (typeof window !== 'undefined') {
+        const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtxClass) this.ctx = new AudioCtxClass();
+      }
+      if (this.ctx) {
+        this.masterGain = this.ctx.createGain();
+        const currentGain = this.isInstanceMuted ? 0 : (this.volume / 127) * 0.8;
+        this.masterGain.gain.setValueAtTime(currentGain, this.ctx.currentTime);
 
-      if (typeof this.ctx.createStereoPanner === 'function') {
-        this.pannerNode = this.ctx.createStereoPanner();
-        const panValue = Math.max(-1, Math.min(1, (this.pan - 64) / 64));
-        this.pannerNode.pan.setValueAtTime(panValue, this.ctx.currentTime);
-        this.masterGain.connect(this.pannerNode);
-        this.pannerNode.connect(this.ctx.destination);
-      } else {
-        this.masterGain.connect(this.ctx.destination);
+        if (typeof this.ctx.createStereoPanner === 'function') {
+          this.pannerNode = this.ctx.createStereoPanner();
+          const panValue = Math.max(-1, Math.min(1, (this.pan - 64) / 64));
+          this.pannerNode.pan.setValueAtTime(panValue, this.ctx.currentTime);
+          this.masterGain.connect(this.pannerNode);
+          this.pannerNode.connect(this.ctx.destination);
+        } else {
+          this.masterGain.connect(this.ctx.destination);
+        }
       }
     }
-    if (this.ctx.state === 'suspended') {
-      this.ctx.resume();
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
     }
   }
 
@@ -132,12 +141,12 @@ export class BassSynth {
     return 440 * Math.pow(2, (note - 69) / 12);
   }
 
-  public playNote(note: number, velocity: number = 100, durationMs: number = 240) {
+  public playNote(note: number, velocity: number = 100, durationMs: number = 240, when?: number) {
     if (BassSynth.muted || this.isInstanceMuted) return;
     this.initAudio();
     if (!this.ctx || !this.masterGain) return;
 
-    const now = this.ctx.currentTime;
+    const now = when !== undefined ? when : this.ctx.currentTime;
     const freq = this.midiToFreq(note);
     const velRatio = Math.max(0.2, Math.min(1.0, velocity / 127));
     const durSec = Math.max(0.08, durationMs / 1000);

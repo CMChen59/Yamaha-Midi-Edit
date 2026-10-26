@@ -14,6 +14,7 @@ import { YAMAHA_SX920_BASS_VOICES, type YamahaBassPreset } from './bass-voices';
 import { ChordRollLite, AVAILABLE_CHORD_TRACK_CONFIGS } from './chord-roll-lite';
 import { chordSynth } from './chord-synth';
 import { YAMAHA_SX920_CHORD_VOICES, type YamahaChordPreset } from './chord-voices';
+import { getSharedAudioContext } from './shared-audio-context';
 import { setComputerAudioMuted } from './audio-routing';
 import { searchYamahaVoices, type YamahaVoice, type VoiceCategory } from '../core/data/yamaha-voices';
 import { midiManager } from '../core/audio/midi-manager';
@@ -135,12 +136,13 @@ export class CreatorApp {
   private mutedChannels: Set<string> = new Set();
   private soloChannels: Set<string> = new Set();
   private playbackTimer: any = null;
-  private nextStepTargetTime: number = 0;
+  private playbackSchedulerTimer: any = null;
+  private playheadAnimFrame: number | null = null;
+  private playbackStartAudioTime: number = 0;
+  private lastDrawnStep: number | null = null;
   private currentPlayStep: number = 0;
   private chainedAuditionMode: 'intro-to-main' | 'main-to-ending' | null = null;
-  private chainedTimer: any = null;
   private soloAuditionMode: boolean = false;
-  private soloAuditionTimer: any = null;
   private autoScrollEnabled: boolean = true;
 
   // 伴奏混音台參數緩存 (包含獨立副鼓組 Rhythm 1 與動態聲部黃金配比)
@@ -459,24 +461,31 @@ export class CreatorApp {
   /**
    * 發送動態伴奏音軌的 Web MIDI 音符觸發 (支援 SFF2/SFF1 雙向鏡像廣播)
    */
-  private sendMidiDynamicTrackTrigger(partId: string, note: number, velocity: number = 100, durMs: number = 350, sourceCh?: number) {
+  private sendMidiDynamicTrackTrigger(partId: string, note: number, velocity: number = 100, durMs: number = 350, sourceCh?: number, timestamp?: number) {
     if (this.isChannelEffectiveMuted(partId)) return;
     this.mixerPanel?.triggerVuMeter(partId, velocity);
     if (this.state.isMidiConnected) {
       const config = AVAILABLE_CHORD_TRACK_CONFIGS[partId];
       if (config) {
         const ch = this.state.midiRoutingMode === 'direct_ch1' ? 0 : config.channel;
-        midiManager.sendNoteOn(ch, note, velocity);
+        midiManager.sendNoteOn(ch, note, velocity, timestamp);
         // ✨ 同時鏡像發送至原始 Source Channel (例如 Phrase 1 的 Channel 2 / SFF1)
         if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
-          midiManager.sendNoteOn(sourceCh, note, velocity);
+          midiManager.sendNoteOn(sourceCh, note, velocity, timestamp);
         }
-        setTimeout(() => {
-          midiManager.sendNoteOff(ch, note);
+        if (timestamp !== undefined) {
+          midiManager.sendNoteOff(ch, note, timestamp + durMs);
           if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
-            midiManager.sendNoteOff(sourceCh, note);
+            midiManager.sendNoteOff(sourceCh, note, timestamp + durMs);
           }
-        }, durMs);
+        } else {
+          setTimeout(() => {
+            midiManager.sendNoteOff(ch, note);
+            if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
+              midiManager.sendNoteOff(sourceCh, note);
+            }
+          }, durMs);
+        }
       }
     }
   }
@@ -1439,9 +1448,9 @@ export class CreatorApp {
     }
   }
 
-  private triggerDrumSound(note: number, velocity: number = 100, durMs: number = 80, sourceChannel: number = 9) {
-    drumSynth.playNote(note, velocity);
-    this.sendMidiDrumTrigger(note, velocity, durMs, sourceChannel);
+  private triggerDrumSound(note: number, velocity: number = 100, durMs: number = 80, sourceChannel: number = 9, audioTime?: number, midiTimestamp?: number) {
+    drumSynth.playNote(note, velocity, audioTime);
+    this.sendMidiDrumTrigger(note, velocity, durMs, sourceChannel, midiTimestamp);
     if (sourceChannel === 8 || sourceChannel === 0) {
       this.mixerPanel?.triggerVuMeter('rhythm1', velocity);
     } else {
@@ -1449,60 +1458,78 @@ export class CreatorApp {
     }
   }
 
-  private triggerBassSound(note: number, velocity: number = 100, durMs: number = 240, sourceCh?: number) {
-    bassSynth.playNote(note, velocity, durMs);
-    this.sendMidiBassTrigger(note, velocity, durMs, sourceCh);
+  private triggerBassSound(note: number, velocity: number = 100, durMs: number = 240, sourceCh?: number, audioTime?: number, midiTimestamp?: number) {
+    bassSynth.playNote(note, velocity, durMs, audioTime);
+    this.sendMidiBassTrigger(note, velocity, durMs, sourceCh, midiTimestamp);
     this.mixerPanel?.triggerVuMeter('bass', velocity);
   }
 
-  private triggerChordSound(note: number, velocity: number = 100, durMs: number = 350, sourceCh?: number) {
-    chordSynth.playNote(note, velocity, durMs);
-    this.sendMidiChordTrigger(note, velocity, durMs, sourceCh);
+  private triggerChordSound(note: number, velocity: number = 100, durMs: number = 350, sourceCh?: number, audioTime?: number, midiTimestamp?: number) {
+    chordSynth.playNote(note, velocity, durMs, audioTime);
+    this.sendMidiChordTrigger(note, velocity, durMs, sourceCh, midiTimestamp);
     this.mixerPanel?.triggerVuMeter('chord', velocity);
   }
 
-  private sendMidiDrumTrigger(note: number, velocity: number = 100, durMs: number = 80, sourceChannel: number = 9) {
+  private sendMidiDrumTrigger(note: number, velocity: number = 100, durMs: number = 80, sourceChannel: number = 9, timestamp?: number) {
     if (this.isChannelEffectiveMuted('drum')) return;
     if (this.state.isMidiConnected) {
       const ch = this.state.midiRoutingMode === 'direct_ch1' ? 0 : (sourceChannel === 8 ? 8 : 9);
-      midiManager.sendNoteOn(ch, note, velocity);
-      setTimeout(() => {
-        midiManager.sendNoteOff(ch, note);
-      }, durMs);
+      midiManager.sendNoteOn(ch, note, velocity, timestamp);
+      if (timestamp !== undefined) {
+        midiManager.sendNoteOff(ch, note, timestamp + durMs);
+      } else {
+        setTimeout(() => {
+          midiManager.sendNoteOff(ch, note);
+        }, durMs);
+      }
     }
   }
 
-  private sendMidiBassTrigger(note: number, velocity: number = 100, durMs: number = 240, sourceCh?: number) {
+  private sendMidiBassTrigger(note: number, velocity: number = 100, durMs: number = 240, sourceCh?: number, timestamp?: number) {
     if (this.isChannelEffectiveMuted('bass')) return;
     if (this.state.isMidiConnected) {
       const ch = this.state.midiRoutingMode === 'direct_ch1' ? 0 : 10;
-      midiManager.sendNoteOn(ch, note, velocity);
+      midiManager.sendNoteOn(ch, note, velocity, timestamp);
       if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
-        midiManager.sendNoteOn(sourceCh, note, velocity);
+        midiManager.sendNoteOn(sourceCh, note, velocity, timestamp);
       }
-      setTimeout(() => {
-        midiManager.sendNoteOff(ch, note);
+      if (timestamp !== undefined) {
+        midiManager.sendNoteOff(ch, note, timestamp + durMs);
         if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
-          midiManager.sendNoteOff(sourceCh, note);
+          midiManager.sendNoteOff(sourceCh, note, timestamp + durMs);
         }
-      }, durMs);
+      } else {
+        setTimeout(() => {
+          midiManager.sendNoteOff(ch, note);
+          if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
+            midiManager.sendNoteOff(sourceCh, note);
+          }
+        }, durMs);
+      }
     }
   }
 
-  private sendMidiChordTrigger(note: number, velocity: number = 100, durMs: number = 350, sourceCh?: number) {
+  private sendMidiChordTrigger(note: number, velocity: number = 100, durMs: number = 350, sourceCh?: number, timestamp?: number) {
     if (this.isChannelEffectiveMuted('chord')) return;
     if (this.state.isMidiConnected) {
       const ch = this.state.midiRoutingMode === 'direct_ch1' ? 0 : 11;
-      midiManager.sendNoteOn(ch, note, velocity);
+      midiManager.sendNoteOn(ch, note, velocity, timestamp);
       if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
-        midiManager.sendNoteOn(sourceCh, note, velocity);
+        midiManager.sendNoteOn(sourceCh, note, velocity, timestamp);
       }
-      setTimeout(() => {
-        midiManager.sendNoteOff(ch, note);
+      if (timestamp !== undefined) {
+        midiManager.sendNoteOff(ch, note, timestamp + durMs);
         if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
-          midiManager.sendNoteOff(sourceCh, note);
+          midiManager.sendNoteOff(sourceCh, note, timestamp + durMs);
         }
-      }, durMs);
+      } else {
+        setTimeout(() => {
+          midiManager.sendNoteOff(ch, note);
+          if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
+            midiManager.sendNoteOff(sourceCh, note);
+          }
+        }, durMs);
+      }
     }
   }
 
@@ -1941,10 +1968,17 @@ export class CreatorApp {
   }
 
   /**
-   * 核心發聲排程引擎：依據步進點發送具備真實力度 (Velocity)、發音時值 (Duration)、
-   * 掃弦微時差 (Strumming Offset) 與連續表情控制 (CC 11 / Pitch Bend) 之音符
+   * 核心發聲排程引擎：依據步進點發送具備真實力度 (Velocity)、發音時值 (Duration)
+   * 與連續表情控制 (CC 11 / Pitch Bend) 之音符。
+   * 全軌道嚴格同步於微秒級時鐘 (audioTime / midiTimestamp)，徹底消除 setTimeout 異步微時差與忽快忽慢。
    */
-  private playAuditionStep(currentStep: number, stepIntervalMs: number, targetSecName?: string) {
+  private playAuditionStep(
+    currentStep: number,
+    stepIntervalMs: number,
+    targetSecName?: string,
+    audioTime?: number,
+    midiTimestamp?: number
+  ) {
     const secName = targetSecName || this.state.currentSection;
     const store = this.sections.get(secName);
 
@@ -1955,7 +1989,7 @@ export class CreatorApp {
     const playChord = playTrack === 'all' || playTrack === 'chord';
 
     // ──────────────────────────────────────────────────────────────────
-    // 第一優先：純音訊與 MIDI 發送最優先執行 (耗時 < 0.2ms，拍子絕對穩健)
+    // 第一優先：純音訊與 MIDI 發送最優先執行 (微秒級排程，拍子絕對穩健)
     // ──────────────────────────────────────────────────────────────────
 
     // 1. 即時推送該步進的連續控制器事件 (CC 11 Expression, CC 1 Mod, CC 64 Sustain 等)
@@ -1963,7 +1997,7 @@ export class CreatorApp {
       for (const cc of store.ccEvents) {
         if (cc.step === currentStep) {
           const ch = this.state.midiRoutingMode === 'direct_ch1' ? 0 : cc.channel;
-          midiManager.sendControlChange(ch, cc.controller, cc.value);
+          midiManager.sendControlChange(ch, cc.controller, cc.value, midiTimestamp);
         }
       }
     }
@@ -1973,7 +2007,7 @@ export class CreatorApp {
       for (const pb of store.pitchBendEvents) {
         if (pb.step === currentStep) {
           const ch = this.state.midiRoutingMode === 'direct_ch1' ? 0 : pb.channel;
-          midiManager.sendPitchBend(ch, pb.value);
+          midiManager.sendPitchBend(ch, pb.value, midiTimestamp);
         }
       }
     }
@@ -1987,20 +2021,11 @@ export class CreatorApp {
           const meta = store?.dynamicMeta?.[partId]?.get(`${note}_${currentStep}`);
           const vel = meta?.velocity ?? 90;
           const dur = meta?.durationMs ?? Math.max(120, Math.round(stepIntervalMs * 1.5));
-          const offset = meta?.offsetMs ?? 0;
           const srcCh = meta?.sourceChannel;
 
-          if (offset > 0) {
-            setTimeout(() => {
-              if (this.state.isPlaying) {
-                t.roll.getSynth().playNote(note, vel, dur);
-                this.sendMidiDynamicTrackTrigger(partId, note, vel, dur, srcCh);
-              }
-            }, offset);
-          } else {
-            t.roll.getSynth().playNote(note, vel, dur);
-            this.sendMidiDynamicTrackTrigger(partId, note, vel, dur, srcCh);
-          }
+          // 嚴格對齊步進節拍，杜絕 setTimeout 異步微時差導致拍子忽快忽慢
+          t.roll.getSynth().playNote(note, vel, dur, audioTime);
+          this.sendMidiDynamicTrackTrigger(partId, note, vel, dur, srcCh, midiTimestamp);
         }
       }
     });
@@ -2016,9 +2041,9 @@ export class CreatorApp {
         const isR1 = sourceCh === 8 || sourceCh === 0;
 
         if (isR1 && playRhythm1) {
-          this.triggerDrumSound(note, vel, dur, sourceCh);
+          this.triggerDrumSound(note, vel, dur, sourceCh, audioTime, midiTimestamp);
         } else if (!isR1 && playDrum) {
-          this.triggerDrumSound(note, vel, dur, sourceCh);
+          this.triggerDrumSound(note, vel, dur, sourceCh, audioTime, midiTimestamp);
         }
       }
     }
@@ -2031,7 +2056,7 @@ export class CreatorApp {
         const vel = meta?.velocity ?? 100;
         const dur = meta?.durationMs ?? Math.max(80, Math.round(stepIntervalMs * 1.5));
         const srcCh = meta?.sourceChannel;
-        this.triggerBassSound(note, vel, dur, srcCh);
+        this.triggerBassSound(note, vel, dur, srcCh, audioTime, midiTimestamp);
       }
     }
 
@@ -2042,31 +2067,17 @@ export class CreatorApp {
         const meta = store?.chordMeta?.get(`${note}_${currentStep}`);
         const vel = meta?.velocity ?? 95;
         const dur = meta?.durationMs ?? Math.max(120, Math.round(stepIntervalMs * 1.5));
-        const offset = meta?.offsetMs ?? 0;
         const srcCh = meta?.sourceChannel;
 
-        if (offset > 0) {
-          setTimeout(() => {
-            if (this.state.isPlaying) {
-              this.triggerChordSound(note, vel, dur, srcCh);
-            }
-          }, offset);
-        } else {
-          this.triggerChordSound(note, vel, dur, srcCh);
-        }
+        // 嚴格對齊步進節拍，杜絕 setTimeout 異步微時差導致拍子忽快忽慢
+        this.triggerChordSound(note, vel, dur, srcCh, audioTime, midiTimestamp);
       }
     }
 
-    // ──────────────────────────────────────────────────────────────────
-    // 第二優先：視覺游標與滾動跳轉使用 requestAnimationFrame 異步呈現
-    // 徹底解耦音訊執行緒與排版重繪，杜絕因 DOM 重排引發的拍子忽快忽慢
-    // ──────────────────────────────────────────────────────────────────
-    const autoScroll = this.autoScrollEnabled;
-    const playStep = currentStep;
-    const scheduleFrame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (fn: () => void) => setTimeout(fn, 0);
-
-    scheduleFrame(() => {
-      if (!this.state.isPlaying) return;
+    // 若未傳入 audioTime (例如在無 AudioContext 之測試環境)，即時更新游標
+    if (audioTime === undefined) {
+      const autoScroll = this.autoScrollEnabled;
+      const playStep = currentStep;
       this.drumGrid?.setPlayheadStep((playDrum || playRhythm1) ? playStep : null, autoScroll);
       this.bassRoll?.setPlayheadStep(playBass ? playStep : null, autoScroll);
       this.chordRoll?.setPlayheadStep(playChord ? playStep : null, autoScroll);
@@ -2074,43 +2085,195 @@ export class CreatorApp {
         const playThis = playTrack === 'all' || playTrack === partId;
         t.roll.setPlayheadStep(playThis ? playStep : null, autoScroll);
       });
-    });
+    }
   }
 
   /**
-   * 自適應防抖動節拍時鐘 (Anti-Jitter Metronome Clock)
-   * 1. 音訊發送超輕量零阻塞 (< 0.2ms)
-   * 2. 具有理論時間偏差防激增保護 (Anti-Burst Protection)，絕不出現連續趕拍忽快忽慢
+   * 零抖動硬體音訊預排排程器 (Web Audio Lookahead Metronome Scheduler)
+   * 1. 音訊以 80ms 預看窗口提前排入 Web Audio 專屬硬體音訊執行緒，達到 sample-accurate (採樣精準) 絕不飄移。
+   * 2. Web MIDI 以高精度 microsecond timestamp 同步排送至實體琴 PSR-SX920。
+   * 3. 視覺游標與整頁翻頁完全在 requestAnimationFrame 異步運作，徹底杜絕 DOM 重排對發聲節奏的任何干擾。
    */
-  private startPlaybackTimer() {
+  private startPlaybackTimer(options?: {
+    targetSection?: string;
+    stopAfterSteps?: number;
+    onComplete?: () => void;
+    transitionAfterSteps?: number;
+    transitionToSection?: string;
+  }) {
     this.stopPlaybackTimer();
+
+    const ctx = getSharedAudioContext();
     const stepIntervalMs = this.getStepIntervalMs();
-    this.nextStepTargetTime = performance.now();
+    const stepIntervalSec = stepIntervalMs / 1000;
+    const stepsPerBar = this.drumGrid?.getStepsPerBar() || 16;
+    const totalSteps = this.state.totalBars * stepsPerBar;
 
-    const tick = () => {
+    if (!ctx) {
+      // 容錯 Fallback (無 Web Audio 的純測試環境)
+      let currentStep = this.currentPlayStep;
+      let scheduledCount = 0;
+      let currentSec = options?.targetSection || this.state.currentSection;
+
+      this.playbackTimer = setInterval(() => {
+        if (!this.state.isPlaying) {
+          clearInterval(this.playbackTimer);
+          return;
+        }
+
+        if (options?.transitionAfterSteps !== undefined && options?.transitionToSection) {
+          if (scheduledCount >= options.transitionAfterSteps) {
+            currentSec = options.transitionToSection;
+          }
+        }
+
+        this.playAuditionStep(currentStep, stepIntervalMs, currentSec);
+        currentStep = (currentStep + 1) % totalSteps;
+        this.currentPlayStep = currentStep;
+        scheduledCount++;
+
+        if (options?.stopAfterSteps !== undefined && scheduledCount >= options.stopAfterSteps) {
+          clearInterval(this.playbackTimer);
+          this.playbackTimer = null;
+          if (options.onComplete) options.onComplete();
+          else this.stop();
+        }
+      }, stepIntervalMs);
+      return;
+    }
+
+    const lookaheadSec = 0.08; // 預看 80ms
+    const checkIntervalMs = 25; // 每 25ms 檢查一次
+
+    const startAudio = ctx.currentTime + 0.025; // 25ms 緩衝
+    const startPerf = performance.now() + 25;
+    this.playbackStartAudioTime = startAudio;
+
+    let nextAudioTime = startAudio;
+    let scheduledStepIndex = this.currentPlayStep;
+    let totalScheduledCount = 0;
+    let currentSec = options?.targetSection || this.state.currentSection;
+
+    const scheduleLoop = () => {
       if (!this.state.isPlaying) return;
-      const stepsPerBar = this.drumGrid?.getStepsPerBar() || 16;
-      const totalSteps = this.state.totalBars * stepsPerBar;
 
-      // 1. 即時發出聲音 (極速微秒級執行，UI 於渲染訊框異步更新)
-      this.playAuditionStep(this.currentPlayStep, stepIntervalMs);
-      this.currentPlayStep = (this.currentPlayStep + 1) % totalSteps;
+      const currentAudio = ctx.currentTime;
+      while (nextAudioTime < currentAudio + lookaheadSec) {
+        if (options?.stopAfterSteps !== undefined && totalScheduledCount >= options.stopAfterSteps) {
+          break;
+        }
 
-      // 2. 嚴格穩健時鐘排程
-      this.nextStepTargetTime += stepIntervalMs;
-      const now = performance.now();
+        // 檢查段落平滑過渡 (例如 Intro -> Main A 或 Main A -> Ending)
+        if (options?.transitionAfterSteps !== undefined && options?.transitionToSection) {
+          if (totalScheduledCount >= options.transitionAfterSteps) {
+            currentSec = options.transitionToSection;
+          }
+        }
 
-      // 若因切換標籤頁等外部原因落後，重錨定理論時間，防止爆發趕拍
-      if (now > this.nextStepTargetTime + stepIntervalMs) {
-        this.nextStepTargetTime = now + stepIntervalMs;
+        const audioTime = nextAudioTime;
+        const midiTimestamp = startPerf + (audioTime - startAudio) * 1000;
+
+        this.playAuditionStep(scheduledStepIndex, stepIntervalMs, currentSec, audioTime, midiTimestamp);
+
+        nextAudioTime += stepIntervalSec;
+        scheduledStepIndex = (scheduledStepIndex + 1) % totalSteps;
+        totalScheduledCount++;
       }
 
-      // 保證每一步的間隔平順穩定，絕不觸發 0ms 激增連續擊發
-      const delay = Math.max(stepIntervalMs * 0.6, this.nextStepTargetTime - now);
-      this.playbackTimer = setTimeout(tick, delay);
+      if (options?.stopAfterSteps !== undefined && totalScheduledCount >= options.stopAfterSteps) {
+        const remainingMs = Math.max(0, (nextAudioTime - currentAudio) * 1000);
+        this.playbackSchedulerTimer = setTimeout(() => {
+          if (options.onComplete) options.onComplete();
+          else this.stop();
+        }, remainingMs);
+        return;
+      }
+
+      this.playbackSchedulerTimer = setTimeout(scheduleLoop, checkIntervalMs);
     };
 
-    tick();
+    scheduleLoop();
+    this.startPlayheadVisualLoop(stepIntervalSec, totalSteps, options);
+  }
+
+  /**
+   * 視覺游標與翻頁渲染迴圈 (與音訊硬體時鐘 100% 鎖步推進，60 FPS 流暢無撕裂)
+   */
+  private startPlayheadVisualLoop(
+    stepIntervalSec: number,
+    totalSteps: number,
+    options?: {
+      stopAfterSteps?: number;
+      onComplete?: () => void;
+      transitionAfterSteps?: number;
+      transitionToSection?: string;
+    }
+  ) {
+    if (this.playheadAnimFrame !== null) {
+      cancelAnimationFrame(this.playheadAnimFrame);
+      this.playheadAnimFrame = null;
+    }
+
+    const ctx = getSharedAudioContext();
+    if (!ctx) return;
+
+    const startAudio = this.playbackStartAudioTime;
+    const initialStep = this.currentPlayStep;
+    const autoScroll = this.autoScrollEnabled;
+    let transitioned = false;
+
+    const updateFrame = () => {
+      if (!this.state.isPlaying) return;
+
+      const currentAudio = ctx.currentTime;
+      const elapsedSec = currentAudio - startAudio;
+
+      if (elapsedSec >= 0) {
+        const totalStepsElapsed = Math.floor(elapsedSec / stepIntervalSec);
+
+        // 檢查鏈接轉折 (例如 Intro -> Main A)
+        if (options?.transitionAfterSteps !== undefined && options?.transitionToSection && !transitioned) {
+          if (totalStepsElapsed >= options.transitionAfterSteps) {
+            transitioned = true;
+            this.switchSection(options.transitionToSection, true);
+            this.state.isPlaying = true;
+            this.state.activePlayTrack = 'all';
+            this.updatePlayButtonsUI();
+            this.setStatus(`✨ 完美交棒！已平滑進入【${options.transitionToSection} 主歌伴奏】！`);
+          }
+        }
+
+        // 檢查試聽播放結束
+        if (options?.stopAfterSteps !== undefined && totalStepsElapsed >= options.stopAfterSteps) {
+          return;
+        }
+
+        const activeVisualStep = (initialStep + totalStepsElapsed) % totalSteps;
+
+        if (activeVisualStep !== this.lastDrawnStep) {
+          this.lastDrawnStep = activeVisualStep;
+          this.currentPlayStep = activeVisualStep;
+
+          const playTrack = this.state.activePlayTrack;
+          const playRhythm1 = playTrack === 'all' || playTrack === 'rhythm1';
+          const playDrum = playTrack === 'all' || playTrack === 'drum';
+          const playBass = playTrack === 'all' || playTrack === 'bass';
+          const playChord = playTrack === 'all' || playTrack === 'chord';
+
+          this.drumGrid?.setPlayheadStep((playDrum || playRhythm1) ? activeVisualStep : null, autoScroll);
+          this.bassRoll?.setPlayheadStep(playBass ? activeVisualStep : null, autoScroll);
+          this.chordRoll?.setPlayheadStep(playChord ? activeVisualStep : null, autoScroll);
+          this.dynamicTracks.forEach((t, partId) => {
+            const playThis = playTrack === 'all' || playTrack === partId;
+            t.roll.setPlayheadStep(playThis ? activeVisualStep : null, autoScroll);
+          });
+        }
+      }
+
+      this.playheadAnimFrame = requestAnimationFrame(updateFrame);
+    };
+
+    this.playheadAnimFrame = requestAnimationFrame(updateFrame);
   }
 
   private restartPlaybackTimer() {
@@ -2120,10 +2283,20 @@ export class CreatorApp {
   }
 
   private stopPlaybackTimer() {
+    if (this.playbackSchedulerTimer) {
+      clearTimeout(this.playbackSchedulerTimer);
+      this.playbackSchedulerTimer = null;
+    }
     if (this.playbackTimer) {
       clearTimeout(this.playbackTimer);
+      clearInterval(this.playbackTimer);
       this.playbackTimer = null;
     }
+    if (this.playheadAnimFrame !== null) {
+      cancelAnimationFrame(this.playheadAnimFrame);
+      this.playheadAnimFrame = null;
+    }
+    this.lastDrawnStep = null;
   }
 
   /**
@@ -3820,9 +3993,7 @@ export class CreatorApp {
 
     const stepsPerBar = this.drumGrid?.getStepsPerBar() || 16;
     const totalSteps = this.state.totalBars * stepsPerBar;
-    const stepIntervalMs = this.getStepIntervalMs();
 
-    let currentStep = 0;
     this.currentPlayStep = 0;
 
     const isIntro = secName.startsWith('Intro');
@@ -3831,31 +4002,18 @@ export class CreatorApp {
 
     this.setStatus(`▶ 正在單獨試聽【${secName} ${typeLabel}】(共 ${this.state.totalBars} 小節)，演奏完畢自動平穩停止...`);
 
-    const tick = () => {
-      if (!this.state.isPlaying || !this.soloAuditionMode) {
-        this.stopSoloAudition();
-        return;
-      }
-
-      this.playAuditionStep(currentStep, stepIntervalMs, secName);
-
-      currentStep++;
-      if (currentStep >= totalSteps) {
-        // 播完 1 遍後自動平穩停止！
+    this.startPlaybackTimer({
+      targetSection: secName,
+      stopAfterSteps: totalSteps,
+      onComplete: () => {
         this.stop();
         this.setStatus(`⏹【${secName} ${typeLabel}】單獨試聽完畢，已自動平穩停止！`);
-      }
-    };
-
-    tick();
-    this.soloAuditionTimer = setInterval(tick, stepIntervalMs);
+      },
+    });
   }
 
   private stopSoloAudition() {
-    if (this.soloAuditionTimer) {
-      clearInterval(this.soloAuditionTimer);
-      this.soloAuditionTimer = null;
-    }
+    this.stopPlaybackTimer();
     this.soloAuditionMode = false;
     this.updateAssistantPanel();
   }
@@ -3899,46 +4057,15 @@ export class CreatorApp {
 
     const stepsPerBar = this.drumGrid?.getStepsPerBar() || 16;
     const introTotalSteps = (introStore.bars || this.state.totalBars || 4) * stepsPerBar;
-    const stepIntervalMs = this.getStepIntervalMs();
 
-    let currentPhase: 'intro' | 'main' = 'intro';
-    let currentStep = 0;
     this.currentPlayStep = 0;
-
     this.setStatus(`🚀 正在實境試聽：【${introName} 前奏】(${introStore.bars || 4} 小節) 倒數開場中...`);
 
-    const tick = () => {
-      if (!this.state.isPlaying || this.chainedAuditionMode !== 'intro-to-main') {
-        this.stopChainedAudition();
-        return;
-      }
-
-      if (currentPhase === 'intro') {
-        this.playAuditionStep(currentStep, stepIntervalMs, introName);
-
-        currentStep++;
-        if (currentStep >= introTotalSteps) {
-          // 前奏結束，無縫滑入 Main A！
-          currentPhase = 'main';
-          currentStep = 0;
-          this.switchSection('Main A', true);
-          this.state.isPlaying = true;
-          this.state.activePlayTrack = 'all';
-          this.updatePlayButtonsUI();
-          this.setStatus(`✨ 完美交棒！已自【${introName}】平滑進入【Main A 主歌伴奏】！`);
-        }
-      } else {
-        const mainBars = this.sections.get('Main A')?.bars || this.state.totalBars || 2;
-        const mainTotalSteps = mainBars * stepsPerBar;
-
-        this.playAuditionStep(currentStep, stepIntervalMs, 'Main A');
-
-        currentStep = (currentStep + 1) % mainTotalSteps;
-      }
-    };
-
-    tick();
-    this.chainedTimer = setInterval(tick, stepIntervalMs);
+    this.startPlaybackTimer({
+      targetSection: introName,
+      transitionAfterSteps: introTotalSteps,
+      transitionToSection: 'Main A',
+    });
   }
 
   /**
@@ -3980,54 +4107,24 @@ export class CreatorApp {
     const stepsPerBar = this.drumGrid?.getStepsPerBar() || 16;
     const leadInSteps = stepsPerBar; // 播放 1 小節 Main A 作為引導
     const endingTotalSteps = (endingStore.bars || 2) * stepsPerBar;
-    const stepIntervalMs = this.getStepIntervalMs();
 
-    let currentPhase: 'lead-in' | 'ending' = 'lead-in';
-    let currentStep = 0;
-
+    this.currentPlayStep = 0;
     this.setStatus(`🛑 正在播放【Main A】引導，準備切入【${endingName} 尾奏】...`);
 
-    const tick = () => {
-      if (!this.state.isPlaying || this.chainedAuditionMode !== 'main-to-ending') {
-        this.stopChainedAudition();
-        return;
-      }
-
-      if (currentPhase === 'lead-in') {
-        this.playAuditionStep(currentStep, stepIntervalMs, 'Main A');
-
-        currentStep++;
-        if (currentStep >= leadInSteps) {
-          // 切入 Ending！
-          currentPhase = 'ending';
-          currentStep = 0;
-          this.switchSection(endingName, true);
-          this.state.isPlaying = true;
-          this.state.activePlayTrack = 'all';
-          this.updatePlayButtonsUI();
-          this.setStatus(`💥 進入【${endingName} 尾奏】：收束演奏中...`);
-        }
-      } else {
-        this.playAuditionStep(currentStep, stepIntervalMs, endingName);
-
-        currentStep++;
-        if (currentStep >= endingTotalSteps) {
-          // 尾奏結束，自動平穩停止伴奏！
-          this.stop();
-          this.setStatus(`⏹【${endingName} 尾奏】演奏結束，伴奏已自動平穩停止！`);
-        }
-      }
-    };
-
-    tick();
-    this.chainedTimer = setInterval(tick, stepIntervalMs);
+    this.startPlaybackTimer({
+      targetSection: 'Main A',
+      transitionAfterSteps: leadInSteps,
+      transitionToSection: endingName,
+      stopAfterSteps: leadInSteps + endingTotalSteps,
+      onComplete: () => {
+        this.stop();
+        this.setStatus(`⏹【${endingName} 尾奏】演奏結束，伴奏已自動平穩停止！`);
+      },
+    });
   }
 
   private stopChainedAudition() {
-    if (this.chainedTimer) {
-      clearInterval(this.chainedTimer);
-      this.chainedTimer = null;
-    }
+    this.stopPlaybackTimer();
     this.chainedAuditionMode = null;
     this.updateAssistantPanel();
   }

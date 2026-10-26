@@ -7,6 +7,8 @@
  * 風琴 (Organ Drawbar)、手風琴 (Accordion)、氛圍長音 (Pad)、人聲 (Choir)
  */
 
+import { getSharedAudioContext } from './shared-audio-context';
+
 export class ChordSynth {
   private static muted: boolean = false;
   private isInstanceMuted: boolean = false;
@@ -71,8 +73,13 @@ export class ChordSynth {
 
   private initAudio() {
     if (!ChordSynth.sharedCtx) {
-      const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
-      ChordSynth.sharedCtx = new AudioCtxClass();
+      const shared = getSharedAudioContext();
+      if (shared) {
+        ChordSynth.sharedCtx = shared;
+      } else if (typeof window !== 'undefined') {
+        const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtxClass) ChordSynth.sharedCtx = new AudioCtxClass();
+      }
     }
     this.ctx = ChordSynth.sharedCtx;
     if (!this.masterGain && this.ctx) {
@@ -91,7 +98,7 @@ export class ChordSynth {
       }
     }
     if (this.ctx && this.ctx.state === 'suspended') {
-      this.ctx.resume();
+      this.ctx.resume().catch(() => {});
     }
   }
 
@@ -151,12 +158,12 @@ export class ChordSynth {
    * @param velocity 力度 (0 ~ 127)
    * @param durationMs 發聲長度 (毫秒)
    */
-  public playNote(note: number, velocity: number = 100, durationMs: number = 450) {
+  public playNote(note: number, velocity: number = 100, durationMs: number = 450, when?: number) {
     if (ChordSynth.muted || this.isInstanceMuted) return;
     this.initAudio();
     if (!this.ctx || !this.masterGain) return;
 
-    const now = this.ctx.currentTime;
+    const now = when !== undefined ? when : this.ctx.currentTime;
     const freq = this.midiToFreq(note);
     const velRatio = Math.max(0.15, Math.min(1.0, velocity / 127));
     const durSec = Math.max(0.12, durationMs / 1000);
