@@ -444,17 +444,24 @@ export class CreatorApp {
   }
 
   /**
-   * 發送動態伴奏音軌的 Web MIDI 音符觸發
+   * 發送動態伴奏音軌的 Web MIDI 音符觸發 (支援 SFF2/SFF1 雙向鏡像廣播)
    */
-  private sendMidiDynamicTrackTrigger(partId: string, note: number, velocity: number = 100, durMs: number = 350) {
+  private sendMidiDynamicTrackTrigger(partId: string, note: number, velocity: number = 100, durMs: number = 350, sourceCh?: number) {
     if (this.isChannelEffectiveMuted(partId)) return;
     if (this.state.isMidiConnected) {
       const config = AVAILABLE_CHORD_TRACK_CONFIGS[partId];
       if (config) {
         const ch = this.state.midiRoutingMode === 'direct_ch1' ? 0 : config.channel;
         midiManager.sendNoteOn(ch, note, velocity);
+        // ✨ 同時鏡像發送至原始 Source Channel (例如 Phrase 1 的 Channel 2 / SFF1)
+        if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
+          midiManager.sendNoteOn(sourceCh, note, velocity);
+        }
         setTimeout(() => {
           midiManager.sendNoteOff(ch, note);
+          if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
+            midiManager.sendNoteOff(sourceCh, note);
+          }
         }, durMs);
       }
     }
@@ -1354,14 +1361,14 @@ export class CreatorApp {
     this.sendMidiDrumTrigger(note, velocity, durMs, sourceChannel);
   }
 
-  private triggerBassSound(note: number, velocity: number = 100, durMs: number = 240) {
+  private triggerBassSound(note: number, velocity: number = 100, durMs: number = 240, sourceCh?: number) {
     bassSynth.playNote(note, velocity, durMs);
-    this.sendMidiBassTrigger(note, velocity, durMs);
+    this.sendMidiBassTrigger(note, velocity, durMs, sourceCh);
   }
 
-  private triggerChordSound(note: number, velocity: number = 100, durMs: number = 350) {
+  private triggerChordSound(note: number, velocity: number = 100, durMs: number = 350, sourceCh?: number) {
     chordSynth.playNote(note, velocity, durMs);
-    this.sendMidiChordTrigger(note, velocity, durMs);
+    this.sendMidiChordTrigger(note, velocity, durMs, sourceCh);
   }
 
   private sendMidiDrumTrigger(note: number, velocity: number = 100, durMs: number = 80, sourceChannel: number = 9) {
@@ -1375,24 +1382,36 @@ export class CreatorApp {
     }
   }
 
-  private sendMidiBassTrigger(note: number, velocity: number = 100, durMs: number = 240) {
+  private sendMidiBassTrigger(note: number, velocity: number = 100, durMs: number = 240, sourceCh?: number) {
     if (this.isChannelEffectiveMuted('bass')) return;
     if (this.state.isMidiConnected) {
       const ch = this.state.midiRoutingMode === 'direct_ch1' ? 0 : 10;
       midiManager.sendNoteOn(ch, note, velocity);
+      if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
+        midiManager.sendNoteOn(sourceCh, note, velocity);
+      }
       setTimeout(() => {
         midiManager.sendNoteOff(ch, note);
+        if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
+          midiManager.sendNoteOff(sourceCh, note);
+        }
       }, durMs);
     }
   }
 
-  private sendMidiChordTrigger(note: number, velocity: number = 100, durMs: number = 350) {
+  private sendMidiChordTrigger(note: number, velocity: number = 100, durMs: number = 350, sourceCh?: number) {
     if (this.isChannelEffectiveMuted('chord')) return;
     if (this.state.isMidiConnected) {
       const ch = this.state.midiRoutingMode === 'direct_ch1' ? 0 : 11;
       midiManager.sendNoteOn(ch, note, velocity);
+      if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
+        midiManager.sendNoteOn(sourceCh, note, velocity);
+      }
       setTimeout(() => {
         midiManager.sendNoteOff(ch, note);
+        if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
+          midiManager.sendNoteOff(sourceCh, note);
+        }
       }, durMs);
     }
   }
@@ -1836,17 +1855,18 @@ export class CreatorApp {
           const vel = meta?.velocity ?? 90;
           const dur = meta?.durationMs ?? Math.max(120, Math.round(stepIntervalMs * 1.5));
           const offset = meta?.offsetMs ?? 0;
+          const srcCh = meta?.sourceChannel;
 
           if (offset > 0) {
             setTimeout(() => {
               if (this.state.isPlaying) {
                 t.roll.getSynth().playNote(note, vel, dur);
-                this.sendMidiDynamicTrackTrigger(partId, note, vel, dur);
+                this.sendMidiDynamicTrackTrigger(partId, note, vel, dur, srcCh);
               }
             }, offset);
           } else {
             t.roll.getSynth().playNote(note, vel, dur);
-            this.sendMidiDynamicTrackTrigger(partId, note, vel, dur);
+            this.sendMidiDynamicTrackTrigger(partId, note, vel, dur, srcCh);
           }
         }
       }
@@ -1871,7 +1891,8 @@ export class CreatorApp {
         const meta = store?.bassMeta?.get(currentStep);
         const vel = meta?.velocity ?? 100;
         const dur = meta?.durationMs ?? Math.max(80, Math.round(stepIntervalMs * 1.5));
-        this.triggerBassSound(note, vel, dur);
+        const srcCh = meta?.sourceChannel;
+        this.triggerBassSound(note, vel, dur, srcCh);
       }
     }
 
@@ -1883,15 +1904,16 @@ export class CreatorApp {
         const vel = meta?.velocity ?? 95;
         const dur = meta?.durationMs ?? Math.max(120, Math.round(stepIntervalMs * 1.5));
         const offset = meta?.offsetMs ?? 0;
+        const srcCh = meta?.sourceChannel;
 
         if (offset > 0) {
           setTimeout(() => {
             if (this.state.isPlaying) {
-              this.triggerChordSound(note, vel, dur);
+              this.triggerChordSound(note, vel, dur, srcCh);
             }
           }, offset);
         } else {
-          this.triggerChordSound(note, vel, dur);
+          this.triggerChordSound(note, vel, dur, srcCh);
         }
       }
     }

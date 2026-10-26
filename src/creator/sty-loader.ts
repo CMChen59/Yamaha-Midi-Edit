@@ -471,6 +471,18 @@ export class StyLoader {
         v.name = found ? (found.chineseName ? `${found.name} (${found.chineseName})` : found.name) : `Voice (Bank ${v.msb}-${v.lsb} PC ${v.pc + 1})`;
       }
 
+      // 依據 CASM 路由映射同步聲部音色 (將 Source Channel 音色鏡像給 Destination Part Channel)
+      const secNameLower = standardName.toLowerCase();
+      const casmSecMap = parsed.casmMappings?.[secNameLower] || parsed.casmMappings?.[sec.name.toLowerCase()];
+      if (casmSecMap) {
+        for (const [srcStr, dest] of Object.entries(casmSecMap)) {
+          const src = parseInt(srcStr, 10);
+          if (sectionVoices[src] && !sectionVoices[dest]) {
+            sectionVoices[dest] = { ...sectionVoices[src] };
+          }
+        }
+      }
+
       const secNotes = flatEvents.filter(
         ev => ev.type === 'noteOn' && (ev.velocity ?? 0) > 0 && ev.absTick >= secStart && ev.absTick < secEnd
       );
@@ -483,7 +495,7 @@ export class StyLoader {
         const step = Math.round(relTick / ticksPerStep);
         if (step < 0 || step >= totalSteps) continue;
 
-        const ch = ev.channel;
+        const ch = ev.channel ?? 0;
         const note = ev.noteNumber ?? 60;
         const velocity = Math.max(1, Math.min(127, ev.velocity ?? 100));
 
@@ -508,8 +520,10 @@ export class StyLoader {
         const offsetTicks = relTick - nominalTick;
         const offsetMs = offsetTicks > 0 ? Math.min(45, Math.round(offsetTicks * msPerTick)) : 0;
 
-        // 通道分流映射與真實表現力寫入
-        if (ch === 9 || ch === 8 || ch === 0) {
+        // 通道分流映射與真實表現力寫入 (優先採用 Yamaha 官方 CASM 路由指派)
+        const destPart = casmSecMap ? casmSecMap[ch] : undefined;
+
+        if (destPart === 9 || destPart === 8 || (destPart === undefined && (ch === 9 || ch === 8 || ch === 0))) {
           // 鼓組聲部 (ch=8 為 Rhythm 1 打擊樂, ch=9 為 Rhythm 2 主爵士鼓)
           if (!drumPattern.has(note)) {
             drumPattern.set(note, new Array(totalSteps).fill(false));
@@ -521,18 +535,18 @@ export class StyLoader {
             velocity,
             durationMs,
             durationTicks,
-            sourceChannel: ch === 8 ? 8 : 9,
+            sourceChannel: ch,
           });
-        } else if (ch === 10 || ch === 1) {
+        } else if (destPart === 10 || (destPart === undefined && (ch === 10 || ch === 1))) {
           // 貝斯聲部
           bassPattern.set(step, note);
           bassMeta.set(step, {
             velocity,
             durationMs,
             durationTicks,
-            sourceChannel: 10,
+            sourceChannel: ch,
           });
-        } else if (ch === 11 || ch === 2) {
+        } else if (destPart === 11 || (destPart === undefined && (ch === 11 || ch === 2))) {
           // 和弦 1 聲部
           if (!chordPattern.has(step)) {
             chordPattern.set(step, new Set());
@@ -544,9 +558,9 @@ export class StyLoader {
             durationTicks,
             offsetMs,
             offsetTicks,
-            sourceChannel: 11,
+            sourceChannel: ch,
           });
-        } else if (ch === 12 || ch === 3) {
+        } else if (destPart === 12 || (destPart === undefined && (ch === 12 || ch === 3))) {
           // Chord 2
           this.addDynamicNote(dynamicPatterns.Chord2, step, note);
           activeDynamicParts.add('Chord2');
@@ -556,9 +570,9 @@ export class StyLoader {
             durationTicks,
             offsetMs,
             offsetTicks,
-            sourceChannel: 12,
+            sourceChannel: ch,
           });
-        } else if (ch === 13 || ch === 4) {
+        } else if (destPart === 13 || (destPart === undefined && (ch === 13 || ch === 4))) {
           // Pad
           this.addDynamicNote(dynamicPatterns.Pad, step, note);
           activeDynamicParts.add('Pad');
@@ -568,10 +582,10 @@ export class StyLoader {
             durationTicks,
             offsetMs,
             offsetTicks,
-            sourceChannel: 13,
+            sourceChannel: ch,
           });
-        } else if (ch === 14 || ch === 5) {
-          // Phrase 1
+        } else if (destPart === 14 || (destPart === undefined && (ch === 14 || ch === 5))) {
+          // Phrase 1 (例如 Intro B 的電吉他 Solo)
           this.addDynamicNote(dynamicPatterns.Phrase1, step, note);
           activeDynamicParts.add('Phrase1');
           dynamicMeta.Phrase1.set(`${note}_${step}`, {
@@ -580,9 +594,9 @@ export class StyLoader {
             durationTicks,
             offsetMs,
             offsetTicks,
-            sourceChannel: 14,
+            sourceChannel: ch,
           });
-        } else if (ch === 15 || ch === 6) {
+        } else if (destPart === 15 || (destPart === undefined && (ch === 15 || ch === 6))) {
           // Phrase 2
           this.addDynamicNote(dynamicPatterns.Phrase2, step, note);
           activeDynamicParts.add('Phrase2');
@@ -592,7 +606,7 @@ export class StyLoader {
             durationTicks,
             offsetMs,
             offsetTicks,
-            sourceChannel: 15,
+            sourceChannel: ch,
           });
         }
       }
@@ -617,6 +631,30 @@ export class StyLoader {
     // 收集所有打擊樂器音高 (由低至高排序)
     const activeDrumNotes = Array.from(foundDrumNotes).sort((a, b) => a - b);
     const activeDynamicPartIds = Array.from(activeDynamicParts);
+
+    // 若特定動態聲部在某些段落被啟用 (例如 Phrase 1 在 Intro B 包含吉他獨奏)，校正全域 dynamicVoices
+    for (const partId of activeDynamicParts) {
+      if (!dynamicVoices[partId] || dynamicVoices[partId].pc === 49) {
+        for (const sec of sections.values()) {
+          const pat = sec.dynamicPatterns?.[partId];
+          let hasNotes = false;
+          if (pat) {
+            for (const s of pat.values()) {
+              if (s.size > 0) { hasNotes = true; break; }
+            }
+          }
+          if (hasNotes && sec.sectionVoices) {
+            const targetCh = partId === 'Phrase1' ? 14 : (partId === 'Phrase2' ? 15 : (partId === 'Chord2' ? 12 : 13));
+            const secV = sec.sectionVoices[targetCh];
+            if (secV) {
+              const defCat = partId === 'Phrase1' ? 'Guitar' : 'Strings';
+              dynamicVoices[partId] = resolveExactChordVoice(secV.msb, secV.lsb, secV.pc, defCat);
+              break;
+            }
+          }
+        }
+      }
+    }
 
     const summary = `成功載入【${fileName}】：共 ${sections.size} 個段落、BPM ${bpm}、${timeSig.numerator}/${timeSig.denominator} 拍號、動態啟用 ${activeDynamicPartIds.length} 個伴奏聲部。`;
 

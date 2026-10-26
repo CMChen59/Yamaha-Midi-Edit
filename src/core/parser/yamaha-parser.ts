@@ -339,7 +339,9 @@ export class YamahaParser {
       }
     }
 
-    const hasCasm = customChunks.some((c) => c.id === 'CASM');
+    const casmChunk = customChunks.find((c) => c.id === 'CASM');
+    const hasCasm = !!casmChunk;
+    const casmMappings = casmChunk ? YamahaParser.parseCasmMappings(casmChunk.data) : undefined;
     const hasOts = customChunks.some((c) => c.id.trim() === 'OTS' || c.id.trim() === 'OTSc' || c.id.startsWith('OTS'));
 
     return {
@@ -352,9 +354,60 @@ export class YamahaParser {
       tracks,
       parts: Array.from(partsMap.values()).sort((a, b) => a.channel - b.channel),
       customChunks,
+      casmMappings,
       hasCasm,
       hasOts,
       padConfig: fallbackFormat === 'PAD' ? padConfig : undefined,
     };
+  }
+
+  /**
+   * 解析 CASM / Ctb2 / CTAB 區塊，提取各段落之原始軌道 (Source Channel) 到伴奏聲部 (Destination Part Channel) 的精確路由表
+   */
+  public static parseCasmMappings(casmData: Uint8Array): Record<string, Record<number, number>> {
+    const sectionMappings: Record<string, Record<number, number>> = {};
+    if (casmData.length < 8) return sectionMappings;
+    const view = new DataView(casmData.buffer, casmData.byteOffset, casmData.byteLength);
+    let pos = 0;
+
+    while (pos <= casmData.length - 8) {
+      const tag = String.fromCharCode(casmData[pos], casmData[pos + 1], casmData[pos + 2], casmData[pos + 3]);
+      const len = view.getUint32(pos + 4);
+      if (tag === 'CSEG') {
+        const csegEnd = Math.min(casmData.length, pos + 8 + len);
+        let csegPos = pos + 8;
+        const currentSections: string[] = [];
+        const mappings: Record<number, number> = {};
+
+        while (csegPos <= csegEnd - 8) {
+          const subTag = String.fromCharCode(casmData[csegPos], casmData[csegPos + 1], casmData[csegPos + 2], casmData[csegPos + 3]);
+          const subLen = view.getUint32(csegPos + 4);
+          if (subTag === 'Sdec') {
+            let sdecStr = '';
+            for (let k = 0; k < subLen; k++) {
+              sdecStr += String.fromCharCode(casmData[csegPos + 8 + k]);
+            }
+            const names = sdecStr.split(/[\x00,]+/).map(s => s.trim().toLowerCase()).filter(Boolean);
+            currentSections.push(...names);
+          } else if (subTag === 'Ctb2' || subTag === 'CTAB') {
+            const srcCh = casmData[csegPos + 8];
+            const destCh = casmData[csegPos + 8 + 9];
+            if (srcCh !== undefined && destCh !== undefined && destCh >= 8 && destCh <= 15) {
+              mappings[srcCh] = destCh;
+            }
+          }
+          csegPos += 8 + subLen;
+        }
+
+        for (const sec of currentSections) {
+          sectionMappings[sec] = { ...(sectionMappings[sec] || {}), ...mappings };
+        }
+        pos = csegEnd;
+      } else {
+        pos += 8 + len;
+      }
+    }
+
+    return sectionMappings;
   }
 }

@@ -70,6 +70,7 @@ export interface YamahaFileParsed {
   tracks: MidiTrack[];
   parts: YamahaTrackInfo[];
   customChunks: YamahaCustomChunk[];
+  casmMappings?: Record<string, Record<number, number>>; // 段落名稱 (小寫) -> { sourceChannel: destinationChannel }
   hasCasm: boolean;
   hasOts: boolean;
   padConfig?: YamahaPadConfig;
