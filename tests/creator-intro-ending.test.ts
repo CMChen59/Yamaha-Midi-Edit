@@ -355,4 +355,78 @@ describe('YamahaTemplateStyleSynthesizer 前奏與尾奏 STY 二進位匯出整�
     expect(notesBySection.get('Ending B')).toBeGreaterThan(0);
     expect(notesBySection.get('Ending C')).toBeGreaterThan(0);
   });
+
+  it('SectionPresetsEngine 正確生成 Break (暫停過門) 範本：第 1 拍定音重擊、中間留白、第 4 拍小鼓滾奏加花與導音', () => {
+    const breakPattern = SectionPresetsEngine.generateBreakPattern(1, 16);
+    expect(breakPattern.name).toBe('Break');
+    expect(breakPattern.bars).toBe(1);
+
+    // 拍 1 (step 0): Crash 大鈸 (49) + 大鼓 (36) + 小鼓 (38) + 貝斯 C2 (36) + 和弦
+    expect(breakPattern.drumPattern.get(49)![0]).toBe(true);
+    expect(breakPattern.drumPattern.get(36)![0]).toBe(true);
+    expect(breakPattern.drumPattern.get(38)![0]).toBe(true);
+    expect(breakPattern.bassPattern.get(0)).toBe(36);
+    expect(breakPattern.chordPattern.get(0)?.has(48)).toBe(true);
+
+    // 拍 2 ~ 拍 3 (step 1 ~ 11): 留白靜音
+    const snare = breakPattern.drumPattern.get(38)!;
+    for (let s = 1; s < 12; s++) {
+      expect(snare[s]).toBe(false);
+    }
+
+    // 拍 4 (step 12 ~ 15): 小鼓漸強滾奏 + 導音
+    expect(snare[12]).toBe(true);
+    expect(snare[13]).toBe(true);
+    expect(snare[14]).toBe(true);
+    expect(snare[15]).toBe(true);
+    expect(breakPattern.bassPattern.get(14)).toBe(47); // B2 導音
+  });
+
+  it('合成器能將使用者編輯之 Break 段落精準對應至 Yamaha 原廠標準 Fill In BA，並在實體琴 Track 0 輸出音符', () => {
+    const mainDrums = new Map<number, boolean[]>();
+    mainDrums.set(36, new Array(16).fill(false));
+    mainDrums.get(36)![0] = true;
+    const mainBass = new Map<number, number>([[0, 36]]);
+    const mainChord = new Map<number, Set<number>>([[0, new Set([48, 52, 55])]]);
+
+    const breakPattern = SectionPresetsEngine.generateBreakPattern(1, 16);
+
+    const bytes = YamahaTemplateStyleSynthesizer.synthesizeFromTemplate({
+      styleName: 'SX920_Break_Test',
+      bpm: 120,
+      drumKit: { msb: 127, lsb: 0, pc: 0 },
+      bassVoice: { msb: 0, lsb: 0, pc: 33 },
+      chordVoice: { msb: 104, lsb: 0, pc: 0 },
+      sections: [
+        { name: 'Main A', bars: 1, stepsPerBar: 16, drumPattern: mainDrums, bassPattern: mainBass, chordPattern: mainChord },
+        { name: 'Break', bars: 1, stepsPerBar: 16, drumPattern: breakPattern.drumPattern, bassPattern: breakPattern.bassPattern, chordPattern: breakPattern.chordPattern },
+      ],
+      mixer: {
+        drum: { volume: 100, pan: 64, reverb: 40, chorus: 0 },
+        bass: { volume: 95, pan: 64, reverb: 20, chorus: 0 },
+        chord: { volume: 90, pan: 52, reverb: 65, chorus: 20 },
+      },
+    });
+
+    expect(bytes).toBeDefined();
+    const parsed = YamahaParser.parse(bytes, 'STY');
+
+    // 檢查 Track 0 是否在 Fill In BA 段落中精準寫入了 Break 音符
+    const tr0 = parsed.tracks[0];
+    let t = 0;
+    const notesBySection = new Map<string, number>();
+
+    for (const ev of tr0.events) {
+      t += ev.delta;
+      if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
+        const sec = parsed.sections.find(s => s.startTick <= t && (s.endTick === undefined || t < s.endTick));
+        const sName = sec?.name || 'Unknown';
+        notesBySection.set(sName, (notesBySection.get(sName) || 0) + 1);
+      }
+    }
+
+    expect(notesBySection.get('Main A')).toBeGreaterThan(0);
+    // Yamaha 原廠標準段落標記為 Fill In BA (對應琴體面板之 BREAK 按鍵)
+    expect(notesBySection.get('Fill In BA')).toBeGreaterThan(0);
+  });
 });

@@ -41,6 +41,7 @@ export const STY_SECTION_PRESETS: SectionPreset[] = [
   { id: 'Fill In BB', label: 'Fill In BB (過門 B - 1小節)', defaultBars: 1 },
   { id: 'Fill In CC', label: 'Fill In CC (過門 C - 1小節)', defaultBars: 1 },
   { id: 'Fill In DD', label: 'Fill In DD (過門 D - 1小節)', defaultBars: 1 },
+  { id: 'Break', label: 'Break (過門暫停 - 1小節)', defaultBars: 1 },
   { id: 'Intro A', label: 'Intro A (前奏 A - 計拍/短引子)', defaultBars: 4 },
   { id: 'Intro B', label: 'Intro B (前奏 B - 流行和弦前奏)', defaultBars: 4 },
   { id: 'Intro C', label: 'Intro C (前奏 C - 華麗長版大前奏)', defaultBars: 8 },
@@ -658,6 +659,11 @@ export class CreatorApp {
         store.drumPattern = autoEnding.drumPattern;
         store.bassPattern = autoEnding.bassPattern;
         store.chordPattern = autoEnding.chordPattern;
+      } else if (newSectionName === 'Break') {
+        const autoBreak = SectionPresetsEngine.generateBreakPattern(defaultBars, currentStepsPerBar);
+        store.drumPattern = autoBreak.drumPattern;
+        store.bassPattern = autoBreak.bassPattern;
+        store.chordPattern = autoBreak.chordPattern;
       }
 
       this.sections.set(newSectionName, store);
@@ -1900,6 +1906,14 @@ export class CreatorApp {
             store.drumPattern = curDrum;
             store.bassPattern = curBass;
             store.chordPattern = curChord;
+          } else if (name === 'Break' && !this.checkSectionHasNotes(name)) {
+            const autoBreak = SectionPresetsEngine.generateBreakPattern(store.bars || 1, currentStepsPerBar);
+            curDrum = autoBreak.drumPattern;
+            curBass = autoBreak.bassPattern;
+            curChord = autoBreak.chordPattern;
+            store.drumPattern = curDrum;
+            store.bassPattern = curBass;
+            store.chordPattern = curChord;
           }
 
           sectionsInput.push({
@@ -2590,8 +2604,9 @@ export class CreatorApp {
     const secName = this.state.currentSection;
     const isIntro = secName.startsWith('Intro');
     const isEnding = secName.startsWith('Ending');
+    const isBreak = secName === 'Break';
 
-    if (!isIntro && !isEnding) {
+    if (!isIntro && !isEnding && !isBreak) {
       if (this.chainedAuditionMode) {
         panel.style.display = 'block';
         panel.classList.remove('theme-ending');
@@ -2771,6 +2786,51 @@ export class CreatorApp {
           this.toggleAuditionMainToEnding();
         });
       }
+    } else if (isBreak) {
+      panel.classList.remove('theme-ending');
+      if (badge) badge.textContent = `⚡ 暫停過門 (${secName} - ${currentBars} 小節)`;
+      if (title) title.textContent = `Break 暫停過門智慧創作助理`;
+      if (desc) desc.textContent = 'Break 為歌曲中的戲劇性留白暫停過門（標準為 1 小節）！第 1 拍重音定音後樂團全體抽離靜音，最後一拍小鼓漸強滾奏加花推進，製造極致爆發力！';
+
+      if (barButtonsContainer) {
+        barButtonsContainer.innerHTML = `
+          <button class="btn-assistant-preset ${currentBars === 1 ? 'active-bar' : ''}" data-bar-btn="1">1 小節 (標準 Break)</button>
+          <button class="btn-assistant-preset ${currentBars === 2 ? 'active-bar' : ''}" data-bar-btn="2">2 小節 (加長過渡)</button>
+          <button id="btn-custom-intro-bars" class="btn-assistant-preset" title="自訂 1 ~ 32 小節長度">✏️ 自訂...</button>
+        `;
+        barButtonsContainer.querySelectorAll('[data-bar-btn]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const b = parseInt(btn.getAttribute('data-bar-btn') || '1', 10);
+            this.setSectionBars(b);
+          });
+        });
+        barButtonsContainer.querySelector('#btn-custom-intro-bars')?.addEventListener('click', () => {
+          this.promptCustomBars();
+        });
+      }
+
+      if (presetContainer) {
+        presetContainer.innerHTML = `
+          <button id="btn-preset-break-classic" class="btn-assistant-preset" title="第 1 拍大鈸定音 + 拍 2~3 留白抽離 + 拍 4 小鼓漸強滾奏加花">
+            ⚡ 經典留白暫停 (Classic Break)
+          </button>
+        `;
+        presetContainer.querySelector('#btn-preset-break-classic')?.addEventListener('click', () => {
+          this.applySectionPreset('break-classic');
+        });
+      }
+
+      if (auditionContainer) {
+        const isSoloActive = this.soloAuditionMode;
+        auditionContainer.innerHTML = `
+          <button id="btn-audition-solo-break" class="btn-assistant-audition btn-solo-audition ${isSoloActive ? 'active-audition' : ''}" title="單獨完整試聽 Break 暫停過門（共 ${currentBars} 小節）">
+            <span>${isSoloActive ? '⏸' : '▶'}</span> ${isSoloActive ? '停止試聽' : `單獨試聽 Break (${currentBars}小節)`}
+          </button>
+        `;
+        auditionContainer.querySelector('#btn-audition-solo-break')?.addEventListener('click', () => {
+          this.toggleAuditionSoloSection();
+        });
+      }
     }
   }
 
@@ -2864,6 +2924,9 @@ export class CreatorApp {
     } else if (presetKey === 'ending-soft') {
       patternResult = SectionPresetsEngine.generateEndingSoft(chosenBars, stepsPerBar);
       title = `抒情溫柔淡出 (${chosenBars} 小節)`;
+    } else if (presetKey === 'break-classic') {
+      patternResult = SectionPresetsEngine.generateBreakPattern(chosenBars, stepsPerBar);
+      title = `經典留白暫停 (${chosenBars} 小節)`;
     }
 
     if (!patternResult) return;

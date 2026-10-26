@@ -394,4 +394,63 @@ export class SectionPresetsEngine {
       chordPattern,
     };
   }
+
+  /**
+   * 範本 7: ⚡ 經典暫停過門 (Classic Break)
+   * 第 1 拍: Crash 大鈸 (49) + 大鼓 (36) + 小鼓 (38) + 貝斯 (36 = C2) + 和弦 (48, 52, 55 = C) 定音重擊！
+   * 第 2 ~ 3 拍: 樂團全體抽離靜音留白 (製造強大戲劇張力與呼吸感)
+   * 第 4 拍: 標誌性小鼓 16 分音符漸強連擊加花 (steps 12, 13, 14, 15) + 貝斯 B2 (47) 導音引導進入主歌！
+   */
+  public static generateBreakPattern(bars: number = 1, stepsPerBar: number = 16): GeneratedSectionPattern {
+    const totalSteps = bars * stepsPerBar;
+    const { drumPattern, bassPattern, chordPattern } = this.createBlankPatterns(totalSteps);
+
+    const kick = drumPattern.get(36)!;
+    const snare = drumPattern.get(38)!;
+    const crash = drumPattern.get(49)!;
+    const hihat = drumPattern.get(42)!;
+
+    // 前面各小節 (若使用者設定 bars > 1) 維持一般推進伴奏
+    for (let b = 0; b < bars - 1; b++) {
+      const offset = b * stepsPerBar;
+      kick[offset + 0] = true;
+      kick[offset + 8] = true;
+      snare[offset + 4] = true;
+      snare[offset + 12] = true;
+      for (let s = 0; s < stepsPerBar; s += 2) hihat[offset + s] = true;
+      bassPattern.set(offset + 0, 36);
+      bassPattern.set(offset + 8, 43);
+      chordPattern.set(offset + 0, new Set([48, 52, 55]));
+      chordPattern.set(offset + 8, new Set([55, 59, 62]));
+    }
+
+    // 核心 Break 小節 (最後 1 小節)
+    const breakOffset = (bars - 1) * stepsPerBar;
+
+    // 拍 1 (step 0): 定音重大擊打！
+    crash[breakOffset + 0] = true;
+    kick[breakOffset + 0] = true;
+    snare[breakOffset + 0] = true;
+    bassPattern.set(breakOffset + 0, 36); // C2
+    chordPattern.set(breakOffset + 0, new Set([48, 52, 55])); // C
+
+    // 拍 2 ~ 拍 3 (step 1 ~ 11): 留白抽離！
+
+    // 拍 4 (step 12 ~ 15): 小鼓漸強滾奏 + 導音回主歌！
+    snare[breakOffset + 12] = true;
+    snare[breakOffset + 13] = true;
+    snare[breakOffset + 14] = true;
+    snare[breakOffset + 15] = true;
+
+    bassPattern.set(breakOffset + 14, 47); // B2 導音
+    chordPattern.set(breakOffset + 12, new Set([53, 55, 59])); // G7
+
+    return {
+      name: 'Break',
+      bars,
+      drumPattern,
+      bassPattern,
+      chordPattern,
+    };
+  }
 }

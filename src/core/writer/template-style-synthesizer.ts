@@ -334,6 +334,11 @@ export class YamahaTemplateStyleSynthesizer {
       let targetUserSec = userSectionMap.get(secName);
       let isAutoDerivedFill = false;
 
+      // 支援 Break / Fill In BA 雙向映射
+      if (!targetUserSec && secName === 'Fill In BA') {
+        targetUserSec = userSectionMap.get('Break');
+      }
+
       if (!targetUserSec) {
         if (secName === 'Fill In AA' && (userSectionMap.has('Main A') || mainAUser)) {
           targetUserSec = userSectionMap.get('Main A') || mainAUser;
@@ -358,7 +363,7 @@ export class YamahaTemplateStyleSynthesizer {
         if (isAutoDerivedFill) {
           secBars = 1; // Yamaha 標準過門固定為 1 小節
         } else {
-          secBars = Math.max(1, targetUserSec.bars || 4);
+          secBars = Math.max(1, targetUserSec.bars || (secName === 'Fill In BA' ? 1 : 4));
         }
       } else {
         // 未編輯之段落預設分配 1 小節靜音佔位，以維持完整 Yamaha 15 段落相容架構
