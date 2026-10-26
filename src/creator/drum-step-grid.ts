@@ -17,19 +17,30 @@ export interface DrumVoiceOption {
 }
 
 export const YAMAHA_DRUM_VOICES: DrumVoiceOption[] = [
+  { note: 35, name: '大鼓 2 (Acoustic Kick)', subName: 'Acoustic Bass Drum', noteName: 'B0', icon: '🔊', color: '#38bdf8' },
   { note: 36, name: '大鼓 (Kick)', subName: 'Bass Drum', noteName: 'C1', icon: '🔊', color: '#38bdf8' },
-  { note: 38, name: '小鼓 (Snare)', subName: 'Snare Drum', noteName: 'D1', icon: '🥁', color: '#f59e0b' },
   { note: 37, name: '敲框音 (Side Stick)', subName: 'Rimshot', noteName: 'C#1', icon: '🥢', color: '#eab308' },
+  { note: 38, name: '小鼓 (Snare)', subName: 'Snare Drum', noteName: 'D1', icon: '🥁', color: '#f59e0b' },
   { note: 39, name: '拍手 (Clap)', subName: 'Hand Clap', noteName: 'D#1', icon: '👏', color: '#ec4899' },
+  { note: 40, name: '電子小鼓 (Elec Snare)', subName: 'Electric Snare', noteName: 'E1', icon: '🥁', color: '#f59e0b' },
+  { note: 41, name: '低音落地中鼓 (Low Floor Tom)', subName: 'Low Floor Tom', noteName: 'F1', icon: '🪘', color: '#a855f7' },
   { note: 42, name: '閉鈸 (Closed Hat)', subName: 'Closed Hi-Hat', noteName: 'F#1', icon: '💿', color: '#10b981' },
-  { note: 46, name: '開鈸 (Open Hat)', subName: 'Open Hi-Hat', noteName: 'A#1', icon: '📀', color: '#06b6d4' },
-  { note: 49, name: '碎音鈸 (Crash)', subName: 'Crash Cymbal', noteName: 'C#2', icon: '🔔', color: '#f43f5e' },
-  { note: 51, name: '叮叮鈸 (Ride)', subName: 'Ride Cymbal', noteName: 'D#2', icon: '🛎️', color: '#8b5cf6' },
-  { note: 50, name: '高音中鼓 (High Tom)', subName: 'High Tom', noteName: 'D2', icon: '🪘', color: '#fb7185' },
-  { note: 47, name: '中音中鼓 (Mid Tom)', subName: 'Mid Tom', noteName: 'B1', icon: '🪘', color: '#d946ef' },
+  { note: 43, name: '高音落地中鼓 (High Floor Tom)', subName: 'High Floor Tom', noteName: 'G1', icon: '🪘', color: '#a855f7' },
+  { note: 44, name: '踩鈸踏板 (Pedal Hat)', subName: 'Pedal Hi-Hat', noteName: 'G#1', icon: '💿', color: '#10b981' },
   { note: 45, name: '低音中鼓 (Low Tom)', subName: 'Low Tom', noteName: 'A1', icon: '🪘', color: '#a855f7' },
+  { note: 46, name: '開鈸 (Open Hat)', subName: 'Open Hi-Hat', noteName: 'A#1', icon: '📀', color: '#06b6d4' },
+  { note: 47, name: '中音中鼓 (Mid Tom)', subName: 'Mid Tom', noteName: 'B1', icon: '🪘', color: '#d946ef' },
+  { note: 48, name: '中音中鼓 2 (Hi-Mid Tom)', subName: 'Hi-Mid Tom', noteName: 'C2', icon: '🪘', color: '#d946ef' },
+  { note: 49, name: '碎音鈸 (Crash)', subName: 'Crash Cymbal', noteName: 'C#2', icon: '🔔', color: '#f43f5e' },
+  { note: 50, name: '高音中鼓 (High Tom)', subName: 'High Tom', noteName: 'D2', icon: '🪘', color: '#fb7185' },
+  { note: 51, name: '叮叮鈸 (Ride)', subName: 'Ride Cymbal', noteName: 'D#2', icon: '🛎️', color: '#8b5cf6' },
+  { note: 52, name: '中國鈸 (Chinese Cymbal)', subName: 'Chinese Cymbal', noteName: 'E2', icon: '🔔', color: '#f43f5e' },
+  { note: 53, name: '叮叮鈸鐘音 (Ride Bell)', subName: 'Ride Bell', noteName: 'F2', icon: '🛎️', color: '#8b5cf6' },
   { note: 54, name: '鈴鼓 (Tambourine)', subName: 'Tambourine', noteName: 'F#2', icon: '🪇', color: '#e11d48' },
+  { note: 55, name: '重音鈸 (Splash Cymbal)', subName: 'Splash Cymbal', noteName: 'G2', icon: '🔔', color: '#f43f5e' },
   { note: 56, name: '牛鈴 (Cowbell)', subName: 'Cowbell', noteName: 'G#2', icon: '🔔', color: '#fb923c' },
+  { note: 69, name: '卡巴沙 (Cabasa)', subName: 'Cabasa', noteName: 'A3', icon: '🪇', color: '#10b981' },
+  { note: 70, name: '沙錘 (Maracas)', subName: 'Maracas', noteName: 'A#3', icon: '🪇', color: '#10b981' },
 ];
 
 export type GridResolution = '1/16' | '1/8';
@@ -223,11 +234,51 @@ export class DrumStepGrid {
   }
 
   /**
+   * 切換選擇的鼓組 ID
+   */
+  public setSelectedDrumKit(kitId: string) {
+    this.selectedKitId = kitId;
+    const select = this.container.querySelector('#select-drum-kit') as HTMLSelectElement | null;
+    if (select) select.value = kitId;
+  }
+
+  /**
    * 載入指定的鼓點 Pattern 狀態 (供段落切換恢復)
    */
   public setPatternData(data: Map<number, boolean[]>): void {
     this.pattern = new Map();
-    data.forEach((arr, note) => this.pattern.set(note, [...arr]));
+    data.forEach((arr, note) => {
+      if (!this.activeVoices.some(v => v.note === note)) {
+        const v = YAMAHA_DRUM_VOICES.find(item => item.note === note) || {
+          note,
+          name: `打擊音 (${note})`,
+          subName: `Percussion ${note}`,
+          noteName: `N${note}`,
+          icon: '🥁',
+          color: '#94a3b8'
+        };
+        this.activeVoices.push(v);
+      }
+      this.pattern.set(note, [...arr]);
+    });
+    this.initPattern();
+    this.render();
+    this.onPatternChange?.();
+  }
+
+  /**
+   * 重置為預設的 6 行打擊樂器
+   */
+  public resetToDefaultVoices(): void {
+    this.activeVoices = [
+      YAMAHA_DRUM_VOICES.find(v => v.note === 36)!,
+      YAMAHA_DRUM_VOICES.find(v => v.note === 38)!,
+      YAMAHA_DRUM_VOICES.find(v => v.note === 42)!,
+      YAMAHA_DRUM_VOICES.find(v => v.note === 46)!,
+      YAMAHA_DRUM_VOICES.find(v => v.note === 49)!,
+      YAMAHA_DRUM_VOICES.find(v => v.note === 51)!,
+    ].filter(Boolean);
+    this.pattern.clear();
     this.initPattern();
     this.render();
     this.onPatternChange?.();
@@ -260,8 +311,15 @@ export class DrumStepGrid {
    * 新增一行打擊樂器
    */
   public addVoiceRow(note: number) {
-    const voice = YAMAHA_DRUM_VOICES.find(v => v.note === note);
-    if (!voice || this.activeVoices.some(v => v.note === note)) return;
+    if (this.activeVoices.some(v => v.note === note)) return;
+    const voice = YAMAHA_DRUM_VOICES.find(v => v.note === note) || {
+      note,
+      name: `打擊音 (${note})`,
+      subName: `Percussion ${note}`,
+      noteName: `N${note}`,
+      icon: '🥁',
+      color: '#94a3b8'
+    };
 
     this.activeVoices.push(voice);
     const totalSteps = this.totalBars * this.getStepsPerBar();

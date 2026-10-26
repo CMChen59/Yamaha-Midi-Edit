@@ -45,6 +45,7 @@ export interface TemplateStyleExportOptions {
   dynamicVoices?: Record<string, TemplateVoiceConfig>;
   sections: TemplateSectionInput[];
   mixer?: TemplateMixerConfig;
+  baseTemplateBytes?: Uint8Array; // 外部載入之 STY 原檔底座（保留 CASM / OTS / SysEx）
 }
 
 export class YamahaTemplateStyleSynthesizer {
@@ -57,7 +58,7 @@ export class YamahaTemplateStyleSynthesizer {
    * 且按下 [AUTO FILL-IN] 或 [Fill In A/B/C/D] 鍵時能完美發出過門樂音與小鼓滾奏過渡。
    */
   public static synthesizeFromTemplate(options: TemplateStyleExportOptions): Uint8Array {
-    const rawTemplateBytes = getGoldenStyleTemplateBytes();
+    const rawTemplateBytes = options.baseTemplateBytes || getGoldenStyleTemplateBytes();
     const parsed = YamahaParser.parse(rawTemplateBytes, 'STY');
 
     const division = parsed.division || 1920; // 1920 PPQ (Yamaha PSR-SX920 原廠標準高解析度時鐘)

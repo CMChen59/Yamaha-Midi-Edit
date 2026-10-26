@@ -23,6 +23,7 @@ import { YamahaPadModifier } from '../core/writer/pad-modifier';
 import { YamahaWriter } from '../core/writer/yamaha-writer';
 import { MixerPanel, type MixerChannelInfo } from './mixer-panel';
 import { SectionPresetsEngine, type GeneratedSectionPattern } from './section-presets-engine';
+import { StyLoader } from './sty-loader';
 
 export type CreatorMode = 'STY' | 'PAD';
 
@@ -120,6 +121,10 @@ export class CreatorApp {
 
   // 多段落狀態記憶庫 (Section Name -> SectionStore)
   private sections: Map<string, SectionStore> = new Map();
+
+  // 載入的現有 .STY 原始檔案資料 (用於保留 CASM/OTS/SysEx/其他未修改段落)
+  private loadedBaseStyleBytes: Uint8Array | null = null;
+  private loadedStyleFileName: string | null = null;
 
   constructor() {
     this.initElements();
@@ -597,16 +602,19 @@ export class CreatorApp {
    * 切換編輯段落 (例如由 Main A 切換至 Main B)
    * @param newSectionName 目標段落名稱
    * @param preservePlayback 是否在切換時維持播放狀態 (用於實境連鎖試聽無縫切換)
+   * @param forceReload 是否強制重新載入當前段落資料至 UI (例如載入外部 STY 檔案後)
    */
-  public switchSection(newSectionName: string, preservePlayback: boolean = false) {
-    if (this.state.currentSection === newSectionName) return;
+  public switchSection(newSectionName: string, preservePlayback: boolean = false, forceReload: boolean = false) {
+    if (this.state.currentSection === newSectionName && !forceReload) return;
 
     if (this.state.isPlaying && !preservePlayback) {
       this.stop();
     }
 
-    // 1. 先暫存當前段落
-    this.saveCurrentSectionToStore();
+    // 1. 若非強制重新載入，先暫存當前段落至 Store
+    if (!forceReload) {
+      this.saveCurrentSectionToStore();
+    }
 
     // 2. 切換段落標識
     this.state.currentSection = newSectionName;
@@ -675,6 +683,11 @@ export class CreatorApp {
     if (selectBars) {
       this.ensureBarsOptionExists(selectBars, store.bars);
       selectBars.value = store.bars.toString();
+    }
+
+    const selectSection = document.getElementById('select-current-section') as HTMLSelectElement | null;
+    if (selectSection) {
+      selectSection.value = newSectionName;
     }
 
     this.drumGrid?.setTotalBars(store.bars);
@@ -1501,6 +1514,40 @@ export class CreatorApp {
       this.exportFile();
     });
 
+    // 載入現有 .STY 伴奏檔案按鈕與隱藏式檔案選取器
+    const btnLoadSty = document.getElementById('btn-load-sty-file') as HTMLButtonElement | null;
+    const inputLoadSty = document.getElementById('input-load-sty-file') as HTMLInputElement | null;
+
+    btnLoadSty?.addEventListener('click', () => {
+      if (inputLoadSty) {
+        inputLoadSty.value = ''; // 允許連續載入同名檔案
+        inputLoadSty.click();
+      }
+    });
+
+    inputLoadSty?.addEventListener('change', () => {
+      const file = inputLoadSty.files?.[0];
+      if (file) {
+        this.loadStyFile(file);
+      }
+    });
+
+    // 支援檔案拖曳至視窗任意處直接載入
+    window.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = 'copy';
+      }
+    });
+
+    window.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const file = e.dataTransfer?.files?.[0];
+      if (file && /\.(sty|prs|bsp|sst|mid)$/i.test(file.name)) {
+        this.loadStyFile(file);
+      }
+    });
+
     // 快捷跳轉至新增聲部操作區
     document.getElementById('btn-quick-add-track-nav')?.addEventListener('click', () => {
       this.scrollToAddChannelPanel();
@@ -1846,7 +1893,9 @@ export class CreatorApp {
       const chosenChord = this.state.selectedChordVoice;
 
       let binaryBytes: Uint8Array;
-      const defaultFilename = this.state.mode === 'STY' ? `SX920_${chosenKit.id}.sty` : `SX920_${chosenKit.id}.pad`;
+      const defaultFilename = this.state.mode === 'STY'
+        ? (this.loadedStyleFileName ? this.loadedStyleFileName.replace(/\.(sty|prs|bsp|sst|mid)$/i, '') + '_modified.sty' : `SX920_${chosenKit.id}.sty`)
+        : `SX920_${chosenKit.id}.pad`;
       const promptName = prompt('請輸入要匯出的檔案名稱：', defaultFilename);
       if (!promptName) {
         this.setStatus('已取消匯出。');
@@ -1875,45 +1924,47 @@ export class CreatorApp {
           let curBass = store.bassPattern;
           let curChord = store.chordPattern;
 
-          // 雙重防護：若 Intro 或 Ending 在匯出時為空白（0音符），自動填充智慧範本，避免實體琴輸出死寂空音
-          if (name.startsWith('Intro') && !this.checkSectionHasNotes(name)) {
-            let autoIntro;
-            if (name === 'Intro B') {
-              autoIntro = SectionPresetsEngine.generateIntroCountIn(store.bars || 4, currentStepsPerBar);
-            } else if (name === 'Intro C') {
-              autoIntro = SectionPresetsEngine.generateIntroHarmonic(store.bars || 8, currentStepsPerBar);
-            } else {
-              autoIntro = SectionPresetsEngine.generateIntroHarmonic(store.bars || 4, currentStepsPerBar);
+          // 雙重防護：全新從零創作時，若 Intro 或 Ending 在匯出時為空白（0音符），自動填充智慧範本，避免實體琴輸出死寂空音
+          if (!this.loadedBaseStyleBytes) {
+            if (name.startsWith('Intro') && !this.checkSectionHasNotes(name)) {
+              let autoIntro;
+              if (name === 'Intro B') {
+                autoIntro = SectionPresetsEngine.generateIntroCountIn(store.bars || 4, currentStepsPerBar);
+              } else if (name === 'Intro C') {
+                autoIntro = SectionPresetsEngine.generateIntroHarmonic(store.bars || 8, currentStepsPerBar);
+              } else {
+                autoIntro = SectionPresetsEngine.generateIntroHarmonic(store.bars || 4, currentStepsPerBar);
+              }
+              curDrum = autoIntro.drumPattern;
+              curBass = autoIntro.bassPattern;
+              curChord = autoIntro.chordPattern;
+              store.drumPattern = curDrum;
+              store.bassPattern = curBass;
+              store.chordPattern = curChord;
+            } else if (name.startsWith('Ending') && !this.checkSectionHasNotes(name)) {
+              let autoEnding;
+              if (name === 'Ending B') {
+                autoEnding = SectionPresetsEngine.generateEndingClimax(store.bars || 4, currentStepsPerBar);
+              } else if (name === 'Ending C') {
+                autoEnding = SectionPresetsEngine.generateEndingSoft(store.bars || 4, currentStepsPerBar);
+              } else {
+                autoEnding = SectionPresetsEngine.generateEndingPunch(store.bars || 2, currentStepsPerBar);
+              }
+              curDrum = autoEnding.drumPattern;
+              curBass = autoEnding.bassPattern;
+              curChord = autoEnding.chordPattern;
+              store.drumPattern = curDrum;
+              store.bassPattern = curBass;
+              store.chordPattern = curChord;
+            } else if (name === 'Break' && !this.checkSectionHasNotes(name)) {
+              const autoBreak = SectionPresetsEngine.generateBreakPattern(store.bars || 1, currentStepsPerBar);
+              curDrum = autoBreak.drumPattern;
+              curBass = autoBreak.bassPattern;
+              curChord = autoBreak.chordPattern;
+              store.drumPattern = curDrum;
+              store.bassPattern = curBass;
+              store.chordPattern = curChord;
             }
-            curDrum = autoIntro.drumPattern;
-            curBass = autoIntro.bassPattern;
-            curChord = autoIntro.chordPattern;
-            store.drumPattern = curDrum;
-            store.bassPattern = curBass;
-            store.chordPattern = curChord;
-          } else if (name.startsWith('Ending') && !this.checkSectionHasNotes(name)) {
-            let autoEnding;
-            if (name === 'Ending B') {
-              autoEnding = SectionPresetsEngine.generateEndingClimax(store.bars || 4, currentStepsPerBar);
-            } else if (name === 'Ending C') {
-              autoEnding = SectionPresetsEngine.generateEndingSoft(store.bars || 4, currentStepsPerBar);
-            } else {
-              autoEnding = SectionPresetsEngine.generateEndingPunch(store.bars || 2, currentStepsPerBar);
-            }
-            curDrum = autoEnding.drumPattern;
-            curBass = autoEnding.bassPattern;
-            curChord = autoEnding.chordPattern;
-            store.drumPattern = curDrum;
-            store.bassPattern = curBass;
-            store.chordPattern = curChord;
-          } else if (name === 'Break' && !this.checkSectionHasNotes(name)) {
-            const autoBreak = SectionPresetsEngine.generateBreakPattern(store.bars || 1, currentStepsPerBar);
-            curDrum = autoBreak.drumPattern;
-            curBass = autoBreak.bassPattern;
-            curChord = autoBreak.chordPattern;
-            store.drumPattern = curDrum;
-            store.bassPattern = curBass;
-            store.chordPattern = curChord;
           }
 
           sectionsInput.push({
@@ -1941,6 +1992,7 @@ export class CreatorApp {
 
         // 採用經過實體 Yamaha PSR-SX920 驗證通過的黃金範本進行合成，確保原廠格式 100% 完整相容
         binaryBytes = YamahaTemplateStyleSynthesizer.synthesizeFromTemplate({
+          baseTemplateBytes: this.loadedBaseStyleBytes ?? undefined,
           styleName: finalFilename.replace(/\.sty$/i, ''),
           bpm: this.state.bpm,
           timeSignature: timeSig,
@@ -2066,6 +2118,171 @@ export class CreatorApp {
       console.error('匯出失敗:', err);
       alert(`❌ 匯出失敗: ${err.message}`);
       this.setStatus(`匯出失敗: ${err.message}`);
+    }
+  }
+
+  /**
+   * 載入使用者上傳的 Yamaha .STY 伴奏風格檔案
+   */
+  public async loadStyFile(file: File): Promise<void> {
+    try {
+      this.setStatus(`⏳ 正在讀取並解析伴奏檔案【${file.name}】...`);
+      const buffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+
+      const result = StyLoader.loadFromBytes(bytes, file.name);
+
+      // 若正在播放，先停止
+      if (this.state.isPlaying) {
+        this.stop();
+      }
+
+      // 確保處於 STY 模式
+      if (this.state.mode !== 'STY') {
+        this.setMode('STY');
+      }
+
+      // 1. 記憶原始檔案資訊
+      this.loadedBaseStyleBytes = bytes;
+      this.loadedStyleFileName = file.name;
+
+      // 2. 清理先前開啟的動態伴奏音軌
+      const existingPartIds = Array.from(this.dynamicTracks.keys());
+      for (const partId of existingPartIds) {
+        const track = this.dynamicTracks.get(partId);
+        track?.container.remove();
+        this.dynamicTracks.delete(partId);
+        this.mutedChannels.delete(partId);
+        this.soloChannels.delete(partId);
+      }
+
+      // 3. 設定 BPM
+      this.state.bpm = result.bpm;
+      const inputBpm = document.getElementById('input-bpm') as HTMLInputElement | null;
+      if (inputBpm) {
+        inputBpm.value = result.bpm.toString();
+      }
+
+      // 4. 設定拍號
+      let targetSig: import('./drum-step-grid').TimeSignatureType = '4/4';
+      if (result.timeSignature.numerator === 3 && result.timeSignature.denominator === 4) {
+        targetSig = '3/4';
+      } else if (result.timeSignature.numerator === 6 && result.timeSignature.denominator === 8) {
+        targetSig = '6/8';
+      }
+      this.drumGrid?.setTimeSignature(targetSig);
+      this.onGlobalTimeSignatureChange(targetSig);
+
+      // 5. 設定鼓組音色
+      this.state.selectedDrumKit = result.drumKit;
+      this.drumGrid?.setSelectedDrumKit(result.drumKit.id);
+      this.syncDrumKitToKeyboard();
+      this.mixerPanel?.updateVoiceName('drum', result.drumKit.name);
+
+      // 6. 設定貝斯音色
+      this.state.selectedBassVoice = result.bassVoice;
+      this.bassRoll?.setVoice(result.bassVoice);
+      bassSynth.setVoice(result.bassVoice);
+      this.syncBassVoiceToKeyboard();
+      this.mixerPanel?.updateVoiceName('bass', result.bassVoice.name);
+
+      // 7. 設定和弦 1 音色
+      this.state.selectedChordVoice = result.chordVoice;
+      this.chordRoll?.setVoice(result.chordVoice);
+      chordSynth.setVoice(result.chordVoice);
+      this.syncChordVoiceToKeyboard();
+      this.mixerPanel?.updateVoiceName('chord', result.chordVoice.name);
+
+      // 8. 動態新增伴奏音軌 (Chord 2, Pad, Phrase 1, Phrase 2)
+      for (const partId of result.activeDynamicPartIds) {
+        this.addDynamicTrack(partId);
+        const dynVoice = result.dynamicVoices[partId];
+        if (dynVoice) {
+          const dynTrack = this.dynamicTracks.get(partId);
+          if (dynTrack) {
+            dynTrack.selectedVoice = dynVoice;
+            dynTrack.roll.setVoice(dynVoice);
+            this.mixerPanel?.updateVoiceName(partId, dynVoice.name);
+          }
+        }
+      }
+
+      // 9. 更新混音台音量、聲相與效果器
+      if (result.mixer) {
+        for (const [partId, mix] of Object.entries(result.mixer)) {
+          if (partId === 'drum') {
+            drumSynth.setVolume(mix.volume);
+            drumSynth.setPan(mix.pan);
+            drumSynth.setReverb(mix.reverb);
+            drumSynth.setChorus(mix.chorus);
+            this.mixerPanel?.updateVolume('drum', mix.volume);
+            this.mixerPanel?.updatePan('drum', mix.pan);
+            this.mixerPanel?.updateReverb('drum', mix.reverb);
+            this.mixerPanel?.updateChorus('drum', mix.chorus);
+          } else if (partId === 'bass') {
+            bassSynth.setVolume(mix.volume);
+            bassSynth.setPan(mix.pan);
+            bassSynth.setReverb(mix.reverb);
+            bassSynth.setChorus(mix.chorus);
+            this.mixerPanel?.updateVolume('bass', mix.volume);
+            this.mixerPanel?.updatePan('bass', mix.pan);
+            this.mixerPanel?.updateReverb('bass', mix.reverb);
+            this.mixerPanel?.updateChorus('bass', mix.chorus);
+          } else if (partId === 'chord') {
+            chordSynth.setVolume(mix.volume);
+            chordSynth.setPan(mix.pan);
+            chordSynth.setReverb(mix.reverb);
+            chordSynth.setChorus(mix.chorus);
+            this.mixerPanel?.updateVolume('chord', mix.volume);
+            this.mixerPanel?.updatePan('chord', mix.pan);
+            this.mixerPanel?.updateReverb('chord', mix.reverb);
+            this.mixerPanel?.updateChorus('chord', mix.chorus);
+          } else {
+            const dynTrack = this.dynamicTracks.get(partId as any);
+            if (dynTrack) {
+              const s = dynTrack.roll.getSynth();
+              s.setVolume(mix.volume);
+              s.setPan(mix.pan);
+              s.setReverb(mix.reverb);
+              s.setChorus(mix.chorus);
+              this.mixerPanel?.updateVolume(partId, mix.volume);
+              this.mixerPanel?.updatePan(partId, mix.pan);
+              this.mixerPanel?.updateReverb(partId, mix.reverb);
+              this.mixerPanel?.updateChorus(partId, mix.chorus);
+            }
+          }
+        }
+      }
+
+      // 10. 確保鼓組網格具備檔案中所有的打擊樂音高
+      result.activeDrumNotes.forEach(note => this.drumGrid?.addVoiceRow(note));
+
+      // 11. 寫入段落記憶庫
+      this.sections = result.sections;
+
+      // 12. 決定優先開啟的段落 (優先 Main A, 若無則選第一個)
+      const targetSec = result.sections.has('Main A')
+        ? 'Main A'
+        : (result.sections.keys().next().value || 'Main A');
+
+      // 更新選單與畫面 (forceReload = true 避免把空畫面回寫到新資料)
+      this.refreshSectionOptions();
+      this.switchSection(targetSec, false, true);
+
+      // 13. 更新載入按鈕標籤提示
+      const btnLoad = document.getElementById('btn-load-sty-file');
+      if (btnLoad) {
+        const shortName = file.name.length > 18 ? file.name.slice(0, 15) + '...' : file.name;
+        btnLoad.innerHTML = `<span>📂</span> ${shortName}`;
+        btnLoad.title = `已載入【${file.name}】\n點擊可更換載入其他伴奏檔。\n${result.summary}`;
+      }
+
+      this.setStatus(`🎉 成功載入伴奏風格【${file.name}】！${result.summary}`);
+      alert(`🎉 成功載入 Yamaha 伴奏檔！\n\n- 檔案名稱: ${file.name}\n- 伴奏段落: 載入 ${result.sections.size} 個段落 (${Array.from(result.sections.keys()).join(', ')})\n- 拍速與拍號: ${result.bpm} BPM / ${result.timeSignature.numerator}/${result.timeSignature.denominator}\n- 鼓組: ${result.drumKit.name}\n- 貝斯: ${result.bassVoice.name}\n- 和弦: ${result.chordVoice.name}\n- 動態聲部: ${result.activeDynamicPartIds.length > 0 ? result.activeDynamicPartIds.join(', ') : '無'}\n\n您現在可直接在網格上修改音符、切換段落、調整混音，完成後點擊「匯出為 .STY」！`);
+    } catch (err: any) {
+      console.error('載入 STY 失敗:', err);
+      alert(`❌ 載入 STY 失敗：${err?.message || err}`);
+      this.setStatus(`❌ 載入 STY 失敗: ${err?.message || err}`);
     }
   }
 
