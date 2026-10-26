@@ -621,6 +621,21 @@ export class CreatorApp {
         chordPattern: new Map(),
         dynamicPatterns: {},
       };
+
+      // 若為前奏 (Intro) 或尾奏 (Ending)，自動預載智慧音樂樣板，避免新段落為完全空白空音
+      const currentStepsPerBar = this.drumGrid?.getStepsPerBar() || 16;
+      if (newSectionName === 'Intro A') {
+        const autoIntro = SectionPresetsEngine.generateIntroHarmonic(defaultBars, currentStepsPerBar);
+        store.drumPattern = autoIntro.drumPattern;
+        store.bassPattern = autoIntro.bassPattern;
+        store.chordPattern = autoIntro.chordPattern;
+      } else if (newSectionName === 'Ending A') {
+        const autoEnding = SectionPresetsEngine.generateEndingPunch(defaultBars, currentStepsPerBar);
+        store.drumPattern = autoEnding.drumPattern;
+        store.bassPattern = autoEnding.bassPattern;
+        store.chordPattern = autoEnding.chordPattern;
+      }
+
       this.sections.set(newSectionName, store);
     }
 
@@ -1826,13 +1841,36 @@ export class CreatorApp {
         const currentStepsPerBar = this.drumGrid?.getStepsPerBar() || 16;
         const sectionsInput: TemplateSectionInput[] = [];
         this.sections.forEach((store, name) => {
+          let curDrum = store.drumPattern;
+          let curBass = store.bassPattern;
+          let curChord = store.chordPattern;
+
+          // 雙重防護：若 Intro A 或 Ending A 在匯出時為空白（0音符），自動填充智慧範本，避免實體琴輸出死寂空音
+          if (name === 'Intro A' && !this.checkSectionHasNotes(name)) {
+            const autoIntro = SectionPresetsEngine.generateIntroHarmonic(store.bars || 4, currentStepsPerBar);
+            curDrum = autoIntro.drumPattern;
+            curBass = autoIntro.bassPattern;
+            curChord = autoIntro.chordPattern;
+            store.drumPattern = curDrum;
+            store.bassPattern = curBass;
+            store.chordPattern = curChord;
+          } else if (name === 'Ending A' && !this.checkSectionHasNotes(name)) {
+            const autoEnding = SectionPresetsEngine.generateEndingPunch(store.bars || 2, currentStepsPerBar);
+            curDrum = autoEnding.drumPattern;
+            curBass = autoEnding.bassPattern;
+            curChord = autoEnding.chordPattern;
+            store.drumPattern = curDrum;
+            store.bassPattern = curBass;
+            store.chordPattern = curChord;
+          }
+
           sectionsInput.push({
             name,
             bars: store.bars,
             stepsPerBar: currentStepsPerBar,
-            drumPattern: store.drumPattern,
-            bassPattern: store.bassPattern,
-            chordPattern: store.chordPattern,
+            drumPattern: curDrum,
+            bassPattern: curBass,
+            chordPattern: curChord,
             dynamicPatterns: store.dynamicPatterns,
           });
         });
@@ -2828,6 +2866,16 @@ export class CreatorApp {
     this.stop();
 
     const secName = this.state.currentSection;
+
+    // 若該段落目前為空白（0音符），自動為其套用智慧範本
+    if (!this.checkSectionHasNotes(secName)) {
+      if (secName.startsWith('Intro')) {
+        this.applySectionPreset('intro-harmonic');
+      } else if (secName.startsWith('Ending')) {
+        this.applySectionPreset('ending-punch');
+      }
+    }
+
     this.soloAuditionMode = true;
     this.state.isPlaying = true;
     this.state.activePlayTrack = 'all';

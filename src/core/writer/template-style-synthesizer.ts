@@ -369,6 +369,7 @@ export class YamahaTemplateStyleSynthesizer {
       const secDurationTicks = secBars * ticksPerBar;
 
       // 3.1 寫入段落 Marker (Meta 0x06) 與 Function Name (Meta 0x01)
+      // 注意：Yamaha 原廠二進位標準中，fn:<secName>\0 必須以 0x00 Null 結尾，以確保琴端 DSP 晶片 strcmp 能精準匹配！
       timedEvents.push({
         absTick: secStart,
         priority: 2,
@@ -381,6 +382,7 @@ export class YamahaTemplateStyleSynthesizer {
         },
       });
 
+      const fnString = `fn:${secName}\0`;
       timedEvents.push({
         absTick: secStart,
         priority: 3,
@@ -388,8 +390,8 @@ export class YamahaTemplateStyleSynthesizer {
           delta: 0,
           type: 'meta',
           metaType: 0x01,
-          text: `fn:${secName}`,
-          metaData: new TextEncoder().encode(`fn:${secName}`),
+          text: fnString,
+          metaData: new TextEncoder().encode(fnString),
         },
       });
 
