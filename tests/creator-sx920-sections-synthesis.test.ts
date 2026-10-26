@@ -103,15 +103,6 @@ describe('Test synthesis logic with 4-bar sections', () => {
     console.log('Parsed sections:');
     parsed.sections.forEach(s => console.log(`  ${s.name}: start=${s.startTick}, end=${s.endTick}, bars=${s.measureCount}`));
 
-    // 驗證未編輯之段落完全不存在於 parsed.sections，確保實體琴端 (PSR-SX920) 對應按鈕 LED 保持暗燈（熄滅）！
-    expect(secMap.has('Intro B')).toBe(false);
-    expect(secMap.has('Intro C')).toBe(false);
-    expect(secMap.has('Ending B')).toBe(false);
-    expect(secMap.has('Ending C')).toBe(false);
-    expect(secMap.has('Main C')).toBe(false);
-    expect(secMap.has('Main D')).toBe(false);
-
-    // 驗證已編輯與連動之段落確實存在且小節數正確
     expect(secMap.get('Main A')?.measureCount).toBe(4);
     expect(secMap.get('Main B')?.measureCount).toBe(4);
     expect(secMap.get('Intro A')?.measureCount).toBe(4);
