@@ -4,6 +4,7 @@ import * as path from 'path';
 import { StyLoader } from '../src/creator/sty-loader';
 import { YamahaTemplateStyleSynthesizer } from '../src/core/writer/template-style-synthesizer';
 import { YamahaParser } from '../src/core/parser/yamaha-parser';
+import { findYamahaVoice } from '../src/core/data/yamaha-voices';
 
 describe('StyLoader: 實體 STY 伴奏載入與解構驗證', () => {
   const samplePath = path.resolve(__dirname, '../public/samples/4006_SX900.T547.sty');
@@ -74,6 +75,47 @@ describe('StyLoader: 實體 STY 伴奏載入與解構驗證', () => {
     expect(mainA.ccEvents).toBeDefined();
     console.log('Main A CC 表現力事件數量:', mainA.ccEvents?.length);
     console.log('Main A 滑音輪事件數量:', mainA.pitchBendEvents?.length);
+
+    // ✨ 驗證 100% 原檔 Bank MSB/LSB/PC 無損定址與全音色庫精準映射
+    // 1. 主鼓組：應為 Pop Drum Kit (Bank 127-0, PC 89)，絕非預設之 Standard Kit 1 (PC 0)
+    expect(result.drumKit.pc).toBe(89);
+    expect(result.drumKit.msb).toBe(127);
+    expect(result.drumKit.lsb).toBe(0);
+    expect(result.drumKit.name).toContain('Pop Drum Kit');
+
+    // 2. 貝斯：應為 Finger Bass Live! (Bank 104-2, PC 33)，保留旗艦 S.Art! 身分證
+    expect(result.bassVoice.pc).toBe(33);
+    expect(result.bassVoice.msb).toBe(104);
+    expect(result.bassVoice.lsb).toBe(2);
+    expect(result.bassVoice.name).toContain('Finger Bass');
+
+    // 3. 和弦 1：應為 CFX Concert Grand (Bank 104-1, PC 0)
+    expect(result.chordVoice.pc).toBe(0);
+    expect(result.chordVoice.msb).toBe(104);
+    expect(result.chordVoice.lsb).toBe(1);
+
+    // 4. 和弦 2：應為 SteelGuitarTwin2 (Bank 104-13, PC 25)，絕非 GM Steel Guitar (0-0-25)
+    expect(result.dynamicVoices.Chord2).toBeDefined();
+    expect(result.dynamicVoices.Chord2.pc).toBe(25);
+    expect(result.dynamicVoices.Chord2.msb).toBe(104);
+    expect(result.dynamicVoices.Chord2.lsb).toBe(13);
+    expect(result.dynamicVoices.Chord2.name).toContain('SteelGuitarTwin2');
+
+    // 5. Phrase 2：應為 Warm Pad (Bank 104-0, PC 89)，絕非 GM 0-0-89
+    expect(result.dynamicVoices.Phrase2).toBeDefined();
+    expect(result.dynamicVoices.Phrase2.pc).toBe(89);
+    expect(result.dynamicVoices.Phrase2.msb).toBe(104);
+    expect(result.dynamicVoices.Phrase2.lsb).toBe(0);
+
+    // 6. 段落專屬音色切換 (Intro A 專屬切換 FlamencoGuitar2)
+    const introA = result.sections.get('Intro A');
+    expect(introA).toBeDefined();
+    expect(introA?.sectionVoices).toBeDefined();
+    expect(introA?.sectionVoices?.[11]).toEqual(expect.objectContaining({
+      msb: 8,
+      lsb: 34,
+      pc: 0,
+    }));
   });
 
   it('載入 STY 後修改音符並透過 TemplateSynthesizer 再度合成，音符成功更新且保留原曲結構', () => {
@@ -103,8 +145,15 @@ describe('StyLoader: 實體 STY 伴奏載入與解構驗證', () => {
       styleName: 'Modified_SX900',
       bpm: result.bpm,
       drumKit: { msb: result.drumKit.msb, lsb: result.drumKit.lsb, pc: result.drumKit.pc },
+      rhythm1Kit: result.rhythm1Kit ? { msb: result.rhythm1Kit.msb, lsb: result.rhythm1Kit.lsb, pc: result.rhythm1Kit.pc } : undefined,
       bassVoice: { msb: result.bassVoice.msb, lsb: result.bassVoice.lsb, pc: result.bassVoice.pc },
       chordVoice: { msb: result.chordVoice.msb, lsb: result.chordVoice.lsb, pc: result.chordVoice.pc },
+      dynamicVoices: {
+        Chord2: result.dynamicVoices.Chord2 ? { msb: result.dynamicVoices.Chord2.msb, lsb: result.dynamicVoices.Chord2.lsb, pc: result.dynamicVoices.Chord2.pc } : undefined,
+        Pad: result.dynamicVoices.Pad ? { msb: result.dynamicVoices.Pad.msb, lsb: result.dynamicVoices.Pad.lsb, pc: result.dynamicVoices.Pad.pc } : undefined,
+        Phrase1: result.dynamicVoices.Phrase1 ? { msb: result.dynamicVoices.Phrase1.msb, lsb: result.dynamicVoices.Phrase1.lsb, pc: result.dynamicVoices.Phrase1.pc } : undefined,
+        Phrase2: result.dynamicVoices.Phrase2 ? { msb: result.dynamicVoices.Phrase2.msb, lsb: result.dynamicVoices.Phrase2.lsb, pc: result.dynamicVoices.Phrase2.pc } : undefined,
+      },
       sections: sectionsInput,
     });
 
@@ -135,5 +184,26 @@ describe('StyLoader: 實體 STY 伴奏載入與解構驗證', () => {
     }
 
     expect(mainACrashFound).toBe(true);
+  });
+
+  it('能精確解析各段落專屬音色與 Bank MSB/LSB/PC 身分證', () => {
+    const buf = fs.readFileSync(samplePath);
+    const result = StyLoader.loadFromBytes(new Uint8Array(buf), '4006_SX900.T547.sty');
+
+    // 驗證 Main A 各通道繼承或自訂之音色
+    const mainA = result.sections.get('Main A')!;
+    expect(mainA).toBeDefined();
+    expect(mainA.sectionVoices).toBeDefined();
+
+    // 驗證 Intro A 專屬切換音色 (Ch 11: FlamencoGuitar2 Bank 8-34 PC 0)
+    const introA = result.sections.get('Intro A')!;
+    expect(introA).toBeDefined();
+    expect(introA.sectionVoices).toBeDefined();
+    const ch11Voice = introA.sectionVoices?.[11];
+    expect(ch11Voice).toBeDefined();
+    expect(ch11Voice?.msb).toBe(8);
+    expect(ch11Voice?.lsb).toBe(34);
+    expect(ch11Voice?.pc).toBe(0);
+    expect(ch11Voice?.name).toContain('NylonGuitar');
   });
 });

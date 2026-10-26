@@ -82,6 +82,9 @@ export interface SectionStore {
   dynamicMeta?: Record<string, Map<string, RealNoteMeta>>; // partId -> `${note}_${step}` -> RealNoteMeta
   ccEvents?: Array<{ channel: number; controller: number; value: number; step: number; relTick?: number }>;
   pitchBendEvents?: Array<{ channel: number; value: number; step: number; relTick?: number }>;
+
+  // ✨ 100% 原檔 Bank MSB/LSB/PC 無損定址映射 (段落專屬音色)
+  sectionVoices?: Record<number, { msb: number; lsb: number; pc: number; name?: string }>;
 }
 
 export interface DynamicChordTrack {
@@ -730,6 +733,18 @@ export class CreatorApp {
       track.roll.setPatternData(pat);
     });
 
+    // ✨ 若該段落有專屬音色定義 (sectionVoices)，同步切換琴端音色
+    if (this.state.isMidiConnected && store.sectionVoices) {
+      for (const [chStr, v] of Object.entries(store.sectionVoices)) {
+        const ch = parseInt(chStr, 10);
+        midiManager.sendVoiceChange(ch, {
+          msb: v.msb,
+          lsb: v.lsb,
+          pc: v.pc,
+        });
+      }
+    }
+
     this.updateUI();
     if (!preservePlayback) {
       this.setStatus(`✓ 已切換至【${newSectionName}】段落 (${store.bars} 小節)`);
@@ -1291,6 +1306,12 @@ export class CreatorApp {
         lsb: kit.lsb,
         pc: kit.pc,
       });
+      // 同步鏡像至 SFF1 鼓組通道 (Ch 7 / MIDI Ch 8)
+      midiManager.sendVoiceChange(7, {
+        msb: kit.msb,
+        lsb: kit.lsb,
+        pc: kit.pc,
+      });
     }
   }
 
@@ -1302,6 +1323,12 @@ export class CreatorApp {
         lsb: bass.lsb,
         pc: bass.pc,
       });
+      // 同步鏡像至 SFF1 貝斯通道 (Ch 1 / MIDI Ch 2)
+      midiManager.sendVoiceChange(1, {
+        msb: bass.msb,
+        lsb: bass.lsb,
+        pc: bass.pc,
+      });
     }
   }
 
@@ -1309,6 +1336,12 @@ export class CreatorApp {
     if (this.state.isMidiConnected) {
       const chord = this.state.selectedChordVoice;
       midiManager.sendVoiceChange(11, {
+        msb: chord.msb,
+        lsb: chord.lsb,
+        pc: chord.pc,
+      });
+      // 同步鏡像至 SFF1 和弦 1 通道 (Ch 2 / MIDI Ch 3)
+      midiManager.sendVoiceChange(2, {
         msb: chord.msb,
         lsb: chord.lsb,
         pc: chord.pc,
@@ -2242,6 +2275,12 @@ export class CreatorApp {
           lsb: result.rhythm1Kit.lsb,
           pc: result.rhythm1Kit.pc,
         });
+        // 同步鏡像至 SFF1 打擊樂通道 (Ch 0 / MIDI Ch 1)
+        midiManager.sendVoiceChange(0, {
+          msb: result.rhythm1Kit.msb,
+          lsb: result.rhythm1Kit.lsb,
+          pc: result.rhythm1Kit.pc,
+        });
       }
 
       // 6. 設定貝斯音色
@@ -2268,6 +2307,25 @@ export class CreatorApp {
             dynTrack.selectedVoice = dynVoice;
             dynTrack.roll.setVoice(dynVoice);
             this.mixerPanel?.updateVoiceName(partId, dynVoice.name);
+          }
+          if (this.state.isMidiConnected) {
+            const cfg = AVAILABLE_CHORD_TRACK_CONFIGS[partId];
+            if (cfg) {
+              midiManager.sendVoiceChange(cfg.channel, {
+                msb: dynVoice.msb,
+                lsb: dynVoice.lsb,
+                pc: dynVoice.pc,
+              });
+              // 同步鏡像至 SFF1 通道 (例如 12 -> 3, 13 -> 4, 14 -> 5, 15 -> 6)
+              const sff1Mirror = cfg.channel - 9;
+              if (sff1Mirror >= 0 && sff1Mirror <= 7) {
+                midiManager.sendVoiceChange(sff1Mirror, {
+                  msb: dynVoice.msb,
+                  lsb: dynVoice.lsb,
+                  pc: dynVoice.pc,
+                });
+              }
+            }
           }
         }
       }

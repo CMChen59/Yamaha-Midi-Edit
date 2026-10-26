@@ -53,6 +53,7 @@ export interface TemplateStyleExportOptions {
   timeSignature?: { numerator: number; denominator: number };
   stepsPerBar?: number;
   drumKit: TemplateVoiceConfig;
+  rhythm1Kit?: TemplateVoiceConfig;
   bassVoice: TemplateVoiceConfig;
   chordVoice: TemplateVoiceConfig;
   dynamicVoices?: Record<string, TemplateVoiceConfig>;
@@ -211,8 +212,8 @@ export class YamahaTemplateStyleSynthesizer {
             handledChoChannels.add(ch);
           }
 
-          // Channel 9 (Rhythm 2 / 鼓組)
-          if (ch === 9) {
+          // Rhythm 2 / 鼓組 (SFF2: Ch 9, SFF1: Ch 7)
+          if (ch === 9 || ch === 7) {
             if (ev.type === 'controlChange' && ev.controller === 0) {
               ev.value = options.drumKit.msb;
             } else if (ev.type === 'controlChange' && ev.controller === 32) {
@@ -222,8 +223,19 @@ export class YamahaTemplateStyleSynthesizer {
               ev.value = options.drumKit.pc;
             }
           }
-          // Channel 10 (Bass / 貝斯)
-          else if (ch === 10) {
+          // Rhythm 1 / 副鼓組與打擊樂 (SFF2: Ch 8, SFF1: Ch 0)
+          else if ((ch === 8 || ch === 0) && options.rhythm1Kit) {
+            if (ev.type === 'controlChange' && ev.controller === 0) {
+              ev.value = options.rhythm1Kit.msb;
+            } else if (ev.type === 'controlChange' && ev.controller === 32) {
+              ev.value = options.rhythm1Kit.lsb;
+            } else if (ev.type === 'programChange') {
+              (ev as any).program = options.rhythm1Kit.pc;
+              ev.value = options.rhythm1Kit.pc;
+            }
+          }
+          // Bass / 貝斯 (SFF2: Ch 10, SFF1: Ch 1)
+          else if (ch === 10 || ch === 1) {
             if (ev.type === 'controlChange' && ev.controller === 0) {
               ev.value = options.bassVoice.msb;
             } else if (ev.type === 'controlChange' && ev.controller === 32) {
@@ -233,8 +245,8 @@ export class YamahaTemplateStyleSynthesizer {
               ev.value = options.bassVoice.pc;
             }
           }
-          // Channel 11 (Chord 1 / 和弦 1)
-          else if (ch === 11) {
+          // Chord 1 / 和弦 1 (SFF2: Ch 11, SFF1: Ch 2)
+          else if (ch === 11 || ch === 2) {
             if (ev.type === 'controlChange' && ev.controller === 0) {
               ev.value = options.chordVoice.msb;
             } else if (ev.type === 'controlChange' && ev.controller === 32) {
@@ -244,8 +256,8 @@ export class YamahaTemplateStyleSynthesizer {
               ev.value = options.chordVoice.pc;
             }
           }
-          // 動態聲部 (Chord 2: ch 12, Pad: ch 13, Phrase 1: ch 14, Phrase 2: ch 15)
-          else if (ch === 12) {
+          // 動態聲部 Chord 2 (SFF2: Ch 12, SFF1: Ch 3)
+          else if (ch === 12 || ch === 3) {
             const v = options.dynamicVoices?.Chord2 || { msb: 0, lsb: 112, pc: 25 };
             if (ev.type === 'controlChange' && ev.controller === 0) ev.value = v.msb;
             else if (ev.type === 'controlChange' && ev.controller === 32) ev.value = v.lsb;
@@ -253,7 +265,9 @@ export class YamahaTemplateStyleSynthesizer {
               (ev as any).program = v.pc;
               ev.value = v.pc;
             }
-          } else if (ch === 13 && options.dynamicVoices?.Pad) {
+          }
+          // 動態聲部 Pad (SFF2: Ch 13, SFF1: Ch 4)
+          else if ((ch === 13 || ch === 4) && options.dynamicVoices?.Pad) {
             const v = options.dynamicVoices.Pad;
             if (ev.type === 'controlChange' && ev.controller === 0) ev.value = v.msb;
             else if (ev.type === 'controlChange' && ev.controller === 32) ev.value = v.lsb;
@@ -261,7 +275,9 @@ export class YamahaTemplateStyleSynthesizer {
               (ev as any).program = v.pc;
               ev.value = v.pc;
             }
-          } else if (ch === 14 && options.dynamicVoices?.Phrase1) {
+          }
+          // 動態聲部 Phrase 1 (SFF2: Ch 14, SFF1: Ch 5)
+          else if ((ch === 14 || ch === 5) && options.dynamicVoices?.Phrase1) {
             const v = options.dynamicVoices.Phrase1;
             if (ev.type === 'controlChange' && ev.controller === 0) ev.value = v.msb;
             else if (ev.type === 'controlChange' && ev.controller === 32) ev.value = v.lsb;
@@ -269,7 +285,9 @@ export class YamahaTemplateStyleSynthesizer {
               (ev as any).program = v.pc;
               ev.value = v.pc;
             }
-          } else if (ch === 15 && options.dynamicVoices?.Phrase2) {
+          }
+          // 動態聲部 Phrase 2 (SFF2: Ch 15, SFF1: Ch 6)
+          else if ((ch === 15 || ch === 6) && options.dynamicVoices?.Phrase2) {
             const v = options.dynamicVoices.Phrase2;
             if (ev.type === 'controlChange' && ev.controller === 0) ev.value = v.msb;
             else if (ev.type === 'controlChange' && ev.controller === 32) ev.value = v.lsb;

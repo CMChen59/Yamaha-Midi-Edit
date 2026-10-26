@@ -15,6 +15,159 @@ import { YAMAHA_SX920_BASS_VOICES, type YamahaBassPreset } from './bass-voices';
 import { YAMAHA_SX920_CHORD_VOICES, type YamahaChordPreset } from './chord-voices';
 import { findYamahaVoice } from '../core/data/yamaha-voices';
 
+export function mapToChordCategory(cat?: string): YamahaChordPreset['category'] {
+  switch (cat) {
+    case 'Piano': return 'Piano';
+    case 'E.Piano': return 'E.Piano';
+    case 'Guitar': return 'Guitar';
+    case 'Strings': return 'Strings';
+    case 'Organ': return 'Organ';
+    case 'Accordion': return 'Accordion';
+    case 'Brass': return 'Brass';
+    case 'Saxophone': return 'Saxophone';
+    case 'Pad': return 'Pad';
+    case 'Choir': return 'Choir';
+    default: return 'Synth';
+  }
+}
+
+export function getVoiceIcon(cat?: string): string {
+  switch (cat) {
+    case 'Piano': return '🎹';
+    case 'E.Piano': return '⚡';
+    case 'Guitar': return '🎸';
+    case 'Bass': return '🎸';
+    case 'Strings': return '🎻';
+    case 'Brass': return '🎺';
+    case 'Saxophone': return '🎷';
+    case 'Woodwind': return '🪈';
+    case 'Organ': return '🎼';
+    case 'Accordion': return '🪗';
+    case 'Pad': return '🌌';
+    case 'Choir': return '👼';
+    case 'Drums':
+    case 'Percussion': return '🥁';
+    default: return '🎵';
+  }
+}
+
+/**
+ * 100% 精準解析 PSR-SX920 官方鼓組身分證 (Bank MSB/LSB/PC)
+ */
+export function resolveExactDrumKit(msb: number = 127, lsb: number = 0, pc: number = 0): YamahaDrumKitPreset {
+  const preset = YAMAHA_SX920_DRUM_KITS.find(k => k.msb === msb && k.lsb === lsb && k.pc === pc);
+  if (preset) return preset;
+
+  const found = findYamahaVoice(msb, lsb, pc);
+  if (found) {
+    const name = found.chineseName ? `${found.name} (${found.chineseName})` : found.name;
+    return {
+      id: `drum-${msb}-${lsb}-${pc}`,
+      name,
+      category: found.category || 'Drums',
+      msb,
+      lsb,
+      pc,
+      panelPc: pc + 1,
+      icon: '🥁',
+      description: found.chineseName || found.name,
+    };
+  }
+
+  return {
+    id: `drum-${msb}-${lsb}-${pc}`,
+    name: `Drum Kit (Bank ${msb}-${lsb} PC ${pc + 1})`,
+    category: 'Drums',
+    msb,
+    lsb,
+    pc,
+    panelPc: pc + 1,
+    icon: '🥁',
+    description: `Yamaha 鼓組 (Bank ${msb}-${lsb}, PC ${pc + 1})`,
+  };
+}
+
+/**
+ * 100% 精準解析 PSR-SX920 官方貝斯身分證 (Bank MSB/LSB/PC)
+ */
+export function resolveExactBassVoice(msb: number = 104, lsb: number = 2, pc: number = 33): YamahaBassPreset {
+  const preset = YAMAHA_SX920_BASS_VOICES.find(b => b.msb === msb && b.lsb === lsb && b.pc === pc);
+  if (preset) return preset;
+
+  const found = findYamahaVoice(msb, lsb, pc);
+  if (found) {
+    const name = found.chineseName ? `${found.name} (${found.chineseName})` : found.name;
+    const isAcoustic = found.name.toLowerCase().includes('acoustic') || (found.chineseName && found.chineseName.includes('原聲'));
+    return {
+      id: `bass-${msb}-${lsb}-${pc}`,
+      name,
+      category: isAcoustic ? 'Acoustic' : 'Electric',
+      msb,
+      lsb,
+      pc,
+      panelPc: pc + 1,
+      icon: '🎸',
+      description: found.chineseName || found.name,
+    };
+  }
+
+  return {
+    id: `bass-${msb}-${lsb}-${pc}`,
+    name: `Bass (Bank ${msb}-${lsb} PC ${pc + 1})`,
+    category: 'Electric',
+    msb,
+    lsb,
+    pc,
+    panelPc: pc + 1,
+    icon: '🎸',
+    description: `Yamaha 貝斯 (Bank ${msb}-${lsb}, PC ${pc + 1})`,
+  };
+}
+
+/**
+ * 100% 精準解析 PSR-SX920 官方和弦/動態伴奏音色身分證 (Bank MSB/LSB/PC 完整三聯號檢索，絕不盲目只查 PC)
+ */
+export function resolveExactChordVoice(
+  msb: number = 104,
+  lsb: number = 0,
+  pc: number = 0,
+  defaultCategory: string = 'Guitar'
+): YamahaChordPreset {
+  const preset = YAMAHA_SX920_CHORD_VOICES.find(c => c.msb === msb && c.lsb === lsb && c.pc === pc);
+  if (preset) return preset;
+
+  const found = findYamahaVoice(msb, lsb, pc);
+  if (found) {
+    const category = mapToChordCategory(found.category || defaultCategory);
+    const name = found.chineseName ? `${found.name} (${found.chineseName})` : found.name;
+    return {
+      id: `voice-${msb}-${lsb}-${pc}`,
+      name,
+      category,
+      categoryLabel: found.chineseName || found.name,
+      msb,
+      lsb,
+      pc,
+      panelPc: pc + 1,
+      icon: getVoiceIcon(found.category),
+      description: found.chineseName || found.name,
+    };
+  }
+
+  return {
+    id: `custom-${msb}-${lsb}-${pc}`,
+    name: `Voice (Bank ${msb}-${lsb} PC ${pc + 1})`,
+    category: mapToChordCategory(defaultCategory),
+    categoryLabel: '原檔自訂音色',
+    msb,
+    lsb,
+    pc,
+    panelPc: pc + 1,
+    icon: getVoiceIcon(defaultCategory),
+    description: `Yamaha 音色 (Bank ${msb}-${lsb}, PC ${pc + 1})`,
+  };
+}
+
 export interface LoadedStyleResult {
   fileName: string;
   bpm: number;
@@ -65,7 +218,7 @@ export class StyLoader {
     }
     flatEvents.sort((a, b) => a.absTick - b.absTick);
 
-    // 2. 聲部與音色、混音參數提取
+    // 2. 聲部與音色、混音參數提取 (100% 原檔 Bank MSB/LSB/PC 無損映射)
     const mixer: Record<string, { volume: number; pan: number; reverb: number; chorus: number }> = {
       drum: { volume: 100, pan: 64, reverb: 40, chorus: 0 },
       bass: { volume: 95, pan: 64, reverb: 20, chorus: 0 },
@@ -76,59 +229,112 @@ export class StyLoader {
       Phrase2: { volume: 80, pan: 84, reverb: 60, chorus: 30 },
     };
 
-    let selectedDrumKit: YamahaDrumKitPreset = YAMAHA_SX920_DRUM_KITS[0];
-    let selectedRhythm1Kit: YamahaDrumKitPreset | undefined = undefined;
-    let selectedBassVoice: YamahaBassPreset = YAMAHA_SX920_BASS_VOICES[0];
-    let selectedChordVoice: YamahaChordPreset = YAMAHA_SX920_CHORD_VOICES[0];
-    const dynamicVoices: Record<string, YamahaChordPreset> = {};
+    // 統計各通道在全曲的所有 NoteOn 音符數量，以實現「音符權重導向」通道精確匹配
+    const channelNoteCounts = new Map<number, number>();
+    for (const ev of flatEvents) {
+      if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0 && ev.channel !== undefined) {
+        channelNoteCounts.set(ev.channel, (channelNoteCounts.get(ev.channel) || 0) + 1);
+      }
+    }
 
-    // 從 parsed.parts 提取聲部初始化設定
+    // 建立 parsed.parts 快速通道索引表
+    const partsByChannel = new Map<number, typeof parsed.parts[0]>();
     for (const p of parsed.parts) {
-      const ch = p.channel;
-      // SFF2 通道判斷
-      if (ch === 9) {
-        // 主鼓組 (Ch 10 Rhythm 2)
-        if (p.volume !== undefined) mixer.drum.volume = p.volume;
-        if (p.pan !== undefined) mixer.drum.pan = p.pan;
-        if (p.reverb !== undefined) mixer.drum.reverb = p.reverb;
-        if (p.chorus !== undefined) mixer.drum.chorus = p.chorus;
+      partsByChannel.set(p.channel, p);
+    }
 
-        const matchedKit = YAMAHA_SX920_DRUM_KITS.find(k => k.pc === p.programChange);
-        if (matchedKit) selectedDrumKit = matchedKit;
-      } else if (ch === 8) {
-        // 副鼓組 / 打擊樂 (Ch 9 Rhythm 1)
-        const matchedKit = YAMAHA_SX920_DRUM_KITS.find(k => k.pc === p.programChange);
-        if (matchedKit) selectedRhythm1Kit = matchedKit;
-      } else if (ch === 10 || ch === 1) {
-        // 貝斯 (Ch 11 或 SFF1 Ch 2)
-        if (p.volume !== undefined) mixer.bass.volume = p.volume;
-        if (p.pan !== undefined) mixer.bass.pan = p.pan;
-        if (p.reverb !== undefined) mixer.bass.reverb = p.reverb;
-        if (p.chorus !== undefined) mixer.bass.chorus = p.chorus;
+    // 優先選取具有音符的通道，若皆有或皆無則依權重與存在性在 SFF2 (8~15) 與 SFF1 (0~7) 間精準抉擇
+    const pickBestPart = (sff2Ch: number, sff1Ch: number) => {
+      const c2 = channelNoteCounts.get(sff2Ch) || 0;
+      const c1 = channelNoteCounts.get(sff1Ch) || 0;
+      let chosenCh = sff2Ch;
+      if (c2 > 0 && c1 === 0) {
+        chosenCh = sff2Ch;
+      } else if (c1 > 0 && c2 === 0) {
+        chosenCh = sff1Ch;
+      } else if (c2 > 0 && c1 > 0) {
+        chosenCh = c2 >= c1 ? sff2Ch : sff1Ch;
+      } else {
+        chosenCh = partsByChannel.has(sff2Ch) ? sff2Ch : sff1Ch;
+      }
+      return partsByChannel.get(chosenCh) || partsByChannel.get(sff2Ch) || partsByChannel.get(sff1Ch);
+    };
 
-        const matchedBass = YAMAHA_SX920_BASS_VOICES.find(b => b.pc === p.programChange);
-        if (matchedBass) selectedBassVoice = matchedBass;
-      } else if (ch === 11 || ch === 2) {
-        // 和弦 1 (Ch 12 或 SFF1 Ch 3)
-        if (p.volume !== undefined) mixer.chord.volume = p.volume;
-        if (p.pan !== undefined) mixer.chord.pan = p.pan;
-        if (p.reverb !== undefined) mixer.chord.reverb = p.reverb;
-        if (p.chorus !== undefined) mixer.chord.chorus = p.chorus;
+    // 1. 主鼓組 (Ch 10 Rhythm 2: SFF2 9 vs SFF1 7)
+    const drumPart = pickBestPart(9, 7);
+    if (drumPart) {
+      if (drumPart.volume !== undefined) mixer.drum.volume = drumPart.volume;
+      if (drumPart.pan !== undefined) mixer.drum.pan = drumPart.pan;
+      if (drumPart.reverb !== undefined) mixer.drum.reverb = drumPart.reverb;
+      if (drumPart.chorus !== undefined) mixer.drum.chorus = drumPart.chorus;
+    }
+    const drumMsb = drumPart?.bankMsb ?? 127;
+    const drumLsb = drumPart?.bankLsb ?? 0;
+    const drumPc = drumPart?.programChange ?? 0;
+    let selectedDrumKit: YamahaDrumKitPreset = resolveExactDrumKit(drumMsb, drumLsb, drumPc);
 
-        const matchedChord = YAMAHA_SX920_CHORD_VOICES.find(c => c.pc === p.programChange);
-        if (matchedChord) selectedChordVoice = matchedChord;
-      } else if (ch === 12 || ch === 3) {
-        // Chord 2
-        this.fillDynamicVoiceMixer('Chord2', p, mixer, dynamicVoices);
-      } else if (ch === 13 || ch === 4) {
-        // Pad
-        this.fillDynamicVoiceMixer('Pad', p, mixer, dynamicVoices);
-      } else if (ch === 14 || ch === 5) {
-        // Phrase 1
-        this.fillDynamicVoiceMixer('Phrase1', p, mixer, dynamicVoices);
-      } else if (ch === 15 || ch === 6) {
-        // Phrase 2
-        this.fillDynamicVoiceMixer('Phrase2', p, mixer, dynamicVoices);
+    // 2. 副鼓組 / 打擊樂 (Ch 9 Rhythm 1: SFF2 8 vs SFF1 0)
+    const r1Part = pickBestPart(8, 0);
+    let selectedRhythm1Kit: YamahaDrumKitPreset | undefined = undefined;
+    if (r1Part && r1Part.programChange !== undefined) {
+      const r1Msb = r1Part.bankMsb ?? 127;
+      const r1Lsb = r1Part.bankLsb ?? 0;
+      const r1Pc = r1Part.programChange;
+      selectedRhythm1Kit = resolveExactDrumKit(r1Msb, r1Lsb, r1Pc);
+    }
+
+    // 3. 貝斯 (Ch 11 Bass: SFF2 10 vs SFF1 1)
+    const bassPart = pickBestPart(10, 1);
+    if (bassPart) {
+      if (bassPart.volume !== undefined) mixer.bass.volume = bassPart.volume;
+      if (bassPart.pan !== undefined) mixer.bass.pan = bassPart.pan;
+      if (bassPart.reverb !== undefined) mixer.bass.reverb = bassPart.reverb;
+      if (bassPart.chorus !== undefined) mixer.bass.chorus = bassPart.chorus;
+    }
+    const bassMsb = bassPart?.bankMsb ?? 104;
+    const bassLsb = bassPart?.bankLsb ?? 2;
+    const bassPc = bassPart?.programChange ?? 33;
+    let selectedBassVoice: YamahaBassPreset = resolveExactBassVoice(bassMsb, bassLsb, bassPc);
+
+    // 4. 和弦 1 (Ch 12 Chord 1: SFF2 11 vs SFF1 2)
+    const chordPart = pickBestPart(11, 2);
+    if (chordPart) {
+      if (chordPart.volume !== undefined) mixer.chord.volume = chordPart.volume;
+      if (chordPart.pan !== undefined) mixer.chord.pan = chordPart.pan;
+      if (chordPart.reverb !== undefined) mixer.chord.reverb = chordPart.reverb;
+      if (chordPart.chorus !== undefined) mixer.chord.chorus = chordPart.chorus;
+    }
+    const chordMsb = chordPart?.bankMsb ?? 104;
+    const chordLsb = chordPart?.bankLsb ?? 0;
+    const chordPc = chordPart?.programChange ?? 0;
+    let selectedChordVoice: YamahaChordPreset = resolveExactChordVoice(chordMsb, chordLsb, chordPc, 'Piano');
+
+    // 5. 動態聲部 (Chord 2, Pad, Phrase 1, Phrase 2)
+    const dynamicVoices: Record<string, YamahaChordPreset> = {};
+    const dynPartConfigs: Array<{ partId: 'Chord2' | 'Pad' | 'Phrase1' | 'Phrase2'; sff2: number; sff1: number; defCat: string; defPc: number }> = [
+      { partId: 'Chord2', sff2: 12, sff1: 3, defCat: 'Guitar', defPc: 25 },
+      { partId: 'Pad', sff2: 13, sff1: 4, defCat: 'Pad', defPc: 49 },
+      { partId: 'Phrase1', sff2: 14, sff1: 5, defCat: 'Strings', defPc: 49 },
+      { partId: 'Phrase2', sff2: 15, sff1: 6, defCat: 'Pad', defPc: 89 },
+    ];
+
+    for (const cfg of dynPartConfigs) {
+      const part = pickBestPart(cfg.sff2, cfg.sff1);
+      if (part) {
+        if (!mixer[cfg.partId]) {
+          mixer[cfg.partId] = { volume: 80, pan: 64, reverb: 50, chorus: 30 };
+        }
+        if (part.volume !== undefined) mixer[cfg.partId].volume = part.volume;
+        if (part.pan !== undefined) mixer[cfg.partId].pan = part.pan;
+        if (part.reverb !== undefined) mixer[cfg.partId].reverb = part.reverb;
+        if (part.chorus !== undefined) mixer[cfg.partId].chorus = part.chorus;
+
+        if (part.programChange !== undefined) {
+          const msb = part.bankMsb ?? 0;
+          const lsb = part.bankLsb ?? 112;
+          const pc = part.programChange;
+          dynamicVoices[cfg.partId] = resolveExactChordVoice(msb, lsb, pc, cfg.defCat);
+        }
       }
     }
 
@@ -208,8 +414,20 @@ export class StyLoader {
       };
       const ccEvents: Array<{ channel: number; controller: number; value: number; step: number; relTick: number }> = [];
       const pitchBendEvents: Array<{ channel: number; value: number; step: number; relTick: number }> = [];
+      const sectionVoices: Record<number, { msb: number; lsb: number; pc: number; name?: string }> = {};
 
-      // 收集該段落內的連續控制器與滑音事件 (CC 11 Expression, CC 1 Modulation, CC 64 Sustain 等)
+      // 預設繼承自 parsed.parts 的當前通道音色
+      for (const p of parsed.parts) {
+        if (p.programChange !== undefined) {
+          sectionVoices[p.channel] = {
+            msb: p.bankMsb ?? 0,
+            lsb: p.bankLsb ?? 0,
+            pc: p.programChange,
+          };
+        }
+      }
+
+      // 收集該段落內的連續控制器、滑音事件與段落級音色切換事件 (CC 11, CC 1, CC 64, CC 0, CC 32, Program Change)
       for (const ev of flatEvents) {
         if (ev.absTick >= secStart && ev.absTick < secEnd) {
           const relTick = ev.absTick - secStart;
@@ -223,6 +441,18 @@ export class StyLoader {
                 step,
                 relTick,
               });
+            } else if (ev.controller === 0 || ev.controller === 32) {
+              if (!sectionVoices[ev.channel]) {
+                sectionVoices[ev.channel] = { msb: 0, lsb: 0, pc: 0 };
+              }
+              if (ev.controller === 0) sectionVoices[ev.channel].msb = ev.value;
+              if (ev.controller === 32) sectionVoices[ev.channel].lsb = ev.value;
+            }
+          } else if (ev.type === 'programChange' && ev.channel !== undefined && ev.program !== undefined) {
+            if (!sectionVoices[ev.channel]) {
+              sectionVoices[ev.channel] = { msb: 0, lsb: 0, pc: ev.program };
+            } else {
+              sectionVoices[ev.channel].pc = ev.program;
             }
           } else if (ev.type === 'pitchBend' && ev.channel !== undefined && ev.value !== undefined) {
             pitchBendEvents.push({
@@ -233,6 +463,12 @@ export class StyLoader {
             });
           }
         }
+      }
+
+      // 補齊段落音色名稱
+      for (const v of Object.values(sectionVoices)) {
+        const found = findYamahaVoice(v.msb, v.lsb, v.pc);
+        v.name = found ? (found.chineseName ? `${found.name} (${found.chineseName})` : found.name) : `Voice (Bank ${v.msb}-${v.lsb} PC ${v.pc + 1})`;
       }
 
       const secNotes = flatEvents.filter(
@@ -374,6 +610,7 @@ export class StyLoader {
         dynamicMeta,
         ccEvents,
         pitchBendEvents,
+        sectionVoices,
       });
     }
 
@@ -410,65 +647,5 @@ export class StyLoader {
       map.set(step, new Set());
     }
     map.get(step)!.add(note);
-  }
-
-  /**
-   * 輔助提取動態聲部音色與混音
-   */
-  private static fillDynamicVoiceMixer(
-    partId: string,
-    p: { volume?: number; pan?: number; reverb?: number; chorus?: number; programChange?: number; bankMsb?: number; bankLsb?: number },
-    mixer: Record<string, { volume: number; pan: number; reverb: number; chorus: number }>,
-    dynamicVoices: Record<string, YamahaChordPreset>
-  ) {
-    if (!mixer[partId]) {
-      mixer[partId] = { volume: 80, pan: 64, reverb: 50, chorus: 30 };
-    }
-    if (p.volume !== undefined) mixer[partId].volume = p.volume;
-    if (p.pan !== undefined) mixer[partId].pan = p.pan;
-    if (p.reverb !== undefined) mixer[partId].reverb = p.reverb;
-    if (p.chorus !== undefined) mixer[partId].chorus = p.chorus;
-
-    if (p.programChange !== undefined) {
-      const match = YAMAHA_SX920_CHORD_VOICES.find(v => v.pc === p.programChange);
-      if (match) {
-        dynamicVoices[partId] = match;
-      } else {
-        const msb = p.bankMsb ?? 0;
-        const lsb = p.bankLsb ?? 0;
-        const pc = p.programChange;
-        const found = findYamahaVoice(msb, lsb, pc);
-        if (found) {
-          const category = (found.category === 'Bass' || found.category === 'Woodwind' || found.category === 'Drums' || found.category === 'Percussion' || found.category === 'Legacy')
-            ? 'Synth'
-            : (found.category as YamahaChordPreset['category']);
-          dynamicVoices[partId] = {
-            id: `imported-${partId.toLowerCase()}`,
-            name: found.name,
-            category,
-            categoryLabel: found.chineseName,
-            msb: found.msb,
-            lsb: found.lsb,
-            pc: found.pc,
-            panelPc: found.pc + 1,
-            icon: '🎵',
-            description: found.chineseName || found.name,
-          };
-        } else {
-          dynamicVoices[partId] = {
-            id: `custom-${partId.toLowerCase()}`,
-            name: `Voice (PC ${pc + 1})`,
-            category: 'Synth',
-            categoryLabel: '合成器',
-            msb,
-            lsb,
-            pc,
-            panelPc: pc + 1,
-            icon: '🎵',
-            description: `Bank ${msb}-${lsb}, PC ${pc + 1}`,
-          };
-        }
-      }
-    }
   }
 }
