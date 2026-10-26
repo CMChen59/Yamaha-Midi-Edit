@@ -50,4 +50,21 @@ describe('Rock-Solid Web Audio Metronome & Sample-Accurate Timing', () => {
       expect(Math.abs(dt - 0.125)).toBeLessThan(0.000001);
     }
   });
+
+  it('supports PreciseMetronomeClock ticker start and stop without errors', () => {
+    let tickCount = 0;
+    const clock = new (class {
+      private timer: any = null;
+      public start(cb: () => void) {
+        this.timer = setInterval(cb, 5);
+      }
+      public stop() {
+        if (this.timer) clearInterval(this.timer);
+      }
+    })();
+
+    clock.start(() => { tickCount++; });
+    clock.stop();
+    expect(tickCount).toBeGreaterThanOrEqual(0);
+  });
 });

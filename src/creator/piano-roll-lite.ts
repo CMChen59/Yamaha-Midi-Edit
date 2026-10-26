@@ -31,6 +31,9 @@ export class PianoRollLite {
   private pattern: Map<number, number> = new Map();
   private selectedVoiceId: string = 'finger-bass';
 
+  // 自適應全段總覽模式 (無論幾小節均自動等寬填滿視窗，無滾動)
+  private isFitMode: boolean = true;
+
   // 快取當前啟用的播放指針 DOM 元素，消除高頻全樹 querySelectorAll 延遲
   private activePlayheadElements: HTMLElement[] = [];
   private stepElementsMap: Map<number, HTMLElement[]> = new Map();
@@ -67,7 +70,30 @@ export class PianoRollLite {
     this.onOpenVoiceSearch = onOpenVoiceSearch;
 
     this.initPitches();
+    if (this.isFitMode) {
+      this.container.classList.add('fit-mode');
+    }
     this.render();
+  }
+
+  public setFitMode(fit: boolean) {
+    this.isFitMode = fit;
+    if (this.container && this.container.classList) {
+      if (typeof this.container.classList.toggle === 'function') {
+        this.container.classList.toggle('fit-mode', fit);
+      } else if (fit) {
+        this.container.classList.add('fit-mode');
+      } else {
+        this.container.classList.remove('fit-mode');
+      }
+      if (fit) {
+        this.resetScroll();
+      }
+    }
+  }
+
+  public getFitMode(): boolean {
+    return this.isFitMode;
   }
 
   public setSoloPlayState(isPlaying: boolean) {
@@ -344,7 +370,8 @@ export class PianoRollLite {
         this.activePlayheadElements.push(el);
       });
 
-      if (autoScroll) {
+      // 在自適應全段總覽模式下，所有小節已 100% 呈現在視窗內，無需滾動與邊界計算
+      if (autoScroll && !this.isFitMode) {
         this.checkPageScroll(stepIndex);
       }
     }

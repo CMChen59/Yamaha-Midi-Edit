@@ -90,6 +90,13 @@ class MockElement {
         this.className = this.className.replace(cls, '').trim();
       },
       contains: (cls: string) => this.className.includes(cls),
+      toggle: (cls: string, force?: boolean) => {
+        const has = this.className.includes(cls);
+        const shouldHave = force !== undefined ? force : !has;
+        if (shouldHave && !has) this.className += ' ' + cls;
+        else if (!shouldHave && has) this.className = this.className.replace(cls, '').trim();
+        return shouldHave;
+      },
     };
   }
 
@@ -144,6 +151,7 @@ describe('Instant Page-Turn Auto-Scroll and Boundary Handling', () => {
   it('manages instant page flipping on DrumStepGrid without jittering', () => {
     const container = new MockElement('div') as any;
     const grid = new DrumStepGrid(container, 8); // 8 bars total
+    grid.setFitMode(false); // 切換為非 Fit 模式 (可捲動之放大編輯模式)
 
     // Start at Step 0: scrollLeft should be 0
     grid.setPlayheadStep(0, true);
@@ -172,6 +180,7 @@ describe('Instant Page-Turn Auto-Scroll and Boundary Handling', () => {
   it('manages instant page flipping on PianoRollLite', () => {
     const container = new MockElement('div') as any;
     const roll = new PianoRollLite(container, 8);
+    roll.setFitMode(false);
 
     roll.setPlayheadStep(0, true);
     expect(container.scrollLeft).toBe(0);
@@ -192,6 +201,7 @@ describe('Instant Page-Turn Auto-Scroll and Boundary Handling', () => {
   it('manages instant page flipping on ChordRollLite', () => {
     const container = new MockElement('div') as any;
     const roll = new ChordRollLite(container, 8);
+    roll.setFitMode(false);
 
     roll.setPlayheadStep(0, true);
     expect(container.scrollLeft).toBe(0);
@@ -209,9 +219,22 @@ describe('Instant Page-Turn Auto-Scroll and Boundary Handling', () => {
     expect(container.scrollLeft).toBe(0);
   });
 
+  it('does not scroll when in Fit Mode (Overview Zoom Mode)', () => {
+    const container = new MockElement('div') as any;
+    const grid = new DrumStepGrid(container, 8);
+    grid.setFitMode(true); // 預設即為 Fit Mode
+
+    container.scrollTo.mockClear();
+    grid.setPlayheadStep(29, true);
+    // 在 Fit Mode 下完全不觸發橫向滾動
+    expect(container.scrollTo).not.toHaveBeenCalled();
+    expect(container.scrollLeft).toBe(0);
+  });
+
   it('does not scroll when autoScroll is disabled', () => {
     const container = new MockElement('div') as any;
     const grid = new DrumStepGrid(container, 8);
+    grid.setFitMode(false);
 
     container.scrollTo.mockClear();
     grid.setPlayheadStep(29, false); // autoScroll = false
