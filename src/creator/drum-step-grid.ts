@@ -69,8 +69,8 @@ export class DrumStepGrid {
   // 緊湊模式旗標：預設為 true (僅顯示該段落有音符之樂器行，徹底隱藏未使用之空白行)
   private isCompactMode: boolean = true;
 
-  // 4 小節整頁翻頁 (Page-by-page) 滾動狀態索引 (0: Bars 1~4, 1: Bars 5~8...)
-  private currentPageIndex: number = 0;
+  // 快取當前啟用的播放指針 DOM 元素，消除高頻全樹 querySelectorAll 延遲
+  private activePlayheadElements: HTMLElement[] = [];
 
   // 當前畫面上啟用的打擊樂行
   private activeVoices: DrumVoiceOption[] = getStandardDefaultDrumVoices();
@@ -534,12 +534,21 @@ export class DrumStepGrid {
   }
 
   public setPlayheadStep(stepIndex: number | null, autoScroll: boolean = true): void {
-    const prev = this.container.querySelectorAll('.step-cell.active-playhead, .step-header-cell.active-playhead');
-    prev.forEach(el => el.classList.remove('active-playhead'));
+    // 1. 快速清除先前步進指示，避免全 DOM 掃描
+    if (this.activePlayheadElements.length > 0) {
+      for (let i = 0; i < this.activePlayheadElements.length; i++) {
+        this.activePlayheadElements[i].classList.remove('active-playhead');
+      }
+      this.activePlayheadElements = [];
+    }
 
     if (stepIndex !== null && stepIndex >= 0) {
-      const current = this.container.querySelectorAll(`[data-step="${stepIndex}"]`);
-      current.forEach(el => el.classList.add('active-playhead'));
+      // 2. 標記當前步進元素並快取
+      const current = this.container.querySelectorAll<HTMLElement>(`[data-step="${stepIndex}"]`);
+      current.forEach(el => {
+        el.classList.add('active-playhead');
+        this.activePlayheadElements.push(el);
+      });
 
       if (autoScroll) {
         this.checkPageScroll(stepIndex);
@@ -548,57 +557,66 @@ export class DrumStepGrid {
   }
 
   public resetScroll(): void {
-    this.currentPageIndex = 0;
     if (!this.container) return;
+    this.container.scrollLeft = 0;
     if (typeof this.container.scrollTo === 'function') {
       this.container.scrollTo({ left: 0 });
     }
-    this.container.scrollLeft = 0;
-  }
-
-  public getCurrentPageIndex(): number {
-    return this.currentPageIndex;
   }
 
   /**
-   * 4 小節整頁翻頁式視窗跟隨 (Page-by-page DAW Scrolling)
-   * 當播放指針處於同一個 4 小節視窗時零重算、零震盪、零定時器干擾；
-   * 跨越至第 5、9、13... 小節時瞬間整頁翻頁切換。
+   * 依據真實可視區域邊界的瞬間整頁翻頁 (Instant Page-Turn Paging)
+   * 1. 游標在可視範圍內時 100% 靜止，零滾動、零動畫、零 CPU 負擔。
+   * 2. 游標抵達螢幕右邊界時，瞬間將下一個小節翻至左側，使用者永遠看得到進行位置。
+   * 3. 循環回到開頭時瞬間歸零。
    */
   private checkPageScroll(stepIndex: number): void {
     if (!this.container) return;
-    const stepsPerBar = this.getStepsPerBar();
-    const currentBar = Math.floor(stepIndex / stepsPerBar);
-    const pageIndex = Math.floor(currentBar / 4);
 
-    // 仍在同一 4 小節頁面範圍內時直接返回，零 DOM 計算、零重排、零效能負擔
-    if (pageIndex === this.currentPageIndex) {
-      return;
-    }
-
-    this.currentPageIndex = pageIndex;
-
-    // 回到第一頁 (第 1~4 小節)
-    if (pageIndex === 0) {
-      this.container.scrollLeft = 0;
-      if (typeof this.container.scrollTo === 'function') {
-        this.container.scrollTo({ left: 0 });
+    if (stepIndex === 0) {
+      if (this.container.scrollLeft !== 0) {
+        this.container.scrollLeft = 0;
+        if (typeof this.container.scrollTo === 'function') {
+          this.container.scrollTo({ left: 0 });
+        }
       }
       return;
     }
 
-    // 翻至後續頁面 (第 5~8 小節、第 9~12 小節...)
-    const targetStep = pageIndex * 4 * stepsPerBar;
-    const targetHeader = this.container.querySelector<HTMLElement>(`.step-header-cell[data-step="${targetStep}"]`);
-    if (targetHeader && typeof targetHeader.getBoundingClientRect === 'function' && typeof this.container.getBoundingClientRect === 'function') {
-      const containerRect = this.container.getBoundingClientRect();
-      const headerRect = targetHeader.getBoundingClientRect();
-      const stickyHeader = this.container.querySelector<HTMLElement>('.row-header-label');
-      const stickyRight = (stickyHeader && typeof stickyHeader.getBoundingClientRect === 'function')
-        ? stickyHeader.getBoundingClientRect().right
-        : containerRect.left + 225;
+    const targetHeader = this.container.querySelector<HTMLElement>(`.step-header-cell[data-step="${stepIndex}"]`);
+    if (!targetHeader || typeof targetHeader.getBoundingClientRect !== 'function' || typeof this.container.getBoundingClientRect !== 'function') {
+      return;
+    }
 
-      const diff = headerRect.left - stickyRight;
+    const panelRect = this.container.getBoundingClientRect();
+    const targetRect = targetHeader.getBoundingClientRect();
+    const stickyHeader = this.container.querySelector<HTMLElement>('.row-header-label');
+    const stickyRight = (stickyHeader && typeof stickyHeader.getBoundingClientRect === 'function')
+      ? stickyHeader.getBoundingClientRect().right
+      : panelRect.left + 230;
+
+    // 當游標接近或超出可視區域右側 (保留 35px 邊界緩衝)
+    if (targetRect.right > panelRect.right - 35) {
+      const stepsPerBar = this.getStepsPerBar();
+      const currentBar = Math.floor(stepIndex / stepsPerBar);
+      const nextBarStart = Math.min(this.totalBars - 1, currentBar + 1) * stepsPerBar;
+      const alignStep = (stepIndex % stepsPerBar >= stepsPerBar / 2) ? nextBarStart : currentBar * stepsPerBar;
+
+      let alignHeader = this.container.querySelector<HTMLElement>(`.step-header-cell[data-step="${alignStep}"]`);
+      if (!alignHeader || typeof alignHeader.getBoundingClientRect !== 'function' || alignHeader.getBoundingClientRect().left <= stickyRight) {
+        alignHeader = targetHeader;
+      }
+      const alignRect = alignHeader.getBoundingClientRect();
+      const diff = alignRect.left - stickyRight;
+      if (diff > 0) {
+        const targetLeft = Math.max(0, this.container.scrollLeft + diff);
+        this.container.scrollLeft = targetLeft;
+        if (typeof this.container.scrollTo === 'function') {
+          this.container.scrollTo({ left: targetLeft });
+        }
+      }
+    } else if (targetRect.left < stickyRight - 10) {
+      const diff = targetRect.left - stickyRight;
       const targetLeft = Math.max(0, this.container.scrollLeft + diff);
       this.container.scrollLeft = targetLeft;
       if (typeof this.container.scrollTo === 'function') {
@@ -611,7 +629,7 @@ export class DrumStepGrid {
    * 渲染完整步進網格
    */
   public render(): void {
-    this.currentPageIndex = 0;
+    this.activePlayheadElements = [];
     this.container.innerHTML = '';
 
     const stepsPerBar = this.getStepsPerBar();

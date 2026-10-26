@@ -135,6 +135,7 @@ export class CreatorApp {
   private mutedChannels: Set<string> = new Set();
   private soloChannels: Set<string> = new Set();
   private playbackTimer: any = null;
+  private nextStepTargetTime: number = 0;
   private currentPlayStep: number = 0;
   private chainedAuditionMode: 'intro-to-main' | 'main-to-ending' | null = null;
   private chainedTimer: any = null;
@@ -1953,9 +1954,9 @@ export class CreatorApp {
     const playBass = playTrack === 'all' || playTrack === 'bass';
     const playChord = playTrack === 'all' || playTrack === 'chord';
 
-    this.drumGrid?.setPlayheadStep((playDrum || playRhythm1) ? currentStep : null, this.autoScrollEnabled);
-    this.bassRoll?.setPlayheadStep(playBass ? currentStep : null, this.autoScrollEnabled);
-    this.chordRoll?.setPlayheadStep(playChord ? currentStep : null, this.autoScrollEnabled);
+    // ──────────────────────────────────────────────────────────────────
+    // 第一優先：音訊與 MIDI 發送最優先執行 (保證零延遲、拍子絕不被 DOM 卡頓拖慢)
+    // ──────────────────────────────────────────────────────────────────
 
     // 1. 即時推送該步進的連續控制器事件 (CC 11 Expression, CC 1 Mod, CC 64 Sustain 等)
     if (this.state.isMidiConnected && store?.ccEvents) {
@@ -1980,7 +1981,6 @@ export class CreatorApp {
     // 3. 動態伴奏音軌 (Chord 2, Pad, Phrase 1, Phrase 2)
     this.dynamicTracks.forEach((t, partId) => {
       const playThis = playTrack === 'all' || playTrack === partId;
-      t.roll.setPlayheadStep(playThis ? currentStep : null, this.autoScrollEnabled);
       if (playThis) {
         const notes = t.roll.getActiveNotesAtStep(currentStep);
         for (const note of notes) {
@@ -2056,43 +2056,56 @@ export class CreatorApp {
         }
       }
     }
+
+    // ──────────────────────────────────────────────────────────────────
+    // 第二優先：視覺游標更新與畫面自動跳轉 (在聲音發送完畢後執行)
+    // ──────────────────────────────────────────────────────────────────
+    this.drumGrid?.setPlayheadStep((playDrum || playRhythm1) ? currentStep : null, this.autoScrollEnabled);
+    this.bassRoll?.setPlayheadStep(playBass ? currentStep : null, this.autoScrollEnabled);
+    this.chordRoll?.setPlayheadStep(playChord ? currentStep : null, this.autoScrollEnabled);
+    this.dynamicTracks.forEach((t, partId) => {
+      const playThis = playTrack === 'all' || playTrack === partId;
+      t.roll.setPlayheadStep(playThis ? currentStep : null, this.autoScrollEnabled);
+    });
   }
 
+  /**
+   * 自適應漂移補償計時器 (Self-Correcting Drift-Compensated Metronome Clock)
+   * 徹底杜絕 setInterval 的累積漂移與事件迴圈卡頓，維持微秒級精準節奏！
+   */
   private startPlaybackTimer() {
     this.stopPlaybackTimer();
     const stepIntervalMs = this.getStepIntervalMs();
+    this.nextStepTargetTime = performance.now();
 
     const tick = () => {
       if (!this.state.isPlaying) return;
       const stepsPerBar = this.drumGrid?.getStepsPerBar() || 16;
       const totalSteps = this.state.totalBars * stepsPerBar;
 
+      // 1. 執行當前步進發聲與畫面推進
       this.playAuditionStep(this.currentPlayStep, stepIntervalMs);
       this.currentPlayStep = (this.currentPlayStep + 1) % totalSteps;
+
+      // 2. 計算下次目標時間並校正執行緒偏差 (Drift Compensation)
+      this.nextStepTargetTime += stepIntervalMs;
+      const now = performance.now();
+      const delay = Math.max(0, this.nextStepTargetTime - now);
+      this.playbackTimer = setTimeout(tick, delay);
     };
 
     tick();
-    this.playbackTimer = setInterval(tick, stepIntervalMs);
   }
 
   private restartPlaybackTimer() {
     if (this.state.isPlaying) {
-      this.stopPlaybackTimer();
-      const stepIntervalMs = this.getStepIntervalMs();
-      this.playbackTimer = setInterval(() => {
-        if (!this.state.isPlaying) return;
-        const stepsPerBar = this.drumGrid?.getStepsPerBar() || 16;
-        const totalSteps = this.state.totalBars * stepsPerBar;
-
-        this.playAuditionStep(this.currentPlayStep, stepIntervalMs);
-        this.currentPlayStep = (this.currentPlayStep + 1) % totalSteps;
-      }, stepIntervalMs);
+      this.startPlaybackTimer();
     }
   }
 
   private stopPlaybackTimer() {
     if (this.playbackTimer) {
-      clearInterval(this.playbackTimer);
+      clearTimeout(this.playbackTimer);
       this.playbackTimer = null;
     }
   }

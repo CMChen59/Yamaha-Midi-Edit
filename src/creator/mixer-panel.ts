@@ -43,6 +43,8 @@ export class MixerPanel {
   private channels: Map<string, MixerChannelInfo> = new Map();
   private isVisibleState: boolean = false;
   private vuDecayTimers: Map<string, any> = new Map();
+  private vuFills: Map<string, HTMLElement> = new Map();
+  private vuPeaks: Map<string, HTMLElement> = new Map();
 
   constructor(container: HTMLElement, callbacks: MixerPanelCallbacks) {
     this.container = container;
@@ -62,8 +64,8 @@ export class MixerPanel {
    * @param velocity 音符力度 (1 ~ 127)
    */
   public triggerVuMeter(id: string, velocity: number) {
-    const fillEl = this.container.querySelector<HTMLElement>(`[data-vu-fill="${id}"]`);
-    const peakEl = this.container.querySelector<HTMLElement>(`[data-vu-peak="${id}"]`);
+    const fillEl = this.vuFills.get(id) || this.container.querySelector<HTMLElement>(`[data-vu-fill="${id}"]`);
+    const peakEl = this.vuPeaks.get(id) || this.container.querySelector<HTMLElement>(`[data-vu-peak="${id}"]`);
     if (!fillEl) return;
 
     // 將 MIDI 力度 1~127 映射為 12% ~ 100% 音量表高度
@@ -517,6 +519,18 @@ export class MixerPanel {
 
     wrapper.appendChild(stripsContainer);
     this.container.appendChild(wrapper);
+
+    // 建立 VU 表 DOM 快取，消除音符發聲時的 querySelector 瓶頸
+    this.vuFills.clear();
+    this.vuPeaks.clear();
+    this.container.querySelectorAll<HTMLElement>('[data-vu-fill]').forEach(el => {
+      const id = el.getAttribute('data-vu-fill');
+      if (id) this.vuFills.set(id, el);
+    });
+    this.container.querySelectorAll<HTMLElement>('[data-vu-peak]').forEach(el => {
+      const id = el.getAttribute('data-vu-peak');
+      if (id) this.vuPeaks.set(id, el);
+    });
 
     // 綁定頂部工具按鈕
     const btnPlayAll = wrapper.querySelector('#btn-mixer-play-all');

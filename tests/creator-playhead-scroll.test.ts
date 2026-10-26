@@ -98,6 +98,28 @@ class MockElement {
   });
 
   public getBoundingClientRect() {
+    if (this.dataset.step !== undefined || this.dataset.chordStep !== undefined) {
+      const step = parseInt(this.dataset.step || this.dataset.chordStep || '0', 10);
+      const left = 330 + step * 26 - this.scrollLeft;
+      return {
+        left,
+        right: left + 26,
+        width: 26,
+        top: 0,
+        bottom: 22,
+        height: 22,
+      };
+    }
+    if (this.className.includes('row-header-label') || this.className.includes('piano-key-label')) {
+      return {
+        left: 100,
+        right: 330,
+        width: 230,
+        top: 0,
+        bottom: 22,
+        height: 22,
+      };
+    }
     return {
       left: 100,
       right: 1100,
@@ -118,97 +140,73 @@ import { DrumStepGrid } from '../src/creator/drum-step-grid';
 import { PianoRollLite } from '../src/creator/piano-roll-lite';
 import { ChordRollLite } from '../src/creator/chord-roll-lite';
 
-describe('DAW Page-by-Page Auto-Scroll and Boundary Handling', () => {
-  it('manages 4-bar page transitions on DrumStepGrid without jittering', () => {
+describe('Instant Page-Turn Auto-Scroll and Boundary Handling', () => {
+  it('manages instant page flipping on DrumStepGrid without jittering', () => {
     const container = new MockElement('div') as any;
     const grid = new DrumStepGrid(container, 8); // 8 bars total
 
-    expect(grid.getCurrentPageIndex()).toBe(0);
-
-    // Bars 1~4 (steps 0 to 63): should remain on Page 0
+    // Start at Step 0: scrollLeft should be 0
     grid.setPlayheadStep(0, true);
-    expect(grid.getCurrentPageIndex()).toBe(0);
+    expect(container.scrollLeft).toBe(0);
 
     container.scrollTo.mockClear();
-    grid.setPlayheadStep(16, true); // Bar 2
-    grid.setPlayheadStep(32, true); // Bar 3
-    grid.setPlayheadStep(48, true); // Bar 4
-    grid.setPlayheadStep(63, true); // End of Bar 4
-
-    // Crucial: no scrolling triggered during Bars 1~4
+    // Steps within visible screen bounds (steps 1 to 20): should NOT scroll
+    grid.setPlayheadStep(8, true);
+    grid.setPlayheadStep(16, true);
     expect(container.scrollTo).not.toHaveBeenCalled();
-    expect(grid.getCurrentPageIndex()).toBe(0);
 
-    // Step 64 (Start of Bar 5): turns to Page 1
-    grid.setPlayheadStep(64, true);
-    expect(grid.getCurrentPageIndex()).toBe(1);
-    expect(container.scrollTo).toHaveBeenCalled();
+    // Step 29: hits the right edge (right > 1100 - 35 = 1065)
+    // Should trigger instant page flip!
+    grid.setPlayheadStep(29, true);
+    expect(container.scrollLeft).toBeGreaterThan(0);
 
-    // Bars 5~8 (steps 65 to 127): should remain on Page 1 without re-scrolling
-    container.scrollTo.mockClear();
-    grid.setPlayheadStep(80, true); // Bar 6
-    grid.setPlayheadStep(96, true); // Bar 7
-    grid.setPlayheadStep(127, true); // End of Bar 8
-    expect(container.scrollTo).not.toHaveBeenCalled();
-    expect(grid.getCurrentPageIndex()).toBe(1);
-
-    // Loop back to Step 0: turns back to Page 0
+    // Loop back to Step 0: instantly resets to 0
     grid.setPlayheadStep(0, true);
-    expect(grid.getCurrentPageIndex()).toBe(0);
-    expect(container.scrollTo).toHaveBeenCalledWith({ left: 0 });
+    expect(container.scrollLeft).toBe(0);
 
     // resetScroll explicitly resets to 0
     grid.resetScroll();
-    expect(grid.getCurrentPageIndex()).toBe(0);
-    expect(container.scrollTo).toHaveBeenCalledWith({ left: 0 });
+    expect(container.scrollLeft).toBe(0);
   });
 
-  it('manages 4-bar page transitions on PianoRollLite', () => {
+  it('manages instant page flipping on PianoRollLite', () => {
     const container = new MockElement('div') as any;
     const roll = new PianoRollLite(container, 8);
 
-    expect(roll.getCurrentPageIndex()).toBe(0);
-
-    // Steps within Bars 1~4
     roll.setPlayheadStep(0, true);
-    container.scrollTo.mockClear();
-    roll.setPlayheadStep(32, true);
-    expect(container.scrollTo).not.toHaveBeenCalled();
-    expect(roll.getCurrentPageIndex()).toBe(0);
+    expect(container.scrollLeft).toBe(0);
 
-    // Step 64 crosses into Bar 5 -> page 1
-    roll.setPlayheadStep(64, true);
-    expect(roll.getCurrentPageIndex()).toBe(1);
-    expect(container.scrollTo).toHaveBeenCalled();
+    container.scrollTo.mockClear();
+    roll.setPlayheadStep(12, true);
+    expect(container.scrollTo).not.toHaveBeenCalled();
+
+    // Step 29 hits right edge -> page flip
+    roll.setPlayheadStep(29, true);
+    expect(container.scrollLeft).toBeGreaterThan(0);
 
     // Reset
     roll.resetScroll();
-    expect(roll.getCurrentPageIndex()).toBe(0);
-    expect(container.scrollTo).toHaveBeenCalledWith({ left: 0 });
+    expect(container.scrollLeft).toBe(0);
   });
 
-  it('manages 4-bar page transitions on ChordRollLite', () => {
+  it('manages instant page flipping on ChordRollLite', () => {
     const container = new MockElement('div') as any;
     const roll = new ChordRollLite(container, 8);
 
-    expect(roll.getCurrentPageIndex()).toBe(0);
-
-    // Steps within Bars 1~4
     roll.setPlayheadStep(0, true);
-    container.scrollTo.mockClear();
-    roll.setPlayheadStep(48, true);
-    expect(container.scrollTo).not.toHaveBeenCalled();
-    expect(roll.getCurrentPageIndex()).toBe(0);
+    expect(container.scrollLeft).toBe(0);
 
-    // Step 64 crosses into Bar 5 -> page 1
-    roll.setPlayheadStep(64, true);
-    expect(roll.getCurrentPageIndex()).toBe(1);
-    expect(container.scrollTo).toHaveBeenCalled();
+    container.scrollTo.mockClear();
+    roll.setPlayheadStep(12, true);
+    expect(container.scrollTo).not.toHaveBeenCalled();
+
+    // Step 29 hits right edge -> page flip
+    roll.setPlayheadStep(29, true);
+    expect(container.scrollLeft).toBeGreaterThan(0);
 
     // Reset
     roll.resetScroll();
-    expect(roll.getCurrentPageIndex()).toBe(0);
-    expect(container.scrollTo).toHaveBeenCalledWith({ left: 0 });
+    expect(container.scrollLeft).toBe(0);
   });
 
   it('does not scroll when autoScroll is disabled', () => {
@@ -216,8 +214,8 @@ describe('DAW Page-by-Page Auto-Scroll and Boundary Handling', () => {
     const grid = new DrumStepGrid(container, 8);
 
     container.scrollTo.mockClear();
-    grid.setPlayheadStep(64, false); // autoScroll = false
-    expect(grid.getCurrentPageIndex()).toBe(0);
+    grid.setPlayheadStep(29, false); // autoScroll = false
     expect(container.scrollTo).not.toHaveBeenCalled();
+    expect(container.scrollLeft).toBe(0);
   });
 });

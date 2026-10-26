@@ -31,8 +31,8 @@ export class PianoRollLite {
   private pattern: Map<number, number> = new Map();
   private selectedVoiceId: string = 'finger-bass';
 
-  // 4 小節整頁翻頁 (Page-by-page) 滾動狀態索引 (0: Bars 1~4, 1: Bars 5~8...)
-  private currentPageIndex: number = 0;
+  // 快取當前啟用的播放指針 DOM 元素，消除高頻全樹 querySelectorAll 延遲
+  private activePlayheadElements: HTMLElement[] = [];
 
   private onPatternChange?: () => void;
   private onTriggerNote?: (note: number, velocity: number) => void;
@@ -326,12 +326,19 @@ export class PianoRollLite {
   }
 
   public setPlayheadStep(stepIndex: number | null, autoScroll: boolean = true): void {
-    const prev = this.container.querySelectorAll('.step-cell.active-playhead, .step-header-cell.active-playhead');
-    prev.forEach(el => el.classList.remove('active-playhead'));
+    if (this.activePlayheadElements.length > 0) {
+      for (let i = 0; i < this.activePlayheadElements.length; i++) {
+        this.activePlayheadElements[i].classList.remove('active-playhead');
+      }
+      this.activePlayheadElements = [];
+    }
 
     if (stepIndex !== null && stepIndex >= 0) {
-      const current = this.container.querySelectorAll(`[data-step="${stepIndex}"]`);
-      current.forEach(el => el.classList.add('active-playhead'));
+      const current = this.container.querySelectorAll<HTMLElement>(`[data-step="${stepIndex}"]`);
+      current.forEach(el => {
+        el.classList.add('active-playhead');
+        this.activePlayheadElements.push(el);
+      });
 
       if (autoScroll) {
         this.checkPageScroll(stepIndex);
@@ -340,52 +347,63 @@ export class PianoRollLite {
   }
 
   public resetScroll(): void {
-    this.currentPageIndex = 0;
     if (!this.container) return;
+    this.container.scrollLeft = 0;
     if (typeof this.container.scrollTo === 'function') {
       this.container.scrollTo({ left: 0 });
     }
-    this.container.scrollLeft = 0;
-  }
-
-  public getCurrentPageIndex(): number {
-    return this.currentPageIndex;
   }
 
   /**
-   * 4 小節整頁翻頁式視窗跟隨 (Page-by-page DAW Scrolling)
+   * 依據真實可視區域邊界的瞬間整頁翻頁 (Instant Page-Turn Paging)
    */
   private checkPageScroll(stepIndex: number): void {
     if (!this.container) return;
-    const stepsPerBar = this.getStepsPerBar();
-    const currentBar = Math.floor(stepIndex / stepsPerBar);
-    const pageIndex = Math.floor(currentBar / 4);
 
-    if (pageIndex === this.currentPageIndex) {
-      return;
-    }
-
-    this.currentPageIndex = pageIndex;
-
-    if (pageIndex === 0) {
-      this.container.scrollLeft = 0;
-      if (typeof this.container.scrollTo === 'function') {
-        this.container.scrollTo({ left: 0 });
+    if (stepIndex === 0) {
+      if (this.container.scrollLeft !== 0) {
+        this.container.scrollLeft = 0;
+        if (typeof this.container.scrollTo === 'function') {
+          this.container.scrollTo({ left: 0 });
+        }
       }
       return;
     }
 
-    const targetStep = pageIndex * 4 * stepsPerBar;
-    const targetHeader = this.container.querySelector<HTMLElement>(`.step-header-cell[data-step="${targetStep}"]`);
-    if (targetHeader && typeof targetHeader.getBoundingClientRect === 'function' && typeof this.container.getBoundingClientRect === 'function') {
-      const containerRect = this.container.getBoundingClientRect();
-      const headerRect = targetHeader.getBoundingClientRect();
-      const stickyHeader = this.container.querySelector<HTMLElement>('.row-header-label, .piano-key-label');
-      const stickyRight = (stickyHeader && typeof stickyHeader.getBoundingClientRect === 'function')
-        ? stickyHeader.getBoundingClientRect().right
-        : containerRect.left + 225;
+    const targetHeader = this.container.querySelector<HTMLElement>(`.step-header-cell[data-step="${stepIndex}"]`);
+    if (!targetHeader || typeof targetHeader.getBoundingClientRect !== 'function' || typeof this.container.getBoundingClientRect !== 'function') {
+      return;
+    }
 
-      const diff = headerRect.left - stickyRight;
+    const panelRect = this.container.getBoundingClientRect();
+    const targetRect = targetHeader.getBoundingClientRect();
+    const stickyHeader = this.container.querySelector<HTMLElement>('.row-header-label, .piano-key-label');
+    const stickyRight = (stickyHeader && typeof stickyHeader.getBoundingClientRect === 'function')
+      ? stickyHeader.getBoundingClientRect().right
+      : panelRect.left + 230;
+
+    // 當游標接近或超出可視區域右側 (保留 35px 邊界緩衝)
+    if (targetRect.right > panelRect.right - 35) {
+      const stepsPerBar = this.getStepsPerBar();
+      const currentBar = Math.floor(stepIndex / stepsPerBar);
+      const nextBarStart = Math.min(this.totalBars - 1, currentBar + 1) * stepsPerBar;
+      const alignStep = (stepIndex % stepsPerBar >= stepsPerBar / 2) ? nextBarStart : currentBar * stepsPerBar;
+
+      let alignHeader = this.container.querySelector<HTMLElement>(`.step-header-cell[data-step="${alignStep}"]`);
+      if (!alignHeader || typeof alignHeader.getBoundingClientRect !== 'function' || alignHeader.getBoundingClientRect().left <= stickyRight) {
+        alignHeader = targetHeader;
+      }
+      const alignRect = alignHeader.getBoundingClientRect();
+      const diff = alignRect.left - stickyRight;
+      if (diff > 0) {
+        const targetLeft = Math.max(0, this.container.scrollLeft + diff);
+        this.container.scrollLeft = targetLeft;
+        if (typeof this.container.scrollTo === 'function') {
+          this.container.scrollTo({ left: targetLeft });
+        }
+      }
+    } else if (targetRect.left < stickyRight - 10) {
+      const diff = targetRect.left - stickyRight;
       const targetLeft = Math.max(0, this.container.scrollLeft + diff);
       this.container.scrollLeft = targetLeft;
       if (typeof this.container.scrollTo === 'function') {
@@ -431,7 +449,7 @@ export class PianoRollLite {
    * 採用與鼓組完全一致的 steps-container -> bar-group -> beat-group 橫向流式排版
    */
   public render() {
-    this.currentPageIndex = 0;
+    this.activePlayheadElements = [];
     this.container.innerHTML = '';
 
     const stepsPerBar = this.getStepsPerBar();
