@@ -31,15 +31,6 @@ export class PianoRollLite {
   private pattern: Map<number, number> = new Map();
   private selectedVoiceId: string = 'finger-bass';
 
-  // 自適應全段總覽模式 (無論幾小節均自動等寬填滿視窗，無滾動)
-  private isFitMode: boolean = true;
-
-  // 快取當前啟用的播放指針 DOM 元素，消除高頻全樹 querySelectorAll 延遲
-  private activePlayheadElements: HTMLElement[] = [];
-  private stepElementsMap: Map<number, HTMLElement[]> = new Map();
-  private stepHeaderMap: Map<number, HTMLElement> = new Map();
-  private stickyHeaderElement: HTMLElement | null = null;
-
   private onPatternChange?: () => void;
   private onTriggerNote?: (note: number, velocity: number) => void;
   private onBassVoiceChange?: (voiceId: string) => void;
@@ -70,30 +61,7 @@ export class PianoRollLite {
     this.onOpenVoiceSearch = onOpenVoiceSearch;
 
     this.initPitches();
-    if (this.isFitMode) {
-      this.container.classList.add('fit-mode');
-    }
     this.render();
-  }
-
-  public setFitMode(fit: boolean) {
-    this.isFitMode = fit;
-    if (this.container && this.container.classList) {
-      if (typeof this.container.classList.toggle === 'function') {
-        this.container.classList.toggle('fit-mode', fit);
-      } else if (fit) {
-        this.container.classList.add('fit-mode');
-      } else {
-        this.container.classList.remove('fit-mode');
-      }
-      if (fit) {
-        this.resetScroll();
-      }
-    }
-  }
-
-  public getFitMode(): boolean {
-    return this.isFitMode;
   }
 
   public setSoloPlayState(isPlaying: boolean) {
@@ -354,92 +322,13 @@ export class PianoRollLite {
     return note !== undefined ? [note] : [];
   }
 
-  public setPlayheadStep(stepIndex: number | null, autoScroll: boolean = true): void {
-    if (this.activePlayheadElements.length > 0) {
-      for (let i = 0; i < this.activePlayheadElements.length; i++) {
-        this.activePlayheadElements[i].classList.remove('active-playhead');
-      }
-      this.activePlayheadElements = [];
-    }
+  public setPlayheadStep(stepIndex: number | null): void {
+    const prev = this.container.querySelectorAll('.step-cell.active-playhead, .step-header-cell.active-playhead');
+    prev.forEach(el => el.classList.remove('active-playhead'));
 
     if (stepIndex !== null && stepIndex >= 0) {
-      const cached = this.stepElementsMap.get(stepIndex);
-      const current = (cached && cached.length > 0) ? cached : this.container.querySelectorAll<HTMLElement>(`[data-step="${stepIndex}"]`);
-      current.forEach(el => {
-        el.classList.add('active-playhead');
-        this.activePlayheadElements.push(el);
-      });
-
-      // 在自適應全段總覽模式下，所有小節已 100% 呈現在視窗內，無需滾動與邊界計算
-      if (autoScroll && !this.isFitMode) {
-        this.checkPageScroll(stepIndex);
-      }
-    }
-  }
-
-  public resetScroll(): void {
-    if (!this.container) return;
-    this.container.scrollLeft = 0;
-    if (typeof this.container.scrollTo === 'function') {
-      this.container.scrollTo({ left: 0 });
-    }
-  }
-
-  /**
-   * 依據真實可視區域邊界的瞬間整頁翻頁 (Instant Page-Turn Paging)
-   */
-  private checkPageScroll(stepIndex: number): void {
-    if (!this.container) return;
-
-    if (stepIndex === 0) {
-      if (this.container.scrollLeft !== 0) {
-        this.container.scrollLeft = 0;
-        if (typeof this.container.scrollTo === 'function') {
-          this.container.scrollTo({ left: 0 });
-        }
-      }
-      return;
-    }
-
-    const targetHeader = this.stepHeaderMap.get(stepIndex) || this.container.querySelector<HTMLElement>(`.step-header-cell[data-step="${stepIndex}"]`);
-    if (!targetHeader || typeof targetHeader.getBoundingClientRect !== 'function' || typeof this.container.getBoundingClientRect !== 'function') {
-      return;
-    }
-
-    const panelRect = this.container.getBoundingClientRect();
-    const targetRect = targetHeader.getBoundingClientRect();
-    const stickyHeader = this.stickyHeaderElement || this.container.querySelector<HTMLElement>('.row-header-label, .piano-key-label');
-    const stickyRight = (stickyHeader && typeof stickyHeader.getBoundingClientRect === 'function')
-      ? stickyHeader.getBoundingClientRect().right
-      : panelRect.left + 230;
-
-    // 當游標接近或超出可視區域右側 (保留 35px 邊界緩衝)
-    if (targetRect.right > panelRect.right - 35) {
-      const stepsPerBar = this.getStepsPerBar();
-      const currentBar = Math.floor(stepIndex / stepsPerBar);
-      const nextBarStart = Math.min(this.totalBars - 1, currentBar + 1) * stepsPerBar;
-      const alignStep = (stepIndex % stepsPerBar >= stepsPerBar / 2) ? nextBarStart : currentBar * stepsPerBar;
-
-      let alignHeader = this.stepHeaderMap.get(alignStep) || this.container.querySelector<HTMLElement>(`.step-header-cell[data-step="${alignStep}"]`);
-      if (!alignHeader || typeof alignHeader.getBoundingClientRect !== 'function' || alignHeader.getBoundingClientRect().left <= stickyRight) {
-        alignHeader = targetHeader;
-      }
-      const alignRect = alignHeader.getBoundingClientRect();
-      const diff = alignRect.left - stickyRight;
-      if (diff > 0) {
-        const targetLeft = Math.max(0, this.container.scrollLeft + diff);
-        this.container.scrollLeft = targetLeft;
-        if (typeof this.container.scrollTo === 'function') {
-          this.container.scrollTo({ left: targetLeft });
-        }
-      }
-    } else if (targetRect.left < stickyRight - 10) {
-      const diff = targetRect.left - stickyRight;
-      const targetLeft = Math.max(0, this.container.scrollLeft + diff);
-      this.container.scrollLeft = targetLeft;
-      if (typeof this.container.scrollTo === 'function') {
-        this.container.scrollTo({ left: targetLeft });
-      }
+      const current = this.container.querySelectorAll(`[data-step="${stepIndex}"]`);
+      current.forEach(el => el.classList.add('active-playhead'));
     }
   }
 
@@ -480,10 +369,6 @@ export class PianoRollLite {
    * 採用與鼓組完全一致的 steps-container -> bar-group -> beat-group 橫向流式排版
    */
   public render() {
-    this.activePlayheadElements = [];
-    this.stepElementsMap.clear();
-    this.stepHeaderMap.clear();
-    this.stickyHeaderElement = null;
     this.container.innerHTML = '';
 
     const stepsPerBar = this.getStepsPerBar();
@@ -585,7 +470,6 @@ export class PianoRollLite {
       </span>
     `;
     headerRow.appendChild(headerCorner);
-    this.stickyHeaderElement = headerCorner;
 
     const headerStepsContainer = document.createElement('div');
     headerStepsContainer.className = 'steps-container';
@@ -604,13 +488,6 @@ export class PianoRollLite {
           const subClass = sub === 0 ? 'beat-start eighth-cell' : (sub === 2 && stepsPerBeat === 4 ? 'eighth-offbeat eighth-cell' : (stepsPerBeat === 4 ? 'sixteenth-cell' : ''));
           stepHeader.className = `step-header-cell bass-header-cell ${subClass}`;
           stepHeader.dataset.step = `${stepIdx}`;
-          this.stepHeaderMap.set(stepIdx, stepHeader);
-          let hArr = this.stepElementsMap.get(stepIdx);
-          if (!hArr) {
-            hArr = [];
-            this.stepElementsMap.set(stepIdx, hArr);
-          }
-          hArr.push(stepHeader);
 
           if (sub === 0) {
             stepHeader.innerHTML = `<span class="beat-num">${beat + 1}</span>`;
@@ -701,13 +578,6 @@ export class PianoRollLite {
             cell.className = `step-cell bass-cell ${subClass} ${pitch.isBlack ? 'black-key-row' : ''} ${isActive ? 'step-active ' + activeColorClass : ''}`;
             cell.dataset.step = `${stepIdx}`;
             cell.dataset.note = `${pitch.note}`;
-
-            let cArr = this.stepElementsMap.get(stepIdx);
-            if (!cArr) {
-              cArr = [];
-              this.stepElementsMap.set(stepIdx, cArr);
-            }
-            cArr.push(cell);
 
             cell.addEventListener('click', () => {
               if (this.pattern.get(stepIdx) === pitch.note) {

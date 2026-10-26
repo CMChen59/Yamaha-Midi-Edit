@@ -5,8 +5,6 @@
  * 支援獨立音軌立體聲聲相 (StereoPannerNode) 與軌道主音量 (GainNode) 調控。
  */
 
-import { getSharedAudioContext } from './shared-audio-context';
-
 export class DrumSynth {
   private static muted: boolean = false;
   private isInstanceMuted: boolean = false;
@@ -50,21 +48,14 @@ export class DrumSynth {
     // 延遲初始化，待使用者首次互動啟動 AudioContext
   }
 
-  private ensureContext(): AudioContext | null {
+  private ensureContext(): AudioContext {
     if (!this.ctx) {
-      const shared = getSharedAudioContext();
-      if (shared) {
-        this.ctx = shared;
-      } else if (typeof window !== 'undefined') {
-        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-        if (AudioCtx) this.ctx = new AudioCtx();
-      }
-      if (this.ctx) {
-        this.buildNoiseBuffer();
-      }
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      this.ctx = new AudioCtx();
+      this.buildNoiseBuffer();
     }
-    if (this.ctx && this.ctx.state === 'suspended') {
-      this.ctx.resume().catch(() => {});
+    if (this.ctx.state === 'suspended') {
+      this.ctx.resume();
     }
     return this.ctx;
   }
@@ -79,9 +70,8 @@ export class DrumSynth {
     }
   }
 
-  private getOutputNode(): AudioNode | null {
+  private getOutputNode(): AudioNode {
     const ctx = this.ensureContext();
-    if (!ctx) return null;
     if (!this.channelGain) {
       this.channelGain = ctx.createGain();
       const currentGain = this.isInstanceMuted ? 0 : (this.volume / 127);
@@ -149,11 +139,9 @@ export class DrumSynth {
   /**
    * 播放大鼓 (Kick Drum / MIDI 36)
    */
-  public playKick(velocity: number = 100, when?: number) {
+  public playKick(velocity: number = 100) {
     const ctx = this.ensureContext();
-    const out = this.getOutputNode();
-    if (!ctx || !out) return;
-    const now = when !== undefined ? when : ctx.currentTime;
+    const now = ctx.currentTime;
     const gain = velocity / 127;
 
     const osc = ctx.createOscillator();
@@ -166,7 +154,7 @@ export class DrumSynth {
     gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
 
     osc.connect(gainNode);
-    gainNode.connect(out);
+    gainNode.connect(this.getOutputNode());
 
     osc.start(now);
     osc.stop(now + 0.32);
@@ -175,11 +163,9 @@ export class DrumSynth {
   /**
    * 播放小鼓 (Snare Drum / MIDI 38)
    */
-  public playSnare(velocity: number = 100, when?: number) {
+  public playSnare(velocity: number = 100) {
     const ctx = this.ensureContext();
-    const out = this.getOutputNode();
-    if (!ctx || !out) return;
-    const now = when !== undefined ? when : ctx.currentTime;
+    const now = ctx.currentTime;
     const gain = velocity / 127;
 
     const osc = ctx.createOscillator();
@@ -192,7 +178,7 @@ export class DrumSynth {
     oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
 
     osc.connect(oscGain);
-    oscGain.connect(out);
+    oscGain.connect(this.getOutputNode());
     osc.start(now);
     osc.stop(now + 0.13);
 
@@ -210,7 +196,7 @@ export class DrumSynth {
 
       noise.connect(filter);
       filter.connect(noiseGain);
-      noiseGain.connect(out);
+      noiseGain.connect(this.getOutputNode());
 
       noise.start(now);
       noise.stop(now + 0.22);
@@ -220,11 +206,9 @@ export class DrumSynth {
   /**
    * 敲框音 (Side Stick / Rimshot / MIDI 37)
    */
-  public playRimshot(velocity: number = 100, when?: number) {
+  public playRimshot(velocity: number = 100) {
     const ctx = this.ensureContext();
-    const out = this.getOutputNode();
-    if (!ctx || !out) return;
-    const now = when !== undefined ? when : ctx.currentTime;
+    const now = ctx.currentTime;
     const gain = velocity / 127;
 
     const osc = ctx.createOscillator();
@@ -237,7 +221,7 @@ export class DrumSynth {
     gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
 
     osc.connect(gainNode);
-    gainNode.connect(out);
+    gainNode.connect(this.getOutputNode());
     osc.start(now);
     osc.stop(now + 0.05);
   }
@@ -245,11 +229,9 @@ export class DrumSynth {
   /**
    * 拍手 (Hand Clap / MIDI 39)
    */
-  public playClap(velocity: number = 100, when?: number) {
+  public playClap(velocity: number = 100) {
     const ctx = this.ensureContext();
-    const out = this.getOutputNode();
-    if (!ctx || !out) return;
-    const now = when !== undefined ? when : ctx.currentTime;
+    const now = ctx.currentTime;
     const gain = velocity / 127;
     if (!this.noiseBuffer) return;
 
@@ -268,7 +250,7 @@ export class DrumSynth {
 
       noise.connect(filter);
       filter.connect(gainNode);
-      gainNode.connect(out);
+      gainNode.connect(this.getOutputNode());
 
       noise.start(now + offset);
       noise.stop(now + offset + (i === 2 ? 0.16 : 0.03));
@@ -278,11 +260,9 @@ export class DrumSynth {
   /**
    * 播放閉鈸 (Closed Hi-Hat / MIDI 42)
    */
-  public playHiHat(velocity: number = 100, when?: number) {
+  public playHiHat(velocity: number = 100) {
     const ctx = this.ensureContext();
-    const out = this.getOutputNode();
-    if (!ctx || !out) return;
-    const now = when !== undefined ? when : ctx.currentTime;
+    const now = ctx.currentTime;
     const gain = velocity / 127;
 
     if (!this.noiseBuffer) return;
@@ -300,7 +280,7 @@ export class DrumSynth {
 
     noise.connect(filter);
     filter.connect(gainNode);
-    gainNode.connect(out);
+    gainNode.connect(this.getOutputNode());
 
     noise.start(now);
     noise.stop(now + 0.06);
@@ -309,11 +289,9 @@ export class DrumSynth {
   /**
    * 播放開鈸 (Open Hi-Hat / MIDI 46)
    */
-  public playOpenHat(velocity: number = 100, when?: number) {
+  public playOpenHat(velocity: number = 100) {
     const ctx = this.ensureContext();
-    const out = this.getOutputNode();
-    if (!ctx || !out) return;
-    const now = when !== undefined ? when : ctx.currentTime;
+    const now = ctx.currentTime;
     const gain = velocity / 127;
 
     if (!this.noiseBuffer) return;
@@ -331,7 +309,7 @@ export class DrumSynth {
 
     noise.connect(filter);
     filter.connect(gainNode);
-    gainNode.connect(out);
+    gainNode.connect(this.getOutputNode());
 
     noise.start(now);
     noise.stop(now + 0.38);
@@ -340,11 +318,9 @@ export class DrumSynth {
   /**
    * 播放碎音鈸 (Crash Cymbal / MIDI 49)
    */
-  public playCrash(velocity: number = 100, when?: number) {
+  public playCrash(velocity: number = 100) {
     const ctx = this.ensureContext();
-    const out = this.getOutputNode();
-    if (!ctx || !out) return;
-    const now = when !== undefined ? when : ctx.currentTime;
+    const now = ctx.currentTime;
     const gain = velocity / 127;
 
     if (!this.noiseBuffer) return;
@@ -363,7 +339,7 @@ export class DrumSynth {
 
     noise.connect(filter);
     filter.connect(gainNode);
-    gainNode.connect(out);
+    gainNode.connect(this.getOutputNode());
 
     noise.start(now);
     noise.stop(now + 1.25);
@@ -372,11 +348,9 @@ export class DrumSynth {
   /**
    * 叮叮鈸 (Ride Cymbal / MIDI 51)
    */
-  public playRide(velocity: number = 100, when?: number) {
+  public playRide(velocity: number = 100) {
     const ctx = this.ensureContext();
-    const out = this.getOutputNode();
-    if (!ctx || !out) return;
-    const now = when !== undefined ? when : ctx.currentTime;
+    const now = ctx.currentTime;
     const gain = velocity / 127;
 
     // 金屬鈴聲諧波 + 脆鈸聲
@@ -386,7 +360,7 @@ export class DrumSynth {
     oscGain.gain.setValueAtTime(gain * 0.35, now);
     oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
     osc.connect(oscGain);
-    oscGain.connect(out);
+    oscGain.connect(this.getOutputNode());
     osc.start(now);
     osc.stop(now + 0.62);
 
@@ -403,7 +377,7 @@ export class DrumSynth {
 
       noise.connect(filter);
       filter.connect(noiseGain);
-      noiseGain.connect(out);
+      noiseGain.connect(this.getOutputNode());
       noise.start(now);
       noise.stop(now + 0.72);
     }
@@ -412,11 +386,9 @@ export class DrumSynth {
   /**
    * 桶鼓 (Tom / MIDI 41~50)
    */
-  public playTom(pitchFreq: number = 110, velocity: number = 100, when?: number) {
+  public playTom(pitchFreq: number = 110, velocity: number = 100) {
     const ctx = this.ensureContext();
-    const out = this.getOutputNode();
-    if (!ctx || !out) return;
-    const now = when !== undefined ? when : ctx.currentTime;
+    const now = ctx.currentTime;
     const gain = velocity / 127;
 
     const osc = ctx.createOscillator();
@@ -429,7 +401,7 @@ export class DrumSynth {
     gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
 
     osc.connect(gainNode);
-    gainNode.connect(out);
+    gainNode.connect(this.getOutputNode());
 
     osc.start(now);
     osc.stop(now + 0.38);
@@ -438,58 +410,57 @@ export class DrumSynth {
   /**
    * 根據 MIDI 音符號碼觸發對應樂器
    */
-  public playNote(note: number, velocity: number = 100, when?: number) {
+  public playNote(note: number, velocity: number = 100) {
     if (DrumSynth.muted || this.isInstanceMuted) return;
-    if (!this.ensureContext()) return;
     switch (note) {
       case 35:
       case 36: // B0/C1 Kick
-        this.playKick(velocity, when);
+        this.playKick(velocity);
         break;
       case 38: // D1 Snare
       case 40:
-        this.playSnare(velocity, when);
+        this.playSnare(velocity);
         break;
       case 37: // C#1 Rimshot
-        this.playRimshot(velocity, when);
+        this.playRimshot(velocity);
         break;
       case 39: // D#1 Clap
-        this.playClap(velocity, when);
+        this.playClap(velocity);
         break;
       case 42: // F#1 Closed Hat
       case 44:
-        this.playHiHat(velocity, when);
+        this.playHiHat(velocity);
         break;
       case 46: // A#1 Open Hat
-        this.playOpenHat(velocity, when);
+        this.playOpenHat(velocity);
         break;
       case 49: // C#2 Crash Cymbal
       case 57:
-        this.playCrash(velocity, when);
+        this.playCrash(velocity);
         break;
       case 51: // D#2 Ride Cymbal
       case 59:
-        this.playRide(velocity, when);
+        this.playRide(velocity);
         break;
       case 41:
       case 43:
       case 45: // Low Tom
-        this.playTom(90, velocity, when);
+        this.playTom(90, velocity);
         break;
       case 47:
       case 48: // Mid Tom
-        this.playTom(125, velocity, when);
+        this.playTom(125, velocity);
         break;
       case 50:
       case 52: // High Tom
-        this.playTom(170, velocity, when);
+        this.playTom(170, velocity);
         break;
       case 54:
       case 70: // Tambourine / Maracas
-        this.playHiHat(velocity, when);
+        this.playHiHat(velocity);
         break;
       default:
-        this.playHiHat(velocity, when);
+        this.playHiHat(velocity);
         break;
     }
   }

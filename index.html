@@ -493,116 +493,6 @@
       min-width: max-content;
     }
 
-    /* ==========================================================================
-       自適應全段總覽模式 (Fit Section Mode)
-       無論 1, 2, 4, 5, 8, 10 小節，自動等寬等比例填滿視窗，無需水平滾動、指針平滑劃過
-       ========================================================================== */
-    .sequencer-panel.fit-mode {
-      overflow-x: hidden !important;
-      padding: 14px 16px !important;
-    }
-
-    .fit-mode .grid-scroll-wrapper {
-      min-width: 0 !important;
-      width: 100% !important;
-    }
-
-    .fit-mode .grid-row {
-      width: 100% !important;
-      gap: 6px !important;
-      padding: 2px 4px !important;
-    }
-
-    .fit-mode .row-header-label {
-      width: 160px !important;
-      min-width: 160px !important;
-      max-width: 160px !important;
-      position: static !important;
-      box-shadow: none !important;
-      padding-right: 6px !important;
-    }
-
-    .fit-mode .steps-container {
-      flex: 1 1 0% !important;
-      min-width: 0 !important;
-      width: 100% !important;
-      gap: 3px !important;
-      display: flex !important;
-    }
-
-    .fit-mode .bar-group {
-      flex: 1 1 0% !important;
-      min-width: 0 !important;
-      gap: 1px !important;
-      padding: 2px 2px !important;
-      display: flex !important;
-      border: 1px solid rgba(255, 255, 255, 0.08) !important;
-      border-left: 2px solid rgba(56, 189, 248, 0.6) !important;
-      border-radius: 4px !important;
-    }
-
-    .fit-mode .beat-group {
-      flex: 1 1 0% !important;
-      min-width: 0 !important;
-      gap: 1px !important;
-      padding: 1px 0px !important;
-      display: flex !important;
-    }
-
-    .fit-mode .step-cell {
-      flex: 1 1 0% !important;
-      min-width: 0 !important;
-      width: 100% !important;
-      height: 32px !important;
-      border-radius: 2px !important;
-    }
-
-    .fit-mode .step-cell.bass-cell,
-    .fit-mode .step-cell.chord-cell {
-      height: 16px !important;
-    }
-
-    .fit-mode .step-header-cell {
-      flex: 1 1 0% !important;
-      min-width: 0 !important;
-      width: 100% !important;
-      height: 22px !important;
-      font-size: 0.68rem !important;
-      padding: 0 !important;
-      display: flex !important;
-      align-items: center !important;
-      justify-content: center !important;
-    }
-
-    .fit-mode .step-header-cell .sub-dot,
-    .fit-mode .step-header-cell .eighth-num {
-      display: none !important;
-    }
-
-    .fit-mode .step-header-cell.beat-start {
-      border-left: 2px solid rgba(245, 158, 11, 0.6) !important;
-      font-weight: 700 !important;
-      color: #fbbf24 !important;
-    }
-
-    .fit-mode .step-cell.beat-start {
-      border-left: 2px solid rgba(245, 158, 11, 0.6) !important;
-    }
-
-    .fit-mode .inst-info-wrap {
-      width: 100%;
-      overflow: hidden;
-    }
-
-    .fit-mode .inst-voice-select {
-      max-width: 105px;
-      font-size: 0.72rem;
-    }
-
-    .fit-mode .btn-remove-row {
-      display: none;
-    }
-
     .grid-row {
       display: flex;
       align-items: center;
@@ -622,24 +512,13 @@
       margin-bottom: 4px;
     }
 
-    /* 左側樂器標籤欄 (加寬至 210px 以容納下拉選單與音高標記，支援橫向滾動 Sticky 固頂固定) */
+    /* 左側樂器標籤欄 (加寬至 210px 以容納下拉選單與音高標記) */
     .row-header-label {
       width: 210px;
       min-width: 210px;
       display: flex;
       align-items: center;
       user-select: none;
-      position: sticky;
-      left: 0;
-      background: var(--bg-panel);
-      z-index: 5;
-      padding-right: 8px;
-      box-shadow: 4px 0 10px rgba(0, 0, 0, 0.25);
-    }
-
-    .grid-header-row .row-header-label {
-      z-index: 6;
-      background: var(--bg-panel);
     }
 
     .inst-info-wrap {
@@ -999,10 +878,6 @@
       transition: all 0.15s;
       flex-shrink: 0;
       user-select: none;
-      position: sticky;
-      left: 0;
-      z-index: 5;
-      box-shadow: 4px 0 10px rgba(0, 0, 0, 0.25);
     }
 
     .piano-white-key {
@@ -1824,12 +1699,6 @@
       </button>
       <button id="btn-stop" class="btn-transport btn-stop">
         <span>⏹</span> 停止
-      </button>
-      <button id="btn-toggle-fit-mode" class="btn-transport" style="background: rgba(16, 185, 129, 0.2); border: 1px solid #10b981; color: #34d399;" title="切換自適應全段總覽模式 (無論5/8/10小節全寬縮放於同一視窗無滾動) 或 100% 放大編輯">
-        <span>↔️</span> 全段縮放: 開
-      </button>
-      <button id="btn-toggle-autoscroll" class="btn-transport" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); color: #38bdf8; display: none;" title="播放時視窗是否自動滾動跟隨小節進度 (放大編輯模式有效)">
-        <span>📜</span> 跟隨畫面: 開
       </button>
 
       <div class="control-group">
