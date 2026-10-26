@@ -2,7 +2,7 @@ import { getGoldenStyleTemplateBytes } from '../data/yamaha-style-template';
 import { YamahaParser } from '../parser/yamaha-parser';
 import { YamahaWriter } from './yamaha-writer';
 import { YamahaPadModifier } from './pad-modifier';
-import type { MidiEvent } from '../models/types';
+import type { MidiEvent, YamahaSection } from '../models/types';
 
 export interface TemplateVoiceConfig {
   msb: number;
@@ -135,6 +135,12 @@ export class YamahaTemplateStyleSynthesizer {
 
       // 移除範本內既有的舊音符
       if (ev.type === 'noteOn' || ev.type === 'noteOff') {
+        continue;
+      }
+
+      // 所有 >= ticksPerBar 的範本舊事件（舊 Marker、舊 fn:、舊樂器表情 CC11、舊彎音等）一律忽略
+      // 因為各段落將依照使用者的實際小節數動態排程與放置 Marker
+      if (curTick >= ticksPerBar) {
         continue;
       }
 
@@ -311,177 +317,196 @@ export class YamahaTemplateStyleSynthesizer {
       }
     });
 
-    // 3. 將使用者的樂音編入範本的所有段落中
-    // 範本段落：Main A-D, Fill In AA-DD, Intro A-C, Ending A
-    for (const sec of parsed.sections) {
-      if (sec.name === 'SFF2' || sec.name === 'SInt') continue;
+    // 3. 動態小節時間軸排程 (Dynamic Section Timeline Allocation)
+    // 按照 Yamaha SFF2 原廠定義之標準段落序列，依據使用者設定之小節長度動態排定各段落起訖 Tick
+    // 並在各段落精準寫入 Meta 0x06 (Marker) 與 Meta 0x01 (fn:<SectionName>)
+    const templateMusicalSections = [
+      'Main A', 'Main B', 'Main C', 'Main D',
+      'Fill In AA', 'Fill In BB', 'Fill In CC', 'Fill In DD',
+      'Intro A', 'Intro B', 'Intro C',
+      'Ending A', 'Ending B', 'Ending C',
+      'Fill In BA'
+    ];
 
-      const secStart = sec.startTick;
-      const secBars = sec.measureCount || (sec.endTick ? Math.round((sec.endTick - sec.startTick) / ticksPerBar) : 4);
+    let currentSectionStartTick = ticksPerBar; // SInt 佔據第 0 小節 (0 ~ ticksPerBar)
 
-      // 決定該段落應採用的使用者輸入：優先使用同名段落，若無則依段落性質智能映射
-      let targetUserSec = userSectionMap.get(sec.name);
+    for (const secName of templateMusicalSections) {
+      let targetUserSec = userSectionMap.get(secName);
       let isAutoDerivedFill = false;
 
       if (!targetUserSec) {
-        if (sec.name === 'Fill In AA') {
+        if (secName === 'Fill In AA' && (userSectionMap.has('Main A') || mainAUser)) {
           targetUserSec = userSectionMap.get('Main A') || mainAUser;
           isAutoDerivedFill = true;
-        } else if (sec.name === 'Fill In BB') {
-          targetUserSec = userSectionMap.get('Main B') || userSectionMap.get('Main A') || mainAUser;
+        } else if (secName === 'Fill In BB' && userSectionMap.has('Main B')) {
+          targetUserSec = userSectionMap.get('Main B');
           isAutoDerivedFill = true;
-        } else if (sec.name === 'Fill In CC') {
-          targetUserSec = userSectionMap.get('Main C') || userSectionMap.get('Main A') || mainAUser;
+        } else if (secName === 'Fill In CC' && userSectionMap.has('Main C')) {
+          targetUserSec = userSectionMap.get('Main C');
           isAutoDerivedFill = true;
-        } else if (sec.name === 'Fill In DD') {
-          targetUserSec = userSectionMap.get('Main D') || userSectionMap.get('Main A') || mainAUser;
+        } else if (secName === 'Fill In DD' && userSectionMap.has('Main D')) {
+          targetUserSec = userSectionMap.get('Main D');
           isAutoDerivedFill = true;
-        } else if (sec.name.startsWith('Fill')) {
-          targetUserSec = mainAUser;
-          isAutoDerivedFill = true;
-        } else if (sec.name.startsWith('Main')) {
-          targetUserSec = userSectionMap.get('Main A') || mainAUser;
-        } else if (sec.name.startsWith('Intro')) {
-          targetUserSec = userSectionMap.get('Intro A') || mainAUser;
-        } else if (sec.name.startsWith('Ending')) {
-          targetUserSec = userSectionMap.get('Ending A') || mainAUser;
-        } else {
-          targetUserSec = mainAUser;
         }
+        // 注意：未經使用者編輯的 Intro B/C、Ending B/C、Main C/D 等段落，保持 targetUserSec 為 undefined
+        // 僅保留合法段落 Marker 標記與 1 小節無聲架構，絕不複製其他段落音符，防止實體琴誤播
       }
 
-      const patternBars = Math.max(1, targetUserSec.bars || 4);
-
-      // 動態判定該段落的每小節格數 (stepsPerBar，例如 8 格或 16 格)
-      let secStepsPerBar = targetUserSec.stepsPerBar || options.stepsPerBar;
-      if (!secStepsPerBar) {
-        let maxLen = 0;
-        targetUserSec.drumPattern.forEach((arr) => {
-          if (arr.length > maxLen) maxLen = arr.length;
-        });
-        if (maxLen > 0 && targetUserSec.bars > 0) {
-          secStepsPerBar = Math.round(maxLen / targetUserSec.bars);
-        } else {
-          secStepsPerBar = 16;
-        }
-      }
-      const secTicksPerStep = Math.round(ticksPerBar / secStepsPerBar);
-
-      for (let b = 0; b < secBars; b++) {
-        // 若為 Ending 尾奏段落且超過使用者定義之小節數，後續小節維持留白延音，不重複滾奏
-        if (sec.name.startsWith('Ending') && b >= patternBars) {
-          continue;
-        }
-
-        // 決定當前小節對應使用者輸入的哪一小節
-        let userBar = b % patternBars;
-        if (isAutoDerivedFill && patternBars > 1) {
-          // 自動過門取最後一小節
-          userBar = patternBars - 1;
-        } else if (sec.name.startsWith('Intro') && patternBars > 1 && b >= patternBars) {
-          // 前奏首小節為倒數計拍，超出小節數時延續最後一小節的節奏推進
-          userBar = patternBars - 1;
-        }
-
-        const barOffset = b * ticksPerBar;
-
-        // 3.1 鼓點 (Ch 10 / index 9)
-        targetUserSec.drumPattern.forEach((steps, note) => {
-          for (let s = 0; s < secStepsPerBar; s++) {
-            const stepIdx = userBar * secStepsPerBar + s;
-            if (steps[stepIdx]) {
-              const noteStart = secStart + barOffset + s * secTicksPerStep;
-              const noteEnd = noteStart + Math.max(12, Math.round(secTicksPerStep * 0.75));
-              timedEvents.push({
-                absTick: noteStart,
-                priority: 50,
-                event: { delta: 0, type: 'noteOn', channel: 9, noteNumber: note, velocity: 100 },
-              });
-              timedEvents.push({
-                absTick: noteEnd,
-                priority: 40,
-                event: { delta: 0, type: 'noteOff', channel: 9, noteNumber: note, velocity: 0 },
-              });
-            }
-          }
-        });
-
-        // 3.1.1 若為自動衍生之過門段落 (Fill In)，在該小節最後一拍注入小鼓滾奏 (Snare Roll) 營造過門氣勢
+      // 決定該段落小節長度
+      let secBars = 1;
+      if (targetUserSec) {
         if (isAutoDerivedFill) {
-          const fillRollSteps = secStepsPerBar === 16 ? [14, 15] : [secStepsPerBar - 1];
-          for (const s of fillRollSteps) {
-            const noteStart = secStart + barOffset + s * secTicksPerStep;
-            const noteEnd = noteStart + Math.max(12, Math.round(secTicksPerStep * 0.5));
-            timedEvents.push({
-              absTick: noteStart,
-              priority: 50,
-              event: { delta: 0, type: 'noteOn', channel: 9, noteNumber: 38, velocity: 115 },
-            });
-            timedEvents.push({
-              absTick: noteEnd,
-              priority: 40,
-              event: { delta: 0, type: 'noteOff', channel: 9, noteNumber: 38, velocity: 0 },
-            });
+          secBars = 1; // Yamaha 標準過門固定為 1 小節
+        } else {
+          secBars = Math.max(1, targetUserSec.bars || 4);
+        }
+      } else {
+        // 未編輯之段落預設分配 1 小節靜音佔位，以維持完整 Yamaha 15 段落相容架構
+        secBars = 1;
+      }
+
+      const secStart = currentSectionStartTick;
+      const secDurationTicks = secBars * ticksPerBar;
+
+      // 3.1 寫入段落 Marker (Meta 0x06) 與 Function Name (Meta 0x01)
+      timedEvents.push({
+        absTick: secStart,
+        priority: 2,
+        event: {
+          delta: 0,
+          type: 'meta',
+          metaType: 0x06,
+          text: secName,
+          metaData: new TextEncoder().encode(secName),
+        },
+      });
+
+      timedEvents.push({
+        absTick: secStart,
+        priority: 3,
+        event: {
+          delta: 0,
+          type: 'meta',
+          metaType: 0x01,
+          text: `fn:${secName}`,
+          metaData: new TextEncoder().encode(`fn:${secName}`),
+        },
+      });
+
+      // 3.2 在段落開頭重設各聲部 Expression (CC 11 = 127)
+      for (const ch of [9, 10, 11, 12, 13, 14, 15]) {
+        timedEvents.push({
+          absTick: secStart,
+          priority: 4,
+          event: {
+            delta: 0,
+            type: 'controlChange',
+            channel: ch,
+            controller: 11,
+            value: 127,
+          },
+        });
+      }
+
+      // 3.3 若此段落包含使用者樂音輸入，將音符寫入此段落中
+      if (targetUserSec) {
+        const patternBars = Math.max(1, targetUserSec.bars || 4);
+
+        // 動態判定該段落的每小節格數 (stepsPerBar，例如 8 格或 16 格)
+        let secStepsPerBar = targetUserSec.stepsPerBar || options.stepsPerBar;
+        if (!secStepsPerBar) {
+          let maxLen = 0;
+          targetUserSec.drumPattern.forEach((arr) => {
+            if (arr.length > maxLen) maxLen = arr.length;
+          });
+          if (maxLen > 0 && targetUserSec.bars > 0) {
+            secStepsPerBar = Math.round(maxLen / targetUserSec.bars);
+          } else {
+            secStepsPerBar = 16;
           }
         }
+        const secTicksPerStep = Math.round(ticksPerBar / secStepsPerBar);
 
-        // 3.2 貝斯 (Ch 11 / index 10)
-        for (let s = 0; s < secStepsPerBar; s++) {
-          const stepIdx = userBar * secStepsPerBar + s;
-          const note = targetUserSec.bassPattern.get(stepIdx);
-          if (note !== undefined) {
-            const noteStart = secStart + barOffset + s * secTicksPerStep;
-            const noteEnd = noteStart + Math.max(18, Math.round(secTicksPerStep * 1.5));
-            timedEvents.push({
-              absTick: noteStart,
-              priority: 50,
-              event: { delta: 0, type: 'noteOn', channel: 10, noteNumber: note, velocity: 100 },
-            });
-            timedEvents.push({
-              absTick: noteEnd,
-              priority: 40,
-              event: { delta: 0, type: 'noteOff', channel: 10, noteNumber: note, velocity: 0 },
-            });
+        for (let b = 0; b < secBars; b++) {
+          // 若為 Ending 尾奏段落且超過使用者定義之小節數，後續小節維持留白延音，不重複滾奏
+          if (secName.startsWith('Ending') && b >= patternBars) {
+            continue;
           }
-        }
 
-        // 3.3 和弦 1 (Ch 12 / index 11)
-        if (targetUserSec.chordPattern) {
-          for (let s = 0; s < secStepsPerBar; s++) {
-            const stepIdx = userBar * secStepsPerBar + s;
-            const noteSet = targetUserSec.chordPattern.get(stepIdx);
-            if (noteSet && noteSet.size > 0) {
-              const noteStart = secStart + barOffset + s * secTicksPerStep;
-              const noteEnd = noteStart + Math.max(18, Math.round(secTicksPerStep * 1.7));
-              noteSet.forEach(note => {
+          // 決定當前小節對應使用者輸入的哪一小節
+          let userBar = b % patternBars;
+          if (isAutoDerivedFill && patternBars > 1) {
+            // 自動過門取使用者設定的最後一小節（過門小節）
+            userBar = patternBars - 1;
+          }
+
+          const barOffset = b * ticksPerBar;
+
+          // 鼓點 (Ch 10 / index 9)
+          targetUserSec.drumPattern.forEach((steps, note) => {
+            for (let s = 0; s < secStepsPerBar; s++) {
+              const stepIdx = userBar * secStepsPerBar + s;
+              if (steps[stepIdx]) {
+                const noteStart = secStart + barOffset + s * secTicksPerStep;
+                const noteEnd = noteStart + Math.max(12, Math.round(secTicksPerStep * 0.75));
                 timedEvents.push({
                   absTick: noteStart,
                   priority: 50,
-                  event: { delta: 0, type: 'noteOn', channel: 11, noteNumber: note, velocity: 95 },
+                  event: { delta: 0, type: 'noteOn', channel: 9, noteNumber: note, velocity: 100 },
                 });
                 timedEvents.push({
                   absTick: noteEnd,
                   priority: 40,
-                  event: { delta: 0, type: 'noteOff', channel: 11, noteNumber: note, velocity: 0 },
+                  event: { delta: 0, type: 'noteOff', channel: 9, noteNumber: note, velocity: 0 },
                 });
+              }
+            }
+          });
+
+          // 自動衍生之過門段落 (Fill In)，在該小節最後一拍注入小鼓滾奏 (Snare Roll) 營造過門氣勢
+          if (isAutoDerivedFill) {
+            const fillRollSteps = secStepsPerBar === 16 ? [14, 15] : [secStepsPerBar - 1];
+            for (const s of fillRollSteps) {
+              const noteStart = secStart + barOffset + s * secTicksPerStep;
+              const noteEnd = noteStart + Math.max(12, Math.round(secTicksPerStep * 0.5));
+              timedEvents.push({
+                absTick: noteStart,
+                priority: 50,
+                event: { delta: 0, type: 'noteOn', channel: 9, noteNumber: 38, velocity: 115 },
+              });
+              timedEvents.push({
+                absTick: noteEnd,
+                priority: 40,
+                event: { delta: 0, type: 'noteOff', channel: 9, noteNumber: 38, velocity: 0 },
               });
             }
           }
-        }
 
-        // 3.4 動態伴奏音軌 (Chord 2: ch 12, Pad: ch 13, Phrase 1: ch 14, Phrase 2: ch 15)
-        if (targetUserSec.dynamicPatterns) {
-          const partChannelMap: Record<string, number> = {
-            Chord2: 12,
-            Pad: 13,
-            Phrase1: 14,
-            Phrase2: 15,
-          };
-          Object.entries(targetUserSec.dynamicPatterns).forEach(([partId, pat]) => {
-            const ch = partChannelMap[partId] ?? 12;
+          // 貝斯 (Ch 11 / index 10)
+          for (let s = 0; s < secStepsPerBar; s++) {
+            const stepIdx = userBar * secStepsPerBar + s;
+            const note = targetUserSec.bassPattern.get(stepIdx);
+            if (note !== undefined) {
+              const noteStart = secStart + barOffset + s * secTicksPerStep;
+              const noteEnd = noteStart + Math.max(18, Math.round(secTicksPerStep * 1.5));
+              timedEvents.push({
+                absTick: noteStart,
+                priority: 50,
+                event: { delta: 0, type: 'noteOn', channel: 10, noteNumber: note, velocity: 100 },
+              });
+              timedEvents.push({
+                absTick: noteEnd,
+                priority: 40,
+                event: { delta: 0, type: 'noteOff', channel: 10, noteNumber: note, velocity: 0 },
+              });
+            }
+          }
+
+          // 和弦 1 (Ch 12 / index 11)
+          if (targetUserSec.chordPattern) {
             for (let s = 0; s < secStepsPerBar; s++) {
               const stepIdx = userBar * secStepsPerBar + s;
-              const noteSet = pat.get(stepIdx);
+              const noteSet = targetUserSec.chordPattern.get(stepIdx);
               if (noteSet && noteSet.size > 0) {
                 const noteStart = secStart + barOffset + s * secTicksPerStep;
                 const noteEnd = noteStart + Math.max(18, Math.round(secTicksPerStep * 1.7));
@@ -489,28 +514,75 @@ export class YamahaTemplateStyleSynthesizer {
                   timedEvents.push({
                     absTick: noteStart,
                     priority: 50,
-                    event: { delta: 0, type: 'noteOn', channel: ch, noteNumber: note, velocity: 90 },
+                    event: { delta: 0, type: 'noteOn', channel: 11, noteNumber: note, velocity: 95 },
                   });
                   timedEvents.push({
                     absTick: noteEnd,
                     priority: 40,
-                    event: { delta: 0, type: 'noteOff', channel: ch, noteNumber: note, velocity: 0 },
+                    event: { delta: 0, type: 'noteOff', channel: 11, noteNumber: note, velocity: 0 },
                   });
                 });
               }
             }
-          });
+          }
+
+          // 動態伴奏音軌 (Chord 2: ch 12, Pad: ch 13, Phrase 1: ch 14, Phrase 2: ch 15)
+          if (targetUserSec.dynamicPatterns) {
+            const partChannelMap: Record<string, number> = {
+              Chord2: 12,
+              Pad: 13,
+              Phrase1: 14,
+              Phrase2: 15,
+            };
+            Object.entries(targetUserSec.dynamicPatterns).forEach(([partId, pat]) => {
+              const ch = partChannelMap[partId] ?? 12;
+              for (let s = 0; s < secStepsPerBar; s++) {
+                const stepIdx = userBar * secStepsPerBar + s;
+                const noteSet = pat.get(stepIdx);
+                if (noteSet && noteSet.size > 0) {
+                  const noteStart = secStart + barOffset + s * secTicksPerStep;
+                  const noteEnd = noteStart + Math.max(18, Math.round(secTicksPerStep * 1.7));
+                  noteSet.forEach(note => {
+                    timedEvents.push({
+                      absTick: noteStart,
+                      priority: 50,
+                      event: { delta: 0, type: 'noteOn', channel: ch, noteNumber: note, velocity: 90 },
+                    });
+                    timedEvents.push({
+                      absTick: noteEnd,
+                      priority: 40,
+                      event: { delta: 0, type: 'noteOff', channel: ch, noteNumber: note, velocity: 0 },
+                    });
+                  });
+                }
+              }
+            });
+          }
         }
       }
+
+      currentSectionStartTick += secDurationTicks;
     }
 
-    // 4. 依照時間排序所有事件 (先發生的優先，同 Tick 依 priority 排序)
+    // 4. 寫入 End of Track (Meta 0x2f)
+    timedEvents.push({
+      absTick: currentSectionStartTick,
+      priority: 100,
+      event: {
+        delta: 0,
+        type: 'meta',
+        metaType: 0x2f,
+        metaData: new Uint8Array(0),
+      },
+    });
+
+    // 5. 依照時間排序所有事件 (先發生的優先，同 Tick 依 priority 排序)
     timedEvents.sort((a, b) => {
       if (a.absTick !== b.absTick) return a.absTick - b.absTick;
       return a.priority - b.priority;
     });
 
-    // 5. 重新計算 Delta-time
+    // 6. 重新計算 Delta-time
     let prevTick = 0;
     const finalEvents: MidiEvent[] = [];
     for (const item of timedEvents) {
@@ -521,10 +593,33 @@ export class YamahaTemplateStyleSynthesizer {
 
     tr0.events = finalEvents;
 
-    // 6. 重新封裝 Track 0 的 MTrk 二進位 RawChunk
+    // 7. 同步更新 parsed.sections 結構，供 inspectPreExport 與下游精準校驗
+    const updatedSections: YamahaSection[] = [
+      { name: 'SFF2', startTick: 0, endTick: 0, measureCount: 0 },
+      { name: 'SInt', startTick: 0, endTick: ticksPerBar, measureCount: 1 },
+    ];
+    let checkSecTick = ticksPerBar;
+    for (const secName of templateMusicalSections) {
+      const userSec = userSectionMap.get(secName);
+      let bars = 1;
+      if (userSec) {
+        bars = (secName.startsWith('Fill') ? 1 : Math.max(1, userSec.bars || 4));
+      }
+      const dur = bars * ticksPerBar;
+      updatedSections.push({
+        name: secName,
+        startTick: checkSecTick,
+        endTick: checkSecTick + dur,
+        measureCount: bars,
+      });
+      checkSecTick += dur;
+    }
+    parsed.sections = updatedSections;
+
+    // 8. 重新封裝 Track 0 的 MTrk 二進位 RawChunk
     YamahaPadModifier.rebuildTrackRawChunk(tr0);
 
-    // 7. 使用 YamahaWriter 進行雙向完整性校驗並輸出合法二進位檔
+    // 9. 使用 YamahaWriter 進行雙向完整性校驗並輸出合法二進位檔
     const validation = YamahaWriter.validateAndWrite(parsed);
     if (!validation.success) {
       throw new Error('Yamaha 伴奏二進位合成驗證失敗');

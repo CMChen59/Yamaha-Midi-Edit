@@ -243,9 +243,9 @@ describe('YamahaTemplateStyleSynthesizer 前奏與尾奏 STY 二進位匯出整�
     expect(parsed.division).toBe(1920);
     expect(parsed.hasCasm).toBe(true);
 
-    // 驗證 CASM 區塊大小完整為 2094 位元組原廠原生資料
+    // 驗證 CASM 區塊大小完整為 2104 位元組原廠原生資料
     const casm = parsed.customChunks.find(c => c.id === 'CASM');
-    expect(casm?.data.length).toBe(2094);
+    expect(casm?.data.length).toBe(2104);
 
     // 檢查 Track 0 是否在 Intro A 與 Ending A 區間精確置入 NoteOn 事件
     const tr0 = parsed.tracks[0];

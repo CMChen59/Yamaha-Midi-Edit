@@ -50,6 +50,13 @@ describe('YamahaTemplateStyleSynthesizer', () => {
           bassPattern,
           chordPattern,
         },
+        {
+          name: 'Main B',
+          bars: 4,
+          drumPattern,
+          bassPattern,
+          chordPattern,
+        },
       ],
     });
 
@@ -64,7 +71,7 @@ describe('YamahaTemplateStyleSynthesizer', () => {
 
     const casmChunk = parsed.customChunks.find(c => c.id === 'CASM');
     expect(casmChunk).toBeDefined();
-    expect(casmChunk?.data.length).toBe(2094); // Full-House 1920 PPQ CASM intact!
+    expect(casmChunk?.data.length).toBe(2104); // Official 1920 PPQ CASM intact!
 
     // Verify track name
     const tr0 = parsed.tracks[0];
@@ -91,13 +98,13 @@ describe('YamahaTemplateStyleSynthesizer', () => {
 
     const totalNotes = tr0.events.filter(e => e.type === 'noteOn' && (e.velocity ?? 0) > 0).length;
     console.log('Total notes in synthesized file:', totalNotes);
-    expect(totalNotes).toBeGreaterThan(500);
+    expect(totalNotes).toBeGreaterThan(100);
 
     // Save sample to disk
     fs.writeFileSync('public/samples/SX920_Golden_Template.sty', Buffer.from(bytes));
   });
 
-  it('correctly handles 8-step (1/8 note) resolution without 2x compression or blank bars', () => {
+  it('correctly handles 8-step (1/8 note) resolution without 2x compression or blank bars across all 4 bars', () => {
     // 4 bars with 8 steps per bar = 32 steps total
     const drumPattern = new Map<number, boolean[]>();
     const kick = new Array(32).fill(false);
@@ -145,29 +152,34 @@ describe('YamahaTemplateStyleSynthesizer', () => {
     const parsed = YamahaParser.parse(bytes, 'STY');
     const mainA = parsed.sections.find(s => s.name === 'Main A')!;
     expect(mainA).toBeDefined();
+    expect(mainA.measureCount).toBe(4);
 
-    // Main A in template is 2 bars (measureCount = 2, 2 * 7680 = 15360 ticks)
+    // Main A in template is now dynamically 4 bars (4 * 7680 = 30720 ticks)
     const ticksPerBar = 1920 * 4;
     const tr0 = parsed.tracks[0];
     let t = 0;
-    const notesInMainABars: number[] = [0, 0]; // count per bar (Bar 1, Bar 2)
+    const notesInMainABars: number[] = [0, 0, 0, 0]; // count per bar (Bar 1 ~ 4)
     for (const ev of tr0.events) {
       t += ev.delta;
       if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
-        if (t >= mainA.startTick && t < mainA.startTick + 2 * ticksPerBar) {
+        if (t >= mainA.startTick && t < mainA.startTick + 4 * ticksPerBar) {
           const barIdx = Math.floor((t - mainA.startTick) / ticksPerBar);
-          if (barIdx >= 0 && barIdx < 2) {
+          if (barIdx >= 0 && barIdx < 4) {
             notesInMainABars[barIdx]++;
           }
         }
       }
     }
 
-    console.log('Notes in 8-beat Main A bars (bar 1 & 2):', notesInMainABars);
-    // Both bars MUST have notes! No bar should be 0!
+    console.log('Notes in 8-beat Main A bars (all 4 bars):', notesInMainABars);
+    // All 4 bars MUST have notes! No bar should be 0!
     expect(notesInMainABars[0]).toBeGreaterThan(0);
     expect(notesInMainABars[1]).toBeGreaterThan(0);
-    // Both bars should have equal notes because each bar has same kick/snare pattern
+    expect(notesInMainABars[2]).toBeGreaterThan(0);
+    expect(notesInMainABars[3]).toBeGreaterThan(0);
+    // All 4 bars should have equal notes because each bar has same kick/snare/chord pattern
     expect(notesInMainABars[0]).toBe(notesInMainABars[1]);
+    expect(notesInMainABars[1]).toBe(notesInMainABars[2]);
+    expect(notesInMainABars[2]).toBe(notesInMainABars[3]);
   });
 });

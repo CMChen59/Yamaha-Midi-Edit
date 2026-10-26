@@ -627,7 +627,10 @@ export class CreatorApp {
     // 4. 同步更新小節數與網格
     this.state.totalBars = store.bars;
     const selectBars = document.getElementById('select-bars') as HTMLSelectElement | null;
-    if (selectBars) selectBars.value = store.bars.toString();
+    if (selectBars) {
+      this.ensureBarsOptionExists(selectBars, store.bars);
+      selectBars.value = store.bars.toString();
+    }
 
     this.drumGrid?.setTotalBars(store.bars);
     this.bassRoll?.setTotalBars(store.bars);
@@ -1416,15 +1419,25 @@ export class CreatorApp {
 
     const selectBars = document.getElementById('select-bars') as HTMLSelectElement | null;
     selectBars?.addEventListener('change', () => {
+      if (selectBars.value === 'custom') {
+        const input = prompt('請輸入自訂小節數 (1 ~ 32)：', this.state.totalBars.toString());
+        if (input !== null) {
+          const num = parseInt(input.trim(), 10);
+          if (!isNaN(num) && num >= 1 && num <= 32) {
+            this.setSectionBars(num);
+            return;
+          } else {
+            alert('小節數請輸入介於 1 到 32 之間的整數。');
+          }
+        }
+        // 若使用者取消或輸入無效，恢復原先選取
+        selectBars.value = this.state.totalBars.toString();
+        return;
+      }
+
       const val = parseInt(selectBars.value, 10);
       if (!isNaN(val)) {
-        this.state.totalBars = val;
-        this.drumGrid?.setTotalBars(val);
-        this.bassRoll?.setTotalBars(val);
-        this.chordRoll?.setTotalBars(val);
-        this.dynamicTracks.forEach(t => t.roll.setTotalBars(val));
-        this.saveCurrentSectionToStore();
-        this.setStatus(`【${this.state.currentSection}】伴奏長度已調整為 ${this.state.totalBars} 小節`);
+        this.setSectionBars(val);
       }
     });
 
@@ -2551,16 +2564,24 @@ export class CreatorApp {
       if (desc) desc.textContent = '前奏為歌曲開場引子（可自由切換 2/4/8 小節）！您可以使用下方一鍵範本快速生成鼓棒計拍或流行和弦，也可以在下方捲軸自由編輯至 8 小節。';
 
       if (barButtonsContainer) {
+        const standardBars = [2, 4, 8];
+        const isCustom = !standardBars.includes(currentBars);
+        const customBtnHtml = isCustom ? `<button class="btn-assistant-preset active-bar" data-bar-btn="${currentBars}">${currentBars} 小節 (自訂)</button>` : '';
         barButtonsContainer.innerHTML = `
           <button class="btn-assistant-preset ${currentBars === 2 ? 'active-bar' : ''}" data-bar-btn="2">2 小節 (短引子)</button>
           <button class="btn-assistant-preset ${currentBars === 4 ? 'active-bar' : ''}" data-bar-btn="4">4 小節 (標準)</button>
           <button class="btn-assistant-preset ${currentBars === 8 ? 'active-bar' : ''}" data-bar-btn="8">8 小節 (長版前奏)</button>
+          ${customBtnHtml}
+          <button id="btn-custom-intro-bars" class="btn-assistant-preset" title="自訂 1 ~ 32 小節長度">✏️ 自訂...</button>
         `;
         barButtonsContainer.querySelectorAll('[data-bar-btn]').forEach(btn => {
           btn.addEventListener('click', () => {
             const b = parseInt(btn.getAttribute('data-bar-btn') || '4', 10);
             this.setSectionBars(b);
           });
+        });
+        barButtonsContainer.querySelector('#btn-custom-intro-bars')?.addEventListener('click', () => {
+          this.promptCustomBars();
         });
       }
 
@@ -2612,15 +2633,24 @@ export class CreatorApp {
       if (desc) desc.textContent = '尾奏為整首歌曲的終止式收尾！點擊下方範本可一鍵生成俐落大鈸收束或樂團大收尾，演奏完畢後實體琴將自動平穩停止伴奏。';
 
       if (barButtonsContainer) {
+        const standardBars = [2, 4, 8];
+        const isCustom = !standardBars.includes(currentBars);
+        const customBtnHtml = isCustom ? `<button class="btn-assistant-preset active-bar" data-bar-btn="${currentBars}">${currentBars} 小節 (自訂)</button>` : '';
         barButtonsContainer.innerHTML = `
           <button class="btn-assistant-preset ${currentBars === 2 ? 'active-bar' : ''}" data-bar-btn="2">2 小節 (俐落收尾)</button>
           <button class="btn-assistant-preset ${currentBars === 4 ? 'active-bar' : ''}" data-bar-btn="4">4 小節 (漸慢加長)</button>
+          <button class="btn-assistant-preset ${currentBars === 8 ? 'active-bar' : ''}" data-bar-btn="8">8 小節 (長版收束)</button>
+          ${customBtnHtml}
+          <button id="btn-custom-ending-bars" class="btn-assistant-preset" title="自訂 1 ~ 32 小節長度">✏️ 自訂...</button>
         `;
         barButtonsContainer.querySelectorAll('[data-bar-btn]').forEach(btn => {
           btn.addEventListener('click', () => {
             const b = parseInt(btn.getAttribute('data-bar-btn') || '2', 10);
             this.setSectionBars(b);
           });
+        });
+        barButtonsContainer.querySelector('#btn-custom-ending-bars')?.addEventListener('click', () => {
+          this.promptCustomBars();
         });
       }
 
@@ -2669,12 +2699,15 @@ export class CreatorApp {
   }
 
   /**
-   * 切換當前段落的小節數 (例如 2, 4, 8 小節)
+   * 切換當前段落的小節數 (例如 1~32 小節)
    */
   public setSectionBars(bars: number) {
     this.state.totalBars = bars;
     const selectBars = document.getElementById('select-bars') as HTMLSelectElement | null;
-    if (selectBars) selectBars.value = bars.toString();
+    if (selectBars) {
+      this.ensureBarsOptionExists(selectBars, bars);
+      selectBars.value = bars.toString();
+    }
 
     this.drumGrid?.setTotalBars(bars);
     this.bassRoll?.setTotalBars(bars);
@@ -2686,6 +2719,39 @@ export class CreatorApp {
     this.updateAssistantPanel();
 
     this.setStatus(`📏 已將【${this.state.currentSection}】長度切換為 ${bars} 小節！可自由編寫至第 ${bars} 小節。`);
+  }
+
+  /**
+   * 彈出對話框提示使用者自訂小節數 (1 ~ 32)
+   */
+  public promptCustomBars() {
+    const input = prompt('請輸入自訂小節數 (1 ~ 32)：', this.state.totalBars.toString());
+    if (input !== null) {
+      const num = parseInt(input.trim(), 10);
+      if (!isNaN(num) && num >= 1 && num <= 32) {
+        this.setSectionBars(num);
+      } else {
+        alert('小節數請輸入介於 1 到 32 之間的整數。');
+      }
+    }
+  }
+
+  /**
+   * 確保 select-bars 下拉選單中存在指定小節數的 option
+   */
+  private ensureBarsOptionExists(selectBars: HTMLSelectElement, bars: number) {
+    const existing = selectBars.querySelector(`option[value="${bars}"]`);
+    if (!existing) {
+      const customOpt = selectBars.querySelector('option[value="custom"]');
+      const opt = document.createElement('option');
+      opt.value = bars.toString();
+      opt.textContent = `${bars} 小節 (自訂)`;
+      if (customOpt) {
+        selectBars.insertBefore(opt, customOpt);
+      } else {
+        selectBars.appendChild(opt);
+      }
+    }
   }
 
   /**

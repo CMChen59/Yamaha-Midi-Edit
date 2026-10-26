@@ -297,7 +297,16 @@ export class YamahaParser {
     // 計算每個 Section 的小節數量與 endTick
     const ticksPerMeasure = division * timeSignature.numerator * (4 / timeSignature.denominator);
     for (let i = 0; i < sections.length; i++) {
-      const nextTick = i + 1 < sections.length ? sections[i + 1].startTick : undefined;
+      let nextTick = i + 1 < sections.length ? sections[i + 1].startTick : undefined;
+      if (nextTick === undefined && tracks[0] && tracks[0].events) {
+        let trkEndTick = 0;
+        for (const ev of tracks[0].events) {
+          trkEndTick += ev.delta;
+        }
+        if (trkEndTick > sections[i].startTick) {
+          nextTick = trkEndTick;
+        }
+      }
       sections[i].endTick = nextTick;
       if (nextTick !== undefined) {
         sections[i].measureCount = Math.round((nextTick - sections[i].startTick) / ticksPerMeasure);
