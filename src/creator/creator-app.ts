@@ -58,6 +58,15 @@ export const PAD_SECTION_PRESETS: SectionPreset[] = [
   { id: 'Pad 4', label: 'Pad 4 (多功能打擊板 4)', defaultBars: 2 },
 ];
 
+export interface RealNoteMeta {
+  velocity: number;
+  durationMs: number;
+  durationTicks?: number;
+  offsetMs?: number;      // 掃弦微時差 (毫秒)
+  offsetTicks?: number;   // 掃弦微時差 (Ticks)
+  sourceChannel?: number; // 原始 MIDI 通道 (例如 8 為 Rhythm 1, 9 為 Rhythm 2)
+}
+
 export interface SectionStore {
   name: string;
   bars: number;
@@ -65,6 +74,14 @@ export interface SectionStore {
   bassPattern: Map<number, number>;
   chordPattern: Map<number, Set<number>>;
   dynamicPatterns?: Record<string, Map<number, Set<number>>>;
+
+  // ✨ 真實音樂表現力數據 (相容升級)
+  drumMeta?: Map<string, RealNoteMeta>;      // `${note}_${step}` -> RealNoteMeta
+  bassMeta?: Map<number, RealNoteMeta>;      // step -> RealNoteMeta
+  chordMeta?: Map<string, RealNoteMeta>;     // `${note}_${step}` -> RealNoteMeta
+  dynamicMeta?: Record<string, Map<string, RealNoteMeta>>; // partId -> `${note}_${step}` -> RealNoteMeta
+  ccEvents?: Array<{ channel: number; controller: number; value: number; step: number; relTick?: number }>;
+  pitchBendEvents?: Array<{ channel: number; value: number; step: number; relTick?: number }>;
 }
 
 export interface DynamicChordTrack {
@@ -588,6 +605,8 @@ export class CreatorApp {
       dynamicPatterns[partId] = track.roll.getPatternData();
     });
 
+    const existing = this.sections.get(this.state.currentSection);
+
     this.sections.set(this.state.currentSection, {
       name: this.state.currentSection,
       bars: this.state.totalBars,
@@ -595,6 +614,12 @@ export class CreatorApp {
       bassPattern: this.bassRoll.getPatternData(),
       chordPattern: this.chordRoll.getPatternData(),
       dynamicPatterns,
+      drumMeta: existing?.drumMeta,
+      bassMeta: existing?.bassMeta,
+      chordMeta: existing?.chordMeta,
+      dynamicMeta: existing?.dynamicMeta,
+      ccEvents: existing?.ccEvents,
+      pitchBendEvents: existing?.pitchBendEvents,
     });
   }
 
@@ -1291,9 +1316,9 @@ export class CreatorApp {
     }
   }
 
-  private triggerDrumSound(note: number, velocity: number = 100, durMs: number = 80) {
+  private triggerDrumSound(note: number, velocity: number = 100, durMs: number = 80, sourceChannel: number = 9) {
     drumSynth.playNote(note, velocity);
-    this.sendMidiDrumTrigger(note, velocity, durMs);
+    this.sendMidiDrumTrigger(note, velocity, durMs, sourceChannel);
   }
 
   private triggerBassSound(note: number, velocity: number = 100, durMs: number = 240) {
@@ -1306,10 +1331,10 @@ export class CreatorApp {
     this.sendMidiChordTrigger(note, velocity, durMs);
   }
 
-  private sendMidiDrumTrigger(note: number, velocity: number = 100, durMs: number = 80) {
+  private sendMidiDrumTrigger(note: number, velocity: number = 100, durMs: number = 80, sourceChannel: number = 9) {
     if (this.isChannelEffectiveMuted('drum')) return;
     if (this.state.isMidiConnected) {
-      const ch = this.state.midiRoutingMode === 'direct_ch1' ? 0 : 9;
+      const ch = this.state.midiRoutingMode === 'direct_ch1' ? 0 : (sourceChannel === 8 ? 8 : 9);
       midiManager.sendNoteOn(ch, note, velocity);
       setTimeout(() => {
         midiManager.sendNoteOff(ch, note);
@@ -1730,58 +1755,125 @@ export class CreatorApp {
     return (60 / this.state.bpm / stepsPerBeat) * 1000;
   }
 
+  /**
+   * 核心發聲排程引擎：依據步進點發送具備真實力度 (Velocity)、發音時值 (Duration)、
+   * 掃弦微時差 (Strumming Offset) 與連續表情控制 (CC 11 / Pitch Bend) 之音符
+   */
+  private playAuditionStep(currentStep: number, stepIntervalMs: number, targetSecName?: string) {
+    const secName = targetSecName || this.state.currentSection;
+    const store = this.sections.get(secName);
+
+    const playTrack = this.state.activePlayTrack;
+    const playDrum = playTrack === 'all' || playTrack === 'drum';
+    const playBass = playTrack === 'all' || playTrack === 'bass';
+    const playChord = playTrack === 'all' || playTrack === 'chord';
+
+    this.drumGrid?.setPlayheadStep(playDrum ? currentStep : null);
+    this.bassRoll?.setPlayheadStep(playBass ? currentStep : null);
+    this.chordRoll?.setPlayheadStep(playChord ? currentStep : null);
+
+    // 1. 即時推送該步進的連續控制器事件 (CC 11 Expression, CC 1 Mod, CC 64 Sustain 等)
+    if (this.state.isMidiConnected && store?.ccEvents) {
+      for (const cc of store.ccEvents) {
+        if (cc.step === currentStep) {
+          const ch = this.state.midiRoutingMode === 'direct_ch1' ? 0 : cc.channel;
+          midiManager.sendControlChange(ch, cc.controller, cc.value);
+        }
+      }
+    }
+
+    // 2. 即時推送該步進的滑音輪事件 (Pitch Bend)
+    if (this.state.isMidiConnected && store?.pitchBendEvents) {
+      for (const pb of store.pitchBendEvents) {
+        if (pb.step === currentStep) {
+          const ch = this.state.midiRoutingMode === 'direct_ch1' ? 0 : pb.channel;
+          midiManager.sendPitchBend(ch, pb.value);
+        }
+      }
+    }
+
+    // 3. 動態伴奏音軌 (Chord 2, Pad, Phrase 1, Phrase 2)
+    this.dynamicTracks.forEach((t, partId) => {
+      const playThis = playTrack === 'all' || playTrack === partId;
+      t.roll.setPlayheadStep(playThis ? currentStep : null);
+      if (playThis) {
+        const notes = t.roll.getActiveNotesAtStep(currentStep);
+        for (const note of notes) {
+          const meta = store?.dynamicMeta?.[partId]?.get(`${note}_${currentStep}`);
+          const vel = meta?.velocity ?? 90;
+          const dur = meta?.durationMs ?? Math.max(120, Math.round(stepIntervalMs * 1.5));
+          const offset = meta?.offsetMs ?? 0;
+
+          if (offset > 0) {
+            setTimeout(() => {
+              if (this.state.isPlaying) {
+                t.roll.getSynth().playNote(note, vel, dur);
+                this.sendMidiDynamicTrackTrigger(partId, note, vel, dur);
+              }
+            }, offset);
+          } else {
+            t.roll.getSynth().playNote(note, vel, dur);
+            this.sendMidiDynamicTrackTrigger(partId, note, vel, dur);
+          }
+        }
+      }
+    });
+
+    // 4. 鼓組 (區分 Ch 8 Rhythm 1 打擊樂與 Ch 9 Rhythm 2 主爵士鼓)
+    if (playDrum) {
+      const drumNotes = this.drumGrid?.getActiveNotesAtStep(currentStep) || [];
+      for (const note of drumNotes) {
+        const meta = store?.drumMeta?.get(`${note}_${currentStep}`);
+        const vel = meta?.velocity ?? 100;
+        const dur = meta?.durationMs ?? Math.max(30, Math.round(stepIntervalMs * 0.8));
+        const sourceCh = meta?.sourceChannel ?? 9;
+        this.triggerDrumSound(note, vel, dur, sourceCh);
+      }
+    }
+
+    // 5. 貝斯
+    if (playBass) {
+      const bassNotes = this.bassRoll?.getActiveNotesAtStep(currentStep) || [];
+      for (const note of bassNotes) {
+        const meta = store?.bassMeta?.get(currentStep);
+        const vel = meta?.velocity ?? 100;
+        const dur = meta?.durationMs ?? Math.max(80, Math.round(stepIntervalMs * 1.5));
+        this.triggerBassSound(note, vel, dur);
+      }
+    }
+
+    // 6. 和弦 1
+    if (playChord) {
+      const chordNotes = this.chordRoll?.getActiveNotesAtStep(currentStep) || [];
+      for (const note of chordNotes) {
+        const meta = store?.chordMeta?.get(`${note}_${currentStep}`);
+        const vel = meta?.velocity ?? 95;
+        const dur = meta?.durationMs ?? Math.max(120, Math.round(stepIntervalMs * 1.5));
+        const offset = meta?.offsetMs ?? 0;
+
+        if (offset > 0) {
+          setTimeout(() => {
+            if (this.state.isPlaying) {
+              this.triggerChordSound(note, vel, dur);
+            }
+          }, offset);
+        } else {
+          this.triggerChordSound(note, vel, dur);
+        }
+      }
+    }
+  }
+
   private startPlaybackTimer() {
     this.stopPlaybackTimer();
     const stepIntervalMs = this.getStepIntervalMs();
 
     const tick = () => {
       if (!this.state.isPlaying) return;
-
       const stepsPerBar = this.drumGrid?.getStepsPerBar() || 16;
       const totalSteps = this.state.totalBars * stepsPerBar;
 
-      const playTrack = this.state.activePlayTrack;
-      const playDrum = playTrack === 'all' || playTrack === 'drum';
-      const playBass = playTrack === 'all' || playTrack === 'bass';
-      const playChord = playTrack === 'all' || playTrack === 'chord';
-
-      this.drumGrid?.setPlayheadStep(playDrum ? this.currentPlayStep : null);
-      this.bassRoll?.setPlayheadStep(playBass ? this.currentPlayStep : null);
-      this.chordRoll?.setPlayheadStep(playChord ? this.currentPlayStep : null);
-
-      this.dynamicTracks.forEach((t, partId) => {
-        const playThis = playTrack === 'all' || playTrack === partId;
-        t.roll.setPlayheadStep(playThis ? this.currentPlayStep : null);
-        if (playThis) {
-          const notes = t.roll.getActiveNotesAtStep(this.currentPlayStep);
-          for (const note of notes) {
-            t.roll.getSynth().playNote(note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
-            this.sendMidiDynamicTrackTrigger(partId, note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
-          }
-        }
-      });
-
-      if (playDrum) {
-        const drumNotes = this.drumGrid?.getActiveNotesAtStep(this.currentPlayStep) || [];
-        for (const note of drumNotes) {
-          this.triggerDrumSound(note, 100, Math.max(30, Math.round(stepIntervalMs * 0.8)));
-        }
-      }
-
-      if (playBass) {
-        const bassNotes = this.bassRoll?.getActiveNotesAtStep(this.currentPlayStep) || [];
-        for (const note of bassNotes) {
-          this.triggerBassSound(note, 100, Math.max(80, Math.round(stepIntervalMs * 1.5)));
-        }
-      }
-
-      if (playChord) {
-        const chordNotes = this.chordRoll?.getActiveNotesAtStep(this.currentPlayStep) || [];
-        for (const note of chordNotes) {
-          this.triggerChordSound(note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
-        }
-      }
-
+      this.playAuditionStep(this.currentPlayStep, stepIntervalMs);
       this.currentPlayStep = (this.currentPlayStep + 1) % totalSteps;
     };
 
@@ -1798,48 +1890,7 @@ export class CreatorApp {
         const stepsPerBar = this.drumGrid?.getStepsPerBar() || 16;
         const totalSteps = this.state.totalBars * stepsPerBar;
 
-        const playTrack = this.state.activePlayTrack;
-        const playDrum = playTrack === 'all' || playTrack === 'drum';
-        const playBass = playTrack === 'all' || playTrack === 'bass';
-        const playChord = playTrack === 'all' || playTrack === 'chord';
-
-        this.drumGrid?.setPlayheadStep(playDrum ? this.currentPlayStep : null);
-        this.bassRoll?.setPlayheadStep(playBass ? this.currentPlayStep : null);
-        this.chordRoll?.setPlayheadStep(playChord ? this.currentPlayStep : null);
-
-        this.dynamicTracks.forEach((t, partId) => {
-          const playThis = playTrack === 'all' || playTrack === partId;
-          t.roll.setPlayheadStep(playThis ? this.currentPlayStep : null);
-          if (playThis) {
-            const notes = t.roll.getActiveNotesAtStep(this.currentPlayStep);
-            for (const note of notes) {
-              t.roll.getSynth().playNote(note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
-              this.sendMidiDynamicTrackTrigger(partId, note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
-            }
-          }
-        });
-
-        if (playDrum) {
-          const drumNotes = this.drumGrid?.getActiveNotesAtStep(this.currentPlayStep) || [];
-          for (const note of drumNotes) {
-            this.triggerDrumSound(note, 100, Math.max(30, Math.round(stepIntervalMs * 0.8)));
-          }
-        }
-
-        if (playBass) {
-          const bassNotes = this.bassRoll?.getActiveNotesAtStep(this.currentPlayStep) || [];
-          for (const note of bassNotes) {
-            this.triggerBassSound(note, 100, Math.max(80, Math.round(stepIntervalMs * 1.5)));
-          }
-        }
-
-        if (playChord) {
-          const chordNotes = this.chordRoll?.getActiveNotesAtStep(this.currentPlayStep) || [];
-          for (const note of chordNotes) {
-            this.triggerChordSound(note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
-          }
-        }
-
+        this.playAuditionStep(this.currentPlayStep, stepIntervalMs);
         this.currentPlayStep = (this.currentPlayStep + 1) % totalSteps;
       }, stepIntervalMs);
     }
@@ -1975,6 +2026,12 @@ export class CreatorApp {
             bassPattern: curBass,
             chordPattern: curChord,
             dynamicPatterns: store.dynamicPatterns,
+            drumMeta: store.drumMeta,
+            bassMeta: store.bassMeta,
+            chordMeta: store.chordMeta,
+            dynamicMeta: store.dynamicMeta,
+            ccEvents: store.ccEvents,
+            pitchBendEvents: store.pitchBendEvents,
           });
         });
 
@@ -2173,11 +2230,19 @@ export class CreatorApp {
       this.drumGrid?.setTimeSignature(targetSig);
       this.onGlobalTimeSignatureChange(targetSig);
 
-      // 5. 設定鼓組音色
+      // 5. 設定鼓組音色 (主鼓組 Ch 10 與 副鼓組 Ch 9)
       this.state.selectedDrumKit = result.drumKit;
       this.drumGrid?.setSelectedDrumKit(result.drumKit.id);
       this.syncDrumKitToKeyboard();
       this.mixerPanel?.updateVoiceName('drum', result.drumKit.name);
+
+      if (result.rhythm1Kit && this.state.isMidiConnected) {
+        midiManager.sendVoiceChange(8, {
+          msb: result.rhythm1Kit.msb,
+          lsb: result.rhythm1Kit.lsb,
+          pc: result.rhythm1Kit.pc,
+        });
+      }
 
       // 6. 設定貝斯音色
       this.state.selectedBassVoice = result.bassVoice;
@@ -3219,27 +3284,7 @@ export class CreatorApp {
         return;
       }
 
-      this.drumGrid?.setPlayheadStep(currentStep);
-      this.bassRoll?.setPlayheadStep(currentStep);
-      this.chordRoll?.setPlayheadStep(currentStep);
-      this.dynamicTracks.forEach(t => t.roll.setPlayheadStep(currentStep));
-
-      const drumNotes = this.drumGrid?.getActiveNotesAtStep(currentStep) || [];
-      drumNotes.forEach(n => this.triggerDrumSound(n, 100, Math.max(30, Math.round(stepIntervalMs * 0.8))));
-
-      const bassNotes = this.bassRoll?.getActiveNotesAtStep(currentStep) || [];
-      bassNotes.forEach(n => this.triggerBassSound(n, 100, Math.max(80, Math.round(stepIntervalMs * 1.5))));
-
-      const chordNotes = this.chordRoll?.getActiveNotesAtStep(currentStep) || [];
-      chordNotes.forEach(n => this.triggerChordSound(n, 100, Math.max(120, Math.round(stepIntervalMs * 1.5))));
-
-      this.dynamicTracks.forEach((t, partId) => {
-        const notes = t.roll.getActiveNotesAtStep(currentStep);
-        for (const note of notes) {
-          t.roll.getSynth().playNote(note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
-          this.sendMidiDynamicTrackTrigger(partId, note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
-        }
-      });
+      this.playAuditionStep(currentStep, stepIntervalMs, secName);
 
       currentStep++;
       if (currentStep >= totalSteps) {
@@ -3316,27 +3361,7 @@ export class CreatorApp {
       }
 
       if (currentPhase === 'intro') {
-        this.drumGrid?.setPlayheadStep(currentStep);
-        this.bassRoll?.setPlayheadStep(currentStep);
-        this.chordRoll?.setPlayheadStep(currentStep);
-        this.dynamicTracks.forEach(t => t.roll.setPlayheadStep(currentStep));
-
-        const drumNotes = this.drumGrid?.getActiveNotesAtStep(currentStep) || [];
-        drumNotes.forEach(n => this.triggerDrumSound(n, 100, Math.max(30, Math.round(stepIntervalMs * 0.8))));
-
-        const bassNotes = this.bassRoll?.getActiveNotesAtStep(currentStep) || [];
-        bassNotes.forEach(n => this.triggerBassSound(n, 100, Math.max(80, Math.round(stepIntervalMs * 1.5))));
-
-        const chordNotes = this.chordRoll?.getActiveNotesAtStep(currentStep) || [];
-        chordNotes.forEach(n => this.triggerChordSound(n, 100, Math.max(120, Math.round(stepIntervalMs * 1.5))));
-
-        this.dynamicTracks.forEach((t, partId) => {
-          const notes = t.roll.getActiveNotesAtStep(currentStep);
-          for (const note of notes) {
-            t.roll.getSynth().playNote(note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
-            this.sendMidiDynamicTrackTrigger(partId, note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
-          }
-        });
+        this.playAuditionStep(currentStep, stepIntervalMs, introName);
 
         currentStep++;
         if (currentStep >= introTotalSteps) {
@@ -3353,27 +3378,7 @@ export class CreatorApp {
         const mainBars = this.sections.get('Main A')?.bars || this.state.totalBars || 2;
         const mainTotalSteps = mainBars * stepsPerBar;
 
-        this.drumGrid?.setPlayheadStep(currentStep);
-        this.bassRoll?.setPlayheadStep(currentStep);
-        this.chordRoll?.setPlayheadStep(currentStep);
-        this.dynamicTracks.forEach(t => t.roll.setPlayheadStep(currentStep));
-
-        const drumNotes = this.drumGrid?.getActiveNotesAtStep(currentStep) || [];
-        drumNotes.forEach(n => this.triggerDrumSound(n, 100, Math.max(30, Math.round(stepIntervalMs * 0.8))));
-
-        const bassNotes = this.bassRoll?.getActiveNotesAtStep(currentStep) || [];
-        bassNotes.forEach(n => this.triggerBassSound(n, 100, Math.max(80, Math.round(stepIntervalMs * 1.5))));
-
-        const chordNotes = this.chordRoll?.getActiveNotesAtStep(currentStep) || [];
-        chordNotes.forEach(n => this.triggerChordSound(n, 100, Math.max(120, Math.round(stepIntervalMs * 1.5))));
-
-        this.dynamicTracks.forEach((t, partId) => {
-          const notes = t.roll.getActiveNotesAtStep(currentStep);
-          for (const note of notes) {
-            t.roll.getSynth().playNote(note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
-            this.sendMidiDynamicTrackTrigger(partId, note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
-          }
-        });
+        this.playAuditionStep(currentStep, stepIntervalMs, 'Main A');
 
         currentStep = (currentStep + 1) % mainTotalSteps;
       }
@@ -3436,27 +3441,7 @@ export class CreatorApp {
       }
 
       if (currentPhase === 'lead-in') {
-        this.drumGrid?.setPlayheadStep(currentStep);
-        this.bassRoll?.setPlayheadStep(currentStep);
-        this.chordRoll?.setPlayheadStep(currentStep);
-        this.dynamicTracks.forEach(t => t.roll.setPlayheadStep(currentStep));
-
-        const drumNotes = this.drumGrid?.getActiveNotesAtStep(currentStep) || [];
-        drumNotes.forEach(n => this.triggerDrumSound(n, 100, Math.max(30, Math.round(stepIntervalMs * 0.8))));
-
-        const bassNotes = this.bassRoll?.getActiveNotesAtStep(currentStep) || [];
-        bassNotes.forEach(n => this.triggerBassSound(n, 100, Math.max(80, Math.round(stepIntervalMs * 1.5))));
-
-        const chordNotes = this.chordRoll?.getActiveNotesAtStep(currentStep) || [];
-        chordNotes.forEach(n => this.triggerChordSound(n, 100, Math.max(120, Math.round(stepIntervalMs * 1.5))));
-
-        this.dynamicTracks.forEach((t, partId) => {
-          const notes = t.roll.getActiveNotesAtStep(currentStep);
-          for (const note of notes) {
-            t.roll.getSynth().playNote(note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
-            this.sendMidiDynamicTrackTrigger(partId, note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
-          }
-        });
+        this.playAuditionStep(currentStep, stepIntervalMs, 'Main A');
 
         currentStep++;
         if (currentStep >= leadInSteps) {
@@ -3470,27 +3455,7 @@ export class CreatorApp {
           this.setStatus(`💥 進入【${endingName} 尾奏】：收束演奏中...`);
         }
       } else {
-        this.drumGrid?.setPlayheadStep(currentStep);
-        this.bassRoll?.setPlayheadStep(currentStep);
-        this.chordRoll?.setPlayheadStep(currentStep);
-        this.dynamicTracks.forEach(t => t.roll.setPlayheadStep(currentStep));
-
-        const drumNotes = this.drumGrid?.getActiveNotesAtStep(currentStep) || [];
-        drumNotes.forEach(n => this.triggerDrumSound(n, 100, Math.max(30, Math.round(stepIntervalMs * 0.8))));
-
-        const bassNotes = this.bassRoll?.getActiveNotesAtStep(currentStep) || [];
-        bassNotes.forEach(n => this.triggerBassSound(n, 100, Math.max(80, Math.round(stepIntervalMs * 1.5))));
-
-        const chordNotes = this.chordRoll?.getActiveNotesAtStep(currentStep) || [];
-        chordNotes.forEach(n => this.triggerChordSound(n, 100, Math.max(120, Math.round(stepIntervalMs * 1.5))));
-
-        this.dynamicTracks.forEach((t, partId) => {
-          const notes = t.roll.getActiveNotesAtStep(currentStep);
-          for (const note of notes) {
-            t.roll.getSynth().playNote(note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
-            this.sendMidiDynamicTrackTrigger(partId, note, 100, Math.max(120, Math.round(stepIntervalMs * 1.5)));
-          }
-        });
+        this.playAuditionStep(currentStep, stepIntervalMs, endingName);
 
         currentStep++;
         if (currentStep >= endingTotalSteps) {

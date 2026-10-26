@@ -24,6 +24,13 @@ export interface TemplateMixerConfig {
   dynamicTracks?: Record<string, TemplatePartMixer>;
 }
 
+export interface TemplateNoteMeta {
+  velocity?: number;
+  durationTicks?: number;
+  offsetTicks?: number;
+  sourceChannel?: number;
+}
+
 export interface TemplateSectionInput {
   name: string;
   bars: number;
@@ -32,6 +39,12 @@ export interface TemplateSectionInput {
   bassPattern: Map<number, number>;
   chordPattern: Map<number, Set<number>>;
   dynamicPatterns?: Record<string, Map<number, Set<number>>>;
+  drumMeta?: Map<string, TemplateNoteMeta>;
+  bassMeta?: Map<number, TemplateNoteMeta>;
+  chordMeta?: Map<string, TemplateNoteMeta>;
+  dynamicMeta?: Record<string, Map<string, TemplateNoteMeta>>;
+  ccEvents?: Array<{ channel: number; controller: number; value: number; step: number; relTick?: number }>;
+  pitchBendEvents?: Array<{ channel: number; value: number; step: number; relTick?: number }>;
 }
 
 export interface TemplateStyleExportOptions {
@@ -450,22 +463,26 @@ export class YamahaTemplateStyleSynthesizer {
 
           const barOffset = b * ticksPerBar;
 
-          // 鼓點 (Ch 10 / index 9)
+          // 鼓點 (Ch 10 / index 9 或 Ch 9 / index 8)
           targetUserSec.drumPattern.forEach((steps, note) => {
             for (let s = 0; s < secStepsPerBar; s++) {
               const stepIdx = userBar * secStepsPerBar + s;
               if (steps[stepIdx]) {
+                const meta = targetUserSec.drumMeta?.get(`${note}_${stepIdx}`);
+                const vel = meta?.velocity ?? 100;
+                const ch = meta?.sourceChannel ?? 9;
+                const dur = meta?.durationTicks ?? Math.max(12, Math.round(secTicksPerStep * 0.75));
                 const noteStart = secStart + barOffset + s * secTicksPerStep;
-                const noteEnd = noteStart + Math.max(12, Math.round(secTicksPerStep * 0.75));
+                const noteEnd = noteStart + dur;
                 timedEvents.push({
                   absTick: noteStart,
                   priority: 50,
-                  event: { delta: 0, type: 'noteOn', channel: 9, noteNumber: note, velocity: 100 },
+                  event: { delta: 0, type: 'noteOn', channel: ch, noteNumber: note, velocity: vel },
                 });
                 timedEvents.push({
                   absTick: noteEnd,
                   priority: 40,
-                  event: { delta: 0, type: 'noteOff', channel: 9, noteNumber: note, velocity: 0 },
+                  event: { delta: 0, type: 'noteOff', channel: ch, noteNumber: note, velocity: 0 },
                 });
               }
             }
@@ -495,12 +512,15 @@ export class YamahaTemplateStyleSynthesizer {
             const stepIdx = userBar * secStepsPerBar + s;
             const note = targetUserSec.bassPattern.get(stepIdx);
             if (note !== undefined) {
+              const meta = targetUserSec.bassMeta?.get(stepIdx);
+              const vel = meta?.velocity ?? 100;
+              const dur = meta?.durationTicks ?? Math.max(18, Math.round(secTicksPerStep * 1.5));
               const noteStart = secStart + barOffset + s * secTicksPerStep;
-              const noteEnd = noteStart + Math.max(18, Math.round(secTicksPerStep * 1.5));
+              const noteEnd = noteStart + dur;
               timedEvents.push({
                 absTick: noteStart,
                 priority: 50,
-                event: { delta: 0, type: 'noteOn', channel: 10, noteNumber: note, velocity: 100 },
+                event: { delta: 0, type: 'noteOn', channel: 10, noteNumber: note, velocity: vel },
               });
               timedEvents.push({
                 absTick: noteEnd,
@@ -516,13 +536,17 @@ export class YamahaTemplateStyleSynthesizer {
               const stepIdx = userBar * secStepsPerBar + s;
               const noteSet = targetUserSec.chordPattern.get(stepIdx);
               if (noteSet && noteSet.size > 0) {
-                const noteStart = secStart + barOffset + s * secTicksPerStep;
-                const noteEnd = noteStart + Math.max(18, Math.round(secTicksPerStep * 1.7));
                 noteSet.forEach(note => {
+                  const meta = targetUserSec.chordMeta?.get(`${note}_${stepIdx}`);
+                  const vel = meta?.velocity ?? 95;
+                  const dur = meta?.durationTicks ?? Math.max(18, Math.round(secTicksPerStep * 1.7));
+                  const offset = meta?.offsetTicks ?? 0;
+                  const noteStart = secStart + barOffset + s * secTicksPerStep + offset;
+                  const noteEnd = noteStart + dur;
                   timedEvents.push({
                     absTick: noteStart,
                     priority: 50,
-                    event: { delta: 0, type: 'noteOn', channel: 11, noteNumber: note, velocity: 95 },
+                    event: { delta: 0, type: 'noteOn', channel: 11, noteNumber: note, velocity: vel },
                   });
                   timedEvents.push({
                     absTick: noteEnd,
@@ -548,13 +572,17 @@ export class YamahaTemplateStyleSynthesizer {
                 const stepIdx = userBar * secStepsPerBar + s;
                 const noteSet = pat.get(stepIdx);
                 if (noteSet && noteSet.size > 0) {
-                  const noteStart = secStart + barOffset + s * secTicksPerStep;
-                  const noteEnd = noteStart + Math.max(18, Math.round(secTicksPerStep * 1.7));
                   noteSet.forEach(note => {
+                    const meta = targetUserSec.dynamicMeta?.[partId]?.get(`${note}_${stepIdx}`);
+                    const vel = meta?.velocity ?? 90;
+                    const dur = meta?.durationTicks ?? Math.max(18, Math.round(secTicksPerStep * 1.7));
+                    const offset = meta?.offsetTicks ?? 0;
+                    const noteStart = secStart + barOffset + s * secTicksPerStep + offset;
+                    const noteEnd = noteStart + dur;
                     timedEvents.push({
                       absTick: noteStart,
                       priority: 50,
-                      event: { delta: 0, type: 'noteOn', channel: ch, noteNumber: note, velocity: 90 },
+                      event: { delta: 0, type: 'noteOn', channel: ch, noteNumber: note, velocity: vel },
                     });
                     timedEvents.push({
                       absTick: noteEnd,
@@ -564,6 +592,30 @@ export class YamahaTemplateStyleSynthesizer {
                   });
                 }
               }
+            });
+          }
+        }
+
+        // 注入該段落專屬的連續控制器 (CC 11 Expression, CC 1 Mod, CC 64 Sustain 等)
+        if (targetUserSec.ccEvents) {
+          for (const cc of targetUserSec.ccEvents) {
+            const ccTick = secStart + (cc.relTick ?? cc.step * secTicksPerStep);
+            timedEvents.push({
+              absTick: ccTick,
+              priority: 15,
+              event: { delta: 0, type: 'controlChange', channel: cc.channel, controller: cc.controller, value: cc.value },
+            });
+          }
+        }
+
+        // 注入該段落專屬的滑音輪 (Pitch Bend)
+        if (targetUserSec.pitchBendEvents) {
+          for (const pb of targetUserSec.pitchBendEvents) {
+            const pbTick = secStart + (pb.relTick ?? pb.step * secTicksPerStep);
+            timedEvents.push({
+              absTick: pbTick,
+              priority: 15,
+              event: { delta: 0, type: 'pitchBend', channel: pb.channel, value: pb.value },
             });
           }
         }

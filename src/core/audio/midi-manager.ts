@@ -494,6 +494,27 @@ export class MidiManager {
   }
 
   /**
+   * 傳送連續控制器事件 (CC 11 Expression, CC 1 Modulation, CC 64 Sustain 等)
+   */
+  public sendControlChange(channel: number, controller: number, value: number, timestamp?: number): boolean {
+    const ch = Math.max(0, Math.min(15, channel));
+    const cc = Math.max(0, Math.min(127, Math.round(controller)));
+    const val = Math.max(0, Math.min(127, Math.round(value)));
+    return this.send([0xB0 | ch, cc, val], timestamp);
+  }
+
+  /**
+   * 傳送滑音輪事件 (Pitch Bend: 0 ~ 16383, 8192 為正中無偏音)
+   */
+  public sendPitchBend(channel: number, value: number, timestamp?: number): boolean {
+    const ch = Math.max(0, Math.min(15, channel));
+    const val = Math.max(0, Math.min(16383, Math.round(value)));
+    const lsb = val & 0x7F;
+    const msb = (val >> 7) & 0x7F;
+    return this.send([0xE0 | ch, lsb, msb], timestamp);
+  }
+
+  /**
    * 防掛音安全緊急中斷：對全部 16 個通道廣播 All Sound Off, All Notes Off 與 Damper Off
    */
   public panicAllChannels(): boolean {

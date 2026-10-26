@@ -53,6 +53,27 @@ describe('StyLoader: 實體 STY 伴奏載入與解構驗證', () => {
     // 驗證動態伴奏聲部
     console.log('載入成功摘要:', result.summary);
     console.log('動態啟用的聲部:', result.activeDynamicPartIds);
+
+    // 驗證真實音樂表現力數據 (Real Velocity, Duration, CCs, Strumming)
+    expect(mainA.drumMeta).toBeDefined();
+    expect(mainA.drumMeta!.size).toBeGreaterThan(0);
+    const firstDrumMeta = mainA.drumMeta!.values().next().value;
+    expect(firstDrumMeta.velocity).toBeGreaterThan(0);
+    expect(firstDrumMeta.durationMs).toBeGreaterThan(0);
+
+    expect(mainA.bassMeta).toBeDefined();
+    expect(mainA.bassMeta!.size).toBeGreaterThan(0);
+    const firstBassMeta = mainA.bassMeta!.values().next().value;
+    expect(firstBassMeta.velocity).toBeGreaterThan(0);
+    expect(firstBassMeta.durationMs).toBeGreaterThan(0);
+
+    expect(mainA.chordMeta).toBeDefined();
+    expect(mainA.chordMeta!.size).toBeGreaterThan(0);
+
+    // 驗證連續控制器事件 (CC 11 Expression, Pitch Bend 等)
+    expect(mainA.ccEvents).toBeDefined();
+    console.log('Main A CC 表現力事件數量:', mainA.ccEvents?.length);
+    console.log('Main A 滑音輪事件數量:', mainA.pitchBendEvents?.length);
   });
 
   it('載入 STY 後修改音符並透過 TemplateSynthesizer 再度合成，音符成功更新且保留原曲結構', () => {

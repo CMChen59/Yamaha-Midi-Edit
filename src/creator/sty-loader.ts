@@ -9,7 +9,7 @@
 
 import { YamahaParser } from '../core/parser/yamaha-parser';
 import type { MidiEvent } from '../core/models/types';
-import type { SectionStore } from './creator-app';
+import type { SectionStore, RealNoteMeta } from './creator-app';
 import { YAMAHA_SX920_DRUM_KITS, type YamahaDrumKitPreset } from './drum-kits';
 import { YAMAHA_SX920_BASS_VOICES, type YamahaBassPreset } from './bass-voices';
 import { YAMAHA_SX920_CHORD_VOICES, type YamahaChordPreset } from './chord-voices';
@@ -22,6 +22,7 @@ export interface LoadedStyleResult {
   division: number;
   sections: Map<string, SectionStore>;
   drumKit: YamahaDrumKitPreset;
+  rhythm1Kit?: YamahaDrumKitPreset;
   bassVoice: YamahaBassPreset;
   chordVoice: YamahaChordPreset;
   dynamicVoices: Record<string, YamahaChordPreset>;
@@ -76,6 +77,7 @@ export class StyLoader {
     };
 
     let selectedDrumKit: YamahaDrumKitPreset = YAMAHA_SX920_DRUM_KITS[0];
+    let selectedRhythm1Kit: YamahaDrumKitPreset | undefined = undefined;
     let selectedBassVoice: YamahaBassPreset = YAMAHA_SX920_BASS_VOICES[0];
     let selectedChordVoice: YamahaChordPreset = YAMAHA_SX920_CHORD_VOICES[0];
     const dynamicVoices: Record<string, YamahaChordPreset> = {};
@@ -84,8 +86,8 @@ export class StyLoader {
     for (const p of parsed.parts) {
       const ch = p.channel;
       // SFF2 通道判斷
-      if (ch === 9 || ch === 8) {
-        // 鼓組 (Ch 10 或 Ch 9)
+      if (ch === 9) {
+        // 主鼓組 (Ch 10 Rhythm 2)
         if (p.volume !== undefined) mixer.drum.volume = p.volume;
         if (p.pan !== undefined) mixer.drum.pan = p.pan;
         if (p.reverb !== undefined) mixer.drum.reverb = p.reverb;
@@ -93,6 +95,10 @@ export class StyLoader {
 
         const matchedKit = YAMAHA_SX920_DRUM_KITS.find(k => k.pc === p.programChange);
         if (matchedKit) selectedDrumKit = matchedKit;
+      } else if (ch === 8) {
+        // 副鼓組 / 打擊樂 (Ch 9 Rhythm 1)
+        const matchedKit = YAMAHA_SX920_DRUM_KITS.find(k => k.pc === p.programChange);
+        if (matchedKit) selectedRhythm1Kit = matchedKit;
       } else if (ch === 10 || ch === 1) {
         // 貝斯 (Ch 11 或 SFF1 Ch 2)
         if (p.volume !== undefined) mixer.bass.volume = p.volume;
@@ -190,51 +196,168 @@ export class StyLoader {
       const secStart = sec.startTick;
       const secEnd = sec.endTick !== undefined ? sec.endTick : secStart + bars * ticksPerMeasure;
 
+      // 表現力對照表初始化
+      const drumMeta = new Map<string, RealNoteMeta>();
+      const bassMeta = new Map<number, RealNoteMeta>();
+      const chordMeta = new Map<string, RealNoteMeta>();
+      const dynamicMeta: Record<string, Map<string, RealNoteMeta>> = {
+        Chord2: new Map(),
+        Pad: new Map(),
+        Phrase1: new Map(),
+        Phrase2: new Map(),
+      };
+      const ccEvents: Array<{ channel: number; controller: number; value: number; step: number; relTick: number }> = [];
+      const pitchBendEvents: Array<{ channel: number; value: number; step: number; relTick: number }> = [];
+
+      // 收集該段落內的連續控制器與滑音事件 (CC 11 Expression, CC 1 Modulation, CC 64 Sustain 等)
+      for (const ev of flatEvents) {
+        if (ev.absTick >= secStart && ev.absTick < secEnd) {
+          const relTick = ev.absTick - secStart;
+          const step = Math.min(totalSteps - 1, Math.max(0, Math.floor(relTick / ticksPerStep)));
+          if (ev.type === 'controlChange' && ev.channel !== undefined && ev.controller !== undefined && ev.value !== undefined) {
+            if ([11, 1, 64, 71, 74].includes(ev.controller)) {
+              ccEvents.push({
+                channel: ev.channel,
+                controller: ev.controller,
+                value: ev.value,
+                step,
+                relTick,
+              });
+            }
+          } else if (ev.type === 'pitchBend' && ev.channel !== undefined && ev.value !== undefined) {
+            pitchBendEvents.push({
+              channel: ev.channel,
+              value: ev.value,
+              step,
+              relTick,
+            });
+          }
+        }
+      }
+
       const secNotes = flatEvents.filter(
         ev => ev.type === 'noteOn' && (ev.velocity ?? 0) > 0 && ev.absTick >= secStart && ev.absTick < secEnd
       );
 
-      for (const ev of secNotes) {
+      const msPerTick = (60000 / (bpm * division));
+
+      for (let noteIdx = 0; noteIdx < secNotes.length; noteIdx++) {
+        const ev = secNotes[noteIdx];
         const relTick = ev.absTick - secStart;
         const step = Math.round(relTick / ticksPerStep);
         if (step < 0 || step >= totalSteps) continue;
 
         const ch = ev.channel;
         const note = ev.noteNumber ?? 60;
+        const velocity = Math.max(1, Math.min(127, ev.velocity ?? 100));
 
-        // 通道分流映射
+        // 計算音符發音真實時值 (尋找對應 NoteOff)
+        let durationTicks = Math.round(ticksPerStep * 1.5);
+        for (let j = 0; j < flatEvents.length; j++) {
+          const nextEv = flatEvents[j];
+          if (nextEv.absTick > ev.absTick && nextEv.channel === ev.channel && nextEv.noteNumber === ev.noteNumber) {
+            if (nextEv.type === 'noteOff' || (nextEv.type === 'noteOn' && (nextEv.velocity ?? 0) === 0)) {
+              durationTicks = Math.max(12, nextEv.absTick - ev.absTick);
+              break;
+            } else if (nextEv.type === 'noteOn') {
+              durationTicks = Math.max(12, nextEv.absTick - ev.absTick);
+              break;
+            }
+          }
+        }
+        const durationMs = Math.max(30, Math.round(durationTicks * msPerTick));
+
+        // 計算掃弦微時差 (Strumming Micro-timing Offset)
+        const nominalTick = step * ticksPerStep;
+        const offsetTicks = relTick - nominalTick;
+        const offsetMs = offsetTicks > 0 ? Math.min(45, Math.round(offsetTicks * msPerTick)) : 0;
+
+        // 通道分流映射與真實表現力寫入
         if (ch === 9 || ch === 8 || ch === 0) {
-          // 鼓組聲部
+          // 鼓組聲部 (ch=8 為 Rhythm 1 打擊樂, ch=9 為 Rhythm 2 主爵士鼓)
           if (!drumPattern.has(note)) {
             drumPattern.set(note, new Array(totalSteps).fill(false));
           }
           drumPattern.get(note)![step] = true;
           foundDrumNotes.add(note);
+
+          drumMeta.set(`${note}_${step}`, {
+            velocity,
+            durationMs,
+            durationTicks,
+            sourceChannel: ch === 8 ? 8 : 9,
+          });
         } else if (ch === 10 || ch === 1) {
           // 貝斯聲部
           bassPattern.set(step, note);
+          bassMeta.set(step, {
+            velocity,
+            durationMs,
+            durationTicks,
+            sourceChannel: 10,
+          });
         } else if (ch === 11 || ch === 2) {
           // 和弦 1 聲部
           if (!chordPattern.has(step)) {
             chordPattern.set(step, new Set());
           }
           chordPattern.get(step)!.add(note);
+          chordMeta.set(`${note}_${step}`, {
+            velocity,
+            durationMs,
+            durationTicks,
+            offsetMs,
+            offsetTicks,
+            sourceChannel: 11,
+          });
         } else if (ch === 12 || ch === 3) {
           // Chord 2
           this.addDynamicNote(dynamicPatterns.Chord2, step, note);
           activeDynamicParts.add('Chord2');
+          dynamicMeta.Chord2.set(`${note}_${step}`, {
+            velocity,
+            durationMs,
+            durationTicks,
+            offsetMs,
+            offsetTicks,
+            sourceChannel: 12,
+          });
         } else if (ch === 13 || ch === 4) {
           // Pad
           this.addDynamicNote(dynamicPatterns.Pad, step, note);
           activeDynamicParts.add('Pad');
+          dynamicMeta.Pad.set(`${note}_${step}`, {
+            velocity,
+            durationMs,
+            durationTicks,
+            offsetMs,
+            offsetTicks,
+            sourceChannel: 13,
+          });
         } else if (ch === 14 || ch === 5) {
           // Phrase 1
           this.addDynamicNote(dynamicPatterns.Phrase1, step, note);
           activeDynamicParts.add('Phrase1');
+          dynamicMeta.Phrase1.set(`${note}_${step}`, {
+            velocity,
+            durationMs,
+            durationTicks,
+            offsetMs,
+            offsetTicks,
+            sourceChannel: 14,
+          });
         } else if (ch === 15 || ch === 6) {
           // Phrase 2
           this.addDynamicNote(dynamicPatterns.Phrase2, step, note);
           activeDynamicParts.add('Phrase2');
+          dynamicMeta.Phrase2.set(`${note}_${step}`, {
+            velocity,
+            durationMs,
+            durationTicks,
+            offsetMs,
+            offsetTicks,
+            sourceChannel: 15,
+          });
         }
       }
 
@@ -245,6 +368,12 @@ export class StyLoader {
         bassPattern,
         chordPattern,
         dynamicPatterns,
+        drumMeta,
+        bassMeta,
+        chordMeta,
+        dynamicMeta,
+        ccEvents,
+        pitchBendEvents,
       });
     }
 
@@ -261,6 +390,7 @@ export class StyLoader {
       division,
       sections,
       drumKit: selectedDrumKit,
+      rhythm1Kit: selectedRhythm1Kit,
       bassVoice: selectedBassVoice,
       chordVoice: selectedChordVoice,
       dynamicVoices,
