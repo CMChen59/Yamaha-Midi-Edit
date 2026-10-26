@@ -41,8 +41,12 @@ export const STY_SECTION_PRESETS: SectionPreset[] = [
   { id: 'Fill In BB', label: 'Fill In BB (過門 B - 1小節)', defaultBars: 1 },
   { id: 'Fill In CC', label: 'Fill In CC (過門 C - 1小節)', defaultBars: 1 },
   { id: 'Fill In DD', label: 'Fill In DD (過門 D - 1小節)', defaultBars: 1 },
-  { id: 'Intro A', label: 'Intro A (前奏 A - 可選 2/4/8 小節)', defaultBars: 4 },
-  { id: 'Ending A', label: 'Ending A (尾奏 A - 可選 2/4 小節)', defaultBars: 2 },
+  { id: 'Intro A', label: 'Intro A (前奏 A - 計拍/短引子)', defaultBars: 4 },
+  { id: 'Intro B', label: 'Intro B (前奏 B - 流行和弦前奏)', defaultBars: 4 },
+  { id: 'Intro C', label: 'Intro C (前奏 C - 華麗長版大前奏)', defaultBars: 8 },
+  { id: 'Ending A', label: 'Ending A (尾奏 A - 俐落大鈸收束)', defaultBars: 2 },
+  { id: 'Ending B', label: 'Ending B (尾奏 B - 樂團漸慢大收尾)', defaultBars: 4 },
+  { id: 'Ending C', label: 'Ending C (尾奏 C - 抒情溫柔淡出終止)', defaultBars: 4 },
 ];
 
 export const PAD_SECTION_PRESETS: SectionPreset[] = [
@@ -629,8 +633,28 @@ export class CreatorApp {
         store.drumPattern = autoIntro.drumPattern;
         store.bassPattern = autoIntro.bassPattern;
         store.chordPattern = autoIntro.chordPattern;
+      } else if (newSectionName === 'Intro B') {
+        const autoIntro = SectionPresetsEngine.generateIntroCountIn(defaultBars, currentStepsPerBar);
+        store.drumPattern = autoIntro.drumPattern;
+        store.bassPattern = autoIntro.bassPattern;
+        store.chordPattern = autoIntro.chordPattern;
+      } else if (newSectionName === 'Intro C') {
+        const autoIntro = SectionPresetsEngine.generateIntroHarmonic(defaultBars, currentStepsPerBar);
+        store.drumPattern = autoIntro.drumPattern;
+        store.bassPattern = autoIntro.bassPattern;
+        store.chordPattern = autoIntro.chordPattern;
       } else if (newSectionName === 'Ending A') {
         const autoEnding = SectionPresetsEngine.generateEndingPunch(defaultBars, currentStepsPerBar);
+        store.drumPattern = autoEnding.drumPattern;
+        store.bassPattern = autoEnding.bassPattern;
+        store.chordPattern = autoEnding.chordPattern;
+      } else if (newSectionName === 'Ending B') {
+        const autoEnding = SectionPresetsEngine.generateEndingClimax(defaultBars, currentStepsPerBar);
+        store.drumPattern = autoEnding.drumPattern;
+        store.bassPattern = autoEnding.bassPattern;
+        store.chordPattern = autoEnding.chordPattern;
+      } else if (newSectionName === 'Ending C') {
+        const autoEnding = SectionPresetsEngine.generateEndingSoft(defaultBars, currentStepsPerBar);
         store.drumPattern = autoEnding.drumPattern;
         store.bassPattern = autoEnding.bassPattern;
         store.chordPattern = autoEnding.chordPattern;
@@ -1845,17 +1869,31 @@ export class CreatorApp {
           let curBass = store.bassPattern;
           let curChord = store.chordPattern;
 
-          // 雙重防護：若 Intro A 或 Ending A 在匯出時為空白（0音符），自動填充智慧範本，避免實體琴輸出死寂空音
-          if (name === 'Intro A' && !this.checkSectionHasNotes(name)) {
-            const autoIntro = SectionPresetsEngine.generateIntroHarmonic(store.bars || 4, currentStepsPerBar);
+          // 雙重防護：若 Intro 或 Ending 在匯出時為空白（0音符），自動填充智慧範本，避免實體琴輸出死寂空音
+          if (name.startsWith('Intro') && !this.checkSectionHasNotes(name)) {
+            let autoIntro;
+            if (name === 'Intro B') {
+              autoIntro = SectionPresetsEngine.generateIntroCountIn(store.bars || 4, currentStepsPerBar);
+            } else if (name === 'Intro C') {
+              autoIntro = SectionPresetsEngine.generateIntroHarmonic(store.bars || 8, currentStepsPerBar);
+            } else {
+              autoIntro = SectionPresetsEngine.generateIntroHarmonic(store.bars || 4, currentStepsPerBar);
+            }
             curDrum = autoIntro.drumPattern;
             curBass = autoIntro.bassPattern;
             curChord = autoIntro.chordPattern;
             store.drumPattern = curDrum;
             store.bassPattern = curBass;
             store.chordPattern = curChord;
-          } else if (name === 'Ending A' && !this.checkSectionHasNotes(name)) {
-            const autoEnding = SectionPresetsEngine.generateEndingPunch(store.bars || 2, currentStepsPerBar);
+          } else if (name.startsWith('Ending') && !this.checkSectionHasNotes(name)) {
+            let autoEnding;
+            if (name === 'Ending B') {
+              autoEnding = SectionPresetsEngine.generateEndingClimax(store.bars || 4, currentStepsPerBar);
+            } else if (name === 'Ending C') {
+              autoEnding = SectionPresetsEngine.generateEndingSoft(store.bars || 4, currentStepsPerBar);
+            } else {
+              autoEnding = SectionPresetsEngine.generateEndingPunch(store.bars || 2, currentStepsPerBar);
+            }
             curDrum = autoEnding.drumPattern;
             curBass = autoEnding.bassPattern;
             curChord = autoEnding.chordPattern;
@@ -2722,8 +2760,8 @@ export class CreatorApp {
           <button id="btn-audition-solo-ending" class="btn-assistant-audition btn-solo-audition ${isSoloActive ? 'active-audition' : ''}" title="單獨完整試聽 ${secName} 尾奏（共 ${currentBars} 小節），演奏完畢自動平穩停止，不串接主歌">
             <span>${isSoloActive ? '⏸' : '▶'}</span> ${isSoloActive ? '停止試聽' : `單獨試聽尾奏 (${currentBars}小節)`}
           </button>
-          <button id="btn-audition-main-ending" class="btn-assistant-audition ${isChainedActive ? 'active-audition' : ''}" title="先播放 1 小節 Main A 帶出節奏，接著切入 Ending 尾奏並自動停止！">
-            <span>${isChainedActive ? '⏸' : '🛑'}</span> ${isChainedActive ? '停止試聽' : '試聽主歌接尾奏 (Main A ➜ Ending A)'}
+          <button id="btn-audition-main-ending" class="btn-assistant-audition ${isChainedActive ? 'active-audition' : ''}" title="先播放 1 小節 Main A 帶出節奏，接著切入 ${secName} 尾奏並自動停止！">
+            <span>${isChainedActive ? '⏸' : '🛑'}</span> ${isChainedActive ? '停止試聽' : `試聽主歌接尾奏 (Main A ➜ ${secName})`}
           </button>
         `;
         auditionContainer.querySelector('#btn-audition-solo-ending')?.addEventListener('click', () => {
@@ -2945,7 +2983,7 @@ export class CreatorApp {
   }
 
   /**
-   * 試聽前奏接主歌：Intro A 播放完畢後無縫切入 Main A
+   * 試聽前奏接主歌：Intro (A/B/C) 播放完畢後無縫切入 Main A
    */
   public toggleAuditionIntroToMain() {
     if (this.chainedAuditionMode === 'intro-to-main') {
@@ -2955,18 +2993,24 @@ export class CreatorApp {
 
     this.stop();
 
-    // 確保有 Intro A
-    let introStore = this.sections.get('Intro A');
-    if (!introStore || !this.checkSectionHasNotes('Intro A')) {
-      this.switchSection('Intro A');
-      this.applySectionPreset('intro-countin');
-      introStore = this.sections.get('Intro A')!;
-    } else if (this.state.currentSection !== 'Intro A') {
-      this.switchSection('Intro A');
-      introStore = this.sections.get('Intro A')!;
+    const introName = this.state.currentSection.startsWith('Intro') ? this.state.currentSection : 'Intro A';
+
+    // 確保有該 Intro 段落
+    let introStore = this.sections.get(introName);
+    if (!introStore || !this.checkSectionHasNotes(introName)) {
+      this.switchSection(introName);
+      if (introName === 'Intro B') {
+        this.applySectionPreset('intro-countin');
+      } else {
+        this.applySectionPreset('intro-harmonic');
+      }
+      introStore = this.sections.get(introName)!;
+    } else if (this.state.currentSection !== introName) {
+      this.switchSection(introName);
+      introStore = this.sections.get(introName)!;
     } else {
       this.saveCurrentSectionToStore();
-      introStore = this.sections.get('Intro A')!;
+      introStore = this.sections.get(introName)!;
     }
 
     this.chainedAuditionMode = 'intro-to-main';
@@ -2983,7 +3027,7 @@ export class CreatorApp {
     let currentStep = 0;
     this.currentPlayStep = 0;
 
-    this.setStatus(`🚀 正在實境試聽：【Intro A 前奏】(${introStore.bars || 4} 小節) 倒數開場中...`);
+    this.setStatus(`🚀 正在實境試聽：【${introName} 前奏】(${introStore.bars || 4} 小節) 倒數開場中...`);
 
     const tick = () => {
       if (!this.state.isPlaying || this.chainedAuditionMode !== 'intro-to-main') {
@@ -3023,7 +3067,7 @@ export class CreatorApp {
           this.state.isPlaying = true;
           this.state.activePlayTrack = 'all';
           this.updatePlayButtonsUI();
-          this.setStatus('✨ 完美交棒！已自【Intro A】平滑進入【Main A 主歌伴奏】！');
+          this.setStatus(`✨ 完美交棒！已自【${introName}】平滑進入【Main A 主歌伴奏】！`);
         }
       } else {
         const mainBars = this.sections.get('Main A')?.bars || this.state.totalBars || 2;
@@ -3060,7 +3104,7 @@ export class CreatorApp {
   }
 
   /**
-   * 試聽主歌接尾奏：Main A 播放 1 小節後切入 Ending A，演奏完畢自動平穩停止
+   * 試聽主歌接尾奏：Main A 播放 1 小節後切入 Ending (A/B/C)，演奏完畢自動平穩停止
    */
   public toggleAuditionMainToEnding() {
     if (this.chainedAuditionMode === 'main-to-ending') {
@@ -3070,12 +3114,20 @@ export class CreatorApp {
 
     this.stop();
 
-    // 確保有 Ending A
-    let endingStore = this.sections.get('Ending A');
-    if (!endingStore || !this.checkSectionHasNotes('Ending A')) {
-      this.switchSection('Ending A');
-      this.applySectionPreset('ending-punch');
-      endingStore = this.sections.get('Ending A')!;
+    const endingName = this.state.currentSection.startsWith('Ending') ? this.state.currentSection : 'Ending A';
+
+    // 確保有該 Ending 段落
+    let endingStore = this.sections.get(endingName);
+    if (!endingStore || !this.checkSectionHasNotes(endingName)) {
+      this.switchSection(endingName);
+      if (endingName === 'Ending B') {
+        this.applySectionPreset('ending-climax');
+      } else if (endingName === 'Ending C') {
+        this.applySectionPreset('ending-soft');
+      } else {
+        this.applySectionPreset('ending-punch');
+      }
+      endingStore = this.sections.get(endingName)!;
     }
 
     // 確保切換至 Main A 作為引導
@@ -3095,7 +3147,7 @@ export class CreatorApp {
     let currentPhase: 'lead-in' | 'ending' = 'lead-in';
     let currentStep = 0;
 
-    this.setStatus('🛑 正在播放【Main A】引導，準備切入【Ending A 尾奏】...');
+    this.setStatus(`🛑 正在播放【Main A】引導，準備切入【${endingName} 尾奏】...`);
 
     const tick = () => {
       if (!this.state.isPlaying || this.chainedAuditionMode !== 'main-to-ending') {
@@ -3128,14 +3180,14 @@ export class CreatorApp {
 
         currentStep++;
         if (currentStep >= leadInSteps) {
-          // 切入 Ending A！
+          // 切入 Ending！
           currentPhase = 'ending';
           currentStep = 0;
-          this.switchSection('Ending A', true);
+          this.switchSection(endingName, true);
           this.state.isPlaying = true;
           this.state.activePlayTrack = 'all';
           this.updatePlayButtonsUI();
-          this.setStatus('💥 進入【Ending A 尾奏】：大鈸收束演奏中...');
+          this.setStatus(`💥 進入【${endingName} 尾奏】：收束演奏中...`);
         }
       } else {
         this.drumGrid?.setPlayheadStep(currentStep);
@@ -3164,7 +3216,7 @@ export class CreatorApp {
         if (currentStep >= endingTotalSteps) {
           // 尾奏結束，自動平穩停止伴奏！
           this.stop();
-          this.setStatus('⏹【Ending A 尾奏】演奏結束，伴奏已自動平穩停止！');
+          this.setStatus(`⏹【${endingName} 尾奏】演奏結束，伴奏已自動平穩停止！`);
         }
       }
     };

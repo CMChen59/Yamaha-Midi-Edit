@@ -283,4 +283,76 @@ describe('YamahaTemplateStyleSynthesizer 前奏與尾奏 STY 二進位匯出整�
     expect(endingCrash.length).toBe(32);
     expect(endingCrash[16]).toBe(true); // 第 2 小節第 1 拍定音
   });
+
+  it('支援完整 3 組前奏 (Intro A/B/C) 與 3 組尾奏 (Ending A/B/C) 共同匯出至 SFF2，所有段落皆有音符且維持 CASM 結構完整', () => {
+    const mainDrums = new Map<number, boolean[]>();
+    mainDrums.set(36, new Array(32).fill(false));
+    mainDrums.get(36)![0] = true;
+    mainDrums.get(36)![16] = true;
+
+    const mainBass = new Map<number, number>();
+    mainBass.set(0, 36);
+    mainBass.set(16, 36);
+
+    const mainChord = new Map<number, Set<number>>();
+    mainChord.set(0, new Set([48, 52, 55]));
+    mainChord.set(16, new Set([48, 52, 55]));
+
+    const introA = SectionPresetsEngine.generateIntroHarmonic(4, 16);
+    const introB = SectionPresetsEngine.generateIntroCountIn(4, 16);
+    const introC = SectionPresetsEngine.generateIntroHarmonic(8, 16);
+    const endingA = SectionPresetsEngine.generateEndingPunch(2, 16);
+    const endingB = SectionPresetsEngine.generateEndingClimax(4, 16);
+    const endingC = SectionPresetsEngine.generateEndingSoft(4, 16);
+
+    const bytes = YamahaTemplateStyleSynthesizer.synthesizeFromTemplate({
+      styleName: 'SX920_All_Intros_Endings_Test',
+      bpm: 120,
+      drumKit: { msb: 127, lsb: 0, pc: 0 },
+      bassVoice: { msb: 0, lsb: 0, pc: 33 },
+      chordVoice: { msb: 104, lsb: 0, pc: 0 },
+      sections: [
+        { name: 'Main A', bars: 2, stepsPerBar: 16, drumPattern: mainDrums, bassPattern: mainBass, chordPattern: mainChord },
+        { name: 'Intro A', bars: 4, stepsPerBar: 16, drumPattern: introA.drumPattern, bassPattern: introA.bassPattern, chordPattern: introA.chordPattern },
+        { name: 'Intro B', bars: 4, stepsPerBar: 16, drumPattern: introB.drumPattern, bassPattern: introB.bassPattern, chordPattern: introB.chordPattern },
+        { name: 'Intro C', bars: 8, stepsPerBar: 16, drumPattern: introC.drumPattern, bassPattern: introC.bassPattern, chordPattern: introC.chordPattern },
+        { name: 'Ending A', bars: 2, stepsPerBar: 16, drumPattern: endingA.drumPattern, bassPattern: endingA.bassPattern, chordPattern: endingA.chordPattern },
+        { name: 'Ending B', bars: 4, stepsPerBar: 16, drumPattern: endingB.drumPattern, bassPattern: endingB.bassPattern, chordPattern: endingB.chordPattern },
+        { name: 'Ending C', bars: 4, stepsPerBar: 16, drumPattern: endingC.drumPattern, bassPattern: endingC.bassPattern, chordPattern: endingC.chordPattern },
+      ],
+      mixer: {
+        drum: { volume: 100, pan: 64, reverb: 40, chorus: 0 },
+        bass: { volume: 95, pan: 64, reverb: 20, chorus: 0 },
+        chord: { volume: 90, pan: 52, reverb: 65, chorus: 20 },
+      },
+    });
+
+    expect(bytes).toBeDefined();
+    const parsed = YamahaParser.parse(bytes, 'STY');
+    expect(parsed.format).toBe('STY');
+    expect(parsed.division).toBe(1920);
+    expect(parsed.hasCasm).toBe(true);
+
+    // 檢查 Track 0 每個段落皆有音符
+    const tr0 = parsed.tracks[0];
+    let t = 0;
+    const notesBySection = new Map<string, number>();
+
+    for (const ev of tr0.events) {
+      t += ev.delta;
+      if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
+        const sec = parsed.sections.find(s => s.startTick <= t && (s.endTick === undefined || t < s.endTick));
+        const sName = sec?.name || 'Unknown';
+        notesBySection.set(sName, (notesBySection.get(sName) || 0) + 1);
+      }
+    }
+
+    expect(notesBySection.get('Main A')).toBeGreaterThan(0);
+    expect(notesBySection.get('Intro A')).toBeGreaterThan(0);
+    expect(notesBySection.get('Intro B')).toBeGreaterThan(0);
+    expect(notesBySection.get('Intro C')).toBeGreaterThan(0);
+    expect(notesBySection.get('Ending A')).toBeGreaterThan(0);
+    expect(notesBySection.get('Ending B')).toBeGreaterThan(0);
+    expect(notesBySection.get('Ending C')).toBeGreaterThan(0);
+  });
 });
