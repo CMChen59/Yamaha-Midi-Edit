@@ -2399,10 +2399,7 @@ export class CreatorApp {
         }
       }
 
-      // 10. 確保鼓組網格具備檔案中所有的打擊樂音高
-      result.activeDrumNotes.forEach(note => this.drumGrid?.addVoiceRow(note));
-
-      // 11. 寫入段落記憶庫
+      // 10. 寫入段落記憶庫
       this.sections = result.sections;
 
       // 12. 決定優先開啟的段落 (優先 Main A, 若無則選第一個)

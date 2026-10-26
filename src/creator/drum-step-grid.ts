@@ -46,19 +46,31 @@ export const YAMAHA_DRUM_VOICES: DrumVoiceOption[] = [
 export type GridResolution = '1/16' | '1/8';
 export type TimeSignatureType = '4/4' | '3/4' | '6/8';
 
+/**
+ * Yamaha 標準常用預設鼓組 6 大核心樂器 (依鋼琴捲軸音高由高至低自然排列)
+ */
+export function getStandardDefaultDrumVoices(): DrumVoiceOption[] {
+  return [
+    YAMAHA_DRUM_VOICES.find(v => v.note === 49)!, // 碎音鈸 Crash (49)
+    YAMAHA_DRUM_VOICES.find(v => v.note === 51)!, // 叮叮鈸 Ride (51)
+    YAMAHA_DRUM_VOICES.find(v => v.note === 46)!, // 開鈸 Open Hat (46)
+    YAMAHA_DRUM_VOICES.find(v => v.note === 42)!, // 閉鈸 Closed Hat (42)
+    YAMAHA_DRUM_VOICES.find(v => v.note === 38)!, // 小鼓 Snare (38)
+    YAMAHA_DRUM_VOICES.find(v => v.note === 36)!, // 大鼓 Kick (36)
+  ].filter(Boolean);
+}
+
 export class DrumStepGrid {
   private totalBars: number = 4;
   private timeSignature: TimeSignatureType = '4/4';
   private resolution: GridResolution = '1/16';
   private container: HTMLElement;
 
-  // 當前畫面上啟用的打擊樂行 (預設 Crash, Hi-Hat, Snare, Kick)
-  private activeVoices: DrumVoiceOption[] = [
-    YAMAHA_DRUM_VOICES[6], // Crash (49)
-    YAMAHA_DRUM_VOICES[4], // Closed Hat (42)
-    YAMAHA_DRUM_VOICES[1], // Snare (38)
-    YAMAHA_DRUM_VOICES[0], // Kick (36)
-  ];
+  // 緊湊模式旗標：預設為 true (僅顯示該段落有音符之樂器行，徹底隱藏未使用之空白行)
+  private isCompactMode: boolean = true;
+
+  // 當前畫面上啟用的打擊樂行
+  private activeVoices: DrumVoiceOption[] = getStandardDefaultDrumVoices();
 
   // 步進狀態記錄：note -> boolean[] (長度 = totalBars * stepsPerBar)
   private pattern: Map<number, boolean[]> = new Map();
@@ -244,12 +256,55 @@ export class DrumStepGrid {
 
   /**
    * 載入指定的鼓點 Pattern 狀態 (供段落切換恢復)
+   * 支援智慧緊湊模式：自動僅顯示有音符的樂器行，徹底隱藏未使用之空白行
    */
   public setPatternData(data: Map<number, boolean[]>): void {
     this.pattern = new Map();
+
+    // 找出該 Pattern 中真正有音符 (至少一步進為 true) 的打擊樂器
+    const activeNotes: number[] = [];
     data.forEach((arr, note) => {
-      if (!this.activeVoices.some(v => v.note === note)) {
-        const v = YAMAHA_DRUM_VOICES.find(item => item.note === note) || {
+      if (arr && arr.some(Boolean)) {
+        activeNotes.push(note);
+      }
+    });
+
+    if (this.isCompactMode) {
+      if (activeNotes.length > 0) {
+        // 緊湊模式且有音符：僅保留有使用到的打擊樂器，依音高由高至低自然排列 (鈸在上、大鼓在下)
+        const voices: DrumVoiceOption[] = [];
+        for (const note of activeNotes) {
+          const found = YAMAHA_DRUM_VOICES.find(v => v.note === note) || {
+            note,
+            name: `打擊音 (${note})`,
+            subName: `Percussion ${note}`,
+            noteName: `N${note}`,
+            icon: '🥁',
+            color: '#94a3b8'
+          };
+          voices.push(found);
+        }
+        voices.sort((a, b) => b.note - a.note);
+        this.activeVoices = voices;
+      } else {
+        // 完全無音符的全新空段落：顯示乾淨的 4 個核心常用樂器 (Crash, Closed Hat, Snare, Kick)
+        this.activeVoices = [
+          YAMAHA_DRUM_VOICES.find(v => v.note === 49)!,
+          YAMAHA_DRUM_VOICES.find(v => v.note === 42)!,
+          YAMAHA_DRUM_VOICES.find(v => v.note === 38)!,
+          YAMAHA_DRUM_VOICES.find(v => v.note === 36)!,
+        ].filter(Boolean);
+      }
+    } else {
+      // 展開模式：標準鼓組 + 額外有打點的樂器
+      const defaultVoices = getStandardDefaultDrumVoices();
+      const combinedNotes = new Set<number>([
+        ...defaultVoices.map(v => v.note),
+        ...activeNotes
+      ]);
+      const voices: DrumVoiceOption[] = [];
+      combinedNotes.forEach(note => {
+        const found = YAMAHA_DRUM_VOICES.find(v => v.note === note) || {
           note,
           name: `打擊音 (${note})`,
           subName: `Percussion ${note}`,
@@ -257,31 +312,86 @@ export class DrumStepGrid {
           icon: '🥁',
           color: '#94a3b8'
         };
-        this.activeVoices.push(v);
-      }
+        voices.push(found);
+      });
+      voices.sort((a, b) => b.note - a.note);
+      this.activeVoices = voices;
+    }
+
+    // 將傳入資料拷貝至 pattern
+    data.forEach((arr, note) => {
       this.pattern.set(note, [...arr]);
     });
+
     this.initPattern();
     this.render();
     this.onPatternChange?.();
   }
 
   /**
-   * 重置為預設的 6 行打擊樂器
+   * 重置為預設的常用核心打擊樂器
    */
   public resetToDefaultVoices(): void {
-    this.activeVoices = [
-      YAMAHA_DRUM_VOICES.find(v => v.note === 36)!,
-      YAMAHA_DRUM_VOICES.find(v => v.note === 38)!,
-      YAMAHA_DRUM_VOICES.find(v => v.note === 42)!,
-      YAMAHA_DRUM_VOICES.find(v => v.note === 46)!,
-      YAMAHA_DRUM_VOICES.find(v => v.note === 49)!,
-      YAMAHA_DRUM_VOICES.find(v => v.note === 51)!,
-    ].filter(Boolean);
+    this.activeVoices = getStandardDefaultDrumVoices();
     this.pattern.clear();
     this.initPattern();
     this.render();
     this.onPatternChange?.();
+  }
+
+  /**
+   * 一鍵清理移除當前所有無打點的空白樂器行
+   */
+  public pruneEmptyRows(): void {
+    const hasNotesVoices = this.activeVoices.filter(v => {
+      const steps = this.pattern.get(v.note);
+      return steps && steps.some(Boolean);
+    });
+
+    if (hasNotesVoices.length > 0) {
+      this.activeVoices = hasNotesVoices;
+      const activeSet = new Set(hasNotesVoices.map(v => v.note));
+      for (const note of Array.from(this.pattern.keys())) {
+        if (!activeSet.has(note) && !this.pattern.get(note)?.some(Boolean)) {
+          this.pattern.delete(note);
+        }
+      }
+    } else {
+      this.activeVoices = [
+        YAMAHA_DRUM_VOICES.find(v => v.note === 49)!,
+        YAMAHA_DRUM_VOICES.find(v => v.note === 42)!,
+        YAMAHA_DRUM_VOICES.find(v => v.note === 38)!,
+        YAMAHA_DRUM_VOICES.find(v => v.note === 36)!,
+      ].filter(Boolean);
+    }
+
+    this.render();
+    this.onPatternChange?.();
+  }
+
+  /**
+   * 切換緊湊模式 (僅顯示使用中) 與標準完整鼓組模式
+   */
+  public toggleCompactMode(): void {
+    this.isCompactMode = !this.isCompactMode;
+    if (this.isCompactMode) {
+      this.pruneEmptyRows();
+    } else {
+      const defaultVoices = getStandardDefaultDrumVoices();
+      for (const v of defaultVoices) {
+        if (!this.activeVoices.some(av => av.note === v.note)) {
+          this.activeVoices.push(v);
+        }
+      }
+      this.activeVoices.sort((a, b) => b.note - a.note);
+      this.initPattern();
+      this.render();
+      this.onPatternChange?.();
+    }
+  }
+
+  public getIsCompactMode(): boolean {
+    return this.isCompactMode;
   }
 
   /**
@@ -322,8 +432,11 @@ export class DrumStepGrid {
     };
 
     this.activeVoices.push(voice);
+    this.activeVoices.sort((a, b) => b.note - a.note); // 維持由高音至低音整齊排列
     const totalSteps = this.totalBars * this.getStepsPerBar();
-    this.pattern.set(note, new Array(totalSteps).fill(false));
+    if (!this.pattern.has(note)) {
+      this.pattern.set(note, new Array(totalSteps).fill(false));
+    }
 
     this.render();
     this.onPatternChange?.();
@@ -475,6 +588,12 @@ export class DrumStepGrid {
         <button id="btn-drum-play" class="btn-grid-tool btn-track-play" title="單獨循環試聽鼓組 (Solo)">
           <span>▶</span> 試聽鼓組
         </button>
+        <button id="btn-toggle-compact" class="btn-grid-tool ${this.isCompactMode ? 'btn-tool-active' : ''}" title="${this.isCompactMode ? '目前為緊湊模式（僅顯示該段落有音符之樂器）。點擊可切換顯示常用鼓組。' : '目前為展開模式（顯示常用標準鼓組）。點擊切換為緊湊模式。'}">
+          <span>${this.isCompactMode ? '👁️' : '📑'}</span> ${this.isCompactMode ? '僅顯示使用中' : '顯示完整鼓組'}
+        </button>
+        <button id="btn-prune-empty" class="btn-grid-tool" title="一鍵清理移除當前段落所有無打點的空白樂器行">
+          <span>🧹</span> 清理空白行
+        </button>
         <button id="btn-add-drum-row" class="btn-grid-tool" title="加入新的打擊樂器軌道">
           <span>➕</span> 加入打擊樂器
         </button>
@@ -511,6 +630,12 @@ export class DrumStepGrid {
 
     const btnPlay = toolbar.querySelector('#btn-drum-play') as HTMLButtonElement | null;
     btnPlay?.addEventListener('click', () => this.onSoloPlayToggle?.());
+
+    const btnToggleCompact = toolbar.querySelector('#btn-toggle-compact') as HTMLButtonElement | null;
+    btnToggleCompact?.addEventListener('click', () => this.toggleCompactMode());
+
+    const btnPruneEmpty = toolbar.querySelector('#btn-prune-empty') as HTMLButtonElement | null;
+    btnPruneEmpty?.addEventListener('click', () => this.pruneEmptyRows());
 
     const btnAdd = toolbar.querySelector('#btn-add-drum-row') as HTMLButtonElement | null;
     btnAdd?.addEventListener('click', () => this.openAddVoiceModal());
