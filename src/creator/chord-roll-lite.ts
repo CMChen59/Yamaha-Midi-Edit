@@ -527,13 +527,61 @@ export class ChordRollLite {
     return set ? Array.from(set) : [];
   }
 
-  public setPlayheadStep(stepIndex: number | null): void {
+  public setPlayheadStep(stepIndex: number | null, autoScroll: boolean = true): void {
     const prev = this.container.querySelectorAll('.chord-cell.active-playhead, .chord-header-cell.active-playhead');
     prev.forEach((el) => el.classList.remove('active-playhead'));
 
     if (stepIndex !== null && stepIndex >= 0) {
       const current = this.container.querySelectorAll(`[data-chord-step="${stepIndex}"]`);
       current.forEach((el) => el.classList.add('active-playhead'));
+
+      if (autoScroll) {
+        this.scrollToPlayhead(stepIndex);
+      }
+    }
+  }
+
+  public resetScroll(): void {
+    if (!this.container) return;
+    if (typeof this.container.scrollTo === 'function') {
+      this.container.scrollTo({ left: 0, behavior: 'smooth' });
+    } else {
+      this.container.scrollLeft = 0;
+    }
+  }
+
+  private scrollToPlayhead(stepIndex: number): void {
+    if (!this.container) return;
+    if (stepIndex === 0) {
+      this.resetScroll();
+      return;
+    }
+
+    const targetHeader = this.container.querySelector<HTMLElement>(`[data-chord-step="${stepIndex}"]`);
+    if (!targetHeader || typeof targetHeader.getBoundingClientRect !== 'function' || typeof this.container.getBoundingClientRect !== 'function') {
+      return;
+    }
+
+    const panelRect = this.container.getBoundingClientRect();
+    const targetRect = targetHeader.getBoundingClientRect();
+    const stickyHeaderWidth = 225;
+
+    if (targetRect.right > panelRect.right - 50) {
+      const diff = targetRect.left - (panelRect.left + stickyHeaderWidth + 24);
+      const targetLeft = this.container.scrollLeft + diff;
+      if (typeof this.container.scrollTo === 'function') {
+        this.container.scrollTo({ left: targetLeft, behavior: 'smooth' });
+      } else {
+        this.container.scrollLeft = targetLeft;
+      }
+    } else if (targetRect.left < panelRect.left + stickyHeaderWidth) {
+      const diff = targetRect.left - (panelRect.left + stickyHeaderWidth + 24);
+      const targetLeft = Math.max(0, this.container.scrollLeft + diff);
+      if (typeof this.container.scrollTo === 'function') {
+        this.container.scrollTo({ left: targetLeft, behavior: 'smooth' });
+      } else {
+        this.container.scrollLeft = targetLeft;
+      }
     }
   }
 

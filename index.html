@@ -512,13 +512,24 @@
       margin-bottom: 4px;
     }
 
-    /* 左側樂器標籤欄 (加寬至 210px 以容納下拉選單與音高標記) */
+    /* 左側樂器標籤欄 (加寬至 210px 以容納下拉選單與音高標記，支援橫向滾動 Sticky 固頂固定) */
     .row-header-label {
       width: 210px;
       min-width: 210px;
       display: flex;
       align-items: center;
       user-select: none;
+      position: sticky;
+      left: 0;
+      background: var(--bg-panel);
+      z-index: 5;
+      padding-right: 8px;
+      box-shadow: 4px 0 10px rgba(0, 0, 0, 0.25);
+    }
+
+    .grid-header-row .row-header-label {
+      z-index: 6;
+      background: var(--bg-panel);
     }
 
     .inst-info-wrap {
@@ -878,6 +889,10 @@
       transition: all 0.15s;
       flex-shrink: 0;
       user-select: none;
+      position: sticky;
+      left: 0;
+      z-index: 5;
+      box-shadow: 4px 0 10px rgba(0, 0, 0, 0.25);
     }
 
     .piano-white-key {
@@ -1699,6 +1714,9 @@
       </button>
       <button id="btn-stop" class="btn-transport btn-stop">
         <span>⏹</span> 停止
+      </button>
+      <button id="btn-toggle-autoscroll" class="btn-transport" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); color: #38bdf8;" title="播放時視窗是否自動滾動跟隨小節進度 (預設開啟)">
+        <span>📜</span> 跟隨畫面: 開
       </button>
 
       <div class="control-group">

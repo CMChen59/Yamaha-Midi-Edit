@@ -140,6 +140,7 @@ export class CreatorApp {
   private chainedTimer: any = null;
   private soloAuditionMode: boolean = false;
   private soloAuditionTimer: any = null;
+  private autoScrollEnabled: boolean = true;
 
   // 伴奏混音台參數緩存 (包含獨立副鼓組 Rhythm 1 與動態聲部黃金配比)
   private rhythm1Mixer = { volume: 90, pan: 64, reverb: 40, chorus: 0 };
@@ -733,6 +734,10 @@ export class CreatorApp {
       this.bassRoll?.setPlayheadStep(null);
       this.chordRoll?.setPlayheadStep(null);
       this.dynamicTracks.forEach(t => t.roll.setPlayheadStep(null));
+      this.drumGrid?.resetScroll();
+      this.bassRoll?.resetScroll();
+      this.chordRoll?.resetScroll();
+      this.dynamicTracks.forEach(t => t.roll.resetScroll());
     }
     const selectBars = document.getElementById('select-bars') as HTMLSelectElement | null;
     if (selectBars) {
@@ -1687,6 +1692,24 @@ export class CreatorApp {
       this.stop();
     });
 
+    const btnAutoScroll = document.getElementById('btn-toggle-autoscroll') as HTMLButtonElement | null;
+    btnAutoScroll?.addEventListener('click', () => {
+      this.autoScrollEnabled = !this.autoScrollEnabled;
+      if (this.autoScrollEnabled) {
+        btnAutoScroll.innerHTML = '<span>📜</span> 跟隨畫面: 開';
+        btnAutoScroll.style.background = 'rgba(56, 189, 248, 0.15)';
+        btnAutoScroll.style.borderColor = 'rgba(56, 189, 248, 0.4)';
+        btnAutoScroll.style.color = '#38bdf8';
+        this.setStatus('✓ 已開啟播放自動滾動跟隨畫面');
+      } else {
+        btnAutoScroll.innerHTML = '<span>📜</span> 跟隨畫面: 關';
+        btnAutoScroll.style.background = '#1e293b';
+        btnAutoScroll.style.borderColor = 'rgba(148, 163, 184, 0.3)';
+        btnAutoScroll.style.color = '#94a3b8';
+        this.setStatus('✓ 已關閉播放自動滾動跟隨畫面 (保留手動視角)');
+      }
+    });
+
     const btnExport = document.getElementById('btn-export-file') as HTMLButtonElement | null;
     btnExport?.addEventListener('click', () => {
       this.exportFile();
@@ -1867,6 +1890,10 @@ export class CreatorApp {
     this.bassRoll?.setPlayheadStep(null);
     this.chordRoll?.setPlayheadStep(null);
     this.dynamicTracks.forEach(t => t.roll.setPlayheadStep(null));
+    this.drumGrid?.resetScroll();
+    this.bassRoll?.resetScroll();
+    this.chordRoll?.resetScroll();
+    this.dynamicTracks.forEach(t => t.roll.resetScroll());
     this.mixerPanel?.clearAllVuMeters();
     this.updatePlayButtonsUI();
     this.setStatus('⏹ 已停止。回到第 1 小節起點。');
@@ -1926,9 +1953,9 @@ export class CreatorApp {
     const playBass = playTrack === 'all' || playTrack === 'bass';
     const playChord = playTrack === 'all' || playTrack === 'chord';
 
-    this.drumGrid?.setPlayheadStep((playDrum || playRhythm1) ? currentStep : null);
-    this.bassRoll?.setPlayheadStep(playBass ? currentStep : null);
-    this.chordRoll?.setPlayheadStep(playChord ? currentStep : null);
+    this.drumGrid?.setPlayheadStep((playDrum || playRhythm1) ? currentStep : null, this.autoScrollEnabled);
+    this.bassRoll?.setPlayheadStep(playBass ? currentStep : null, this.autoScrollEnabled);
+    this.chordRoll?.setPlayheadStep(playChord ? currentStep : null, this.autoScrollEnabled);
 
     // 1. 即時推送該步進的連續控制器事件 (CC 11 Expression, CC 1 Mod, CC 64 Sustain 等)
     if (this.state.isMidiConnected && store?.ccEvents) {
@@ -1953,7 +1980,7 @@ export class CreatorApp {
     // 3. 動態伴奏音軌 (Chord 2, Pad, Phrase 1, Phrase 2)
     this.dynamicTracks.forEach((t, partId) => {
       const playThis = playTrack === 'all' || playTrack === partId;
-      t.roll.setPlayheadStep(playThis ? currentStep : null);
+      t.roll.setPlayheadStep(playThis ? currentStep : null, this.autoScrollEnabled);
       if (playThis) {
         const notes = t.roll.getActiveNotesAtStep(currentStep);
         for (const note of notes) {
