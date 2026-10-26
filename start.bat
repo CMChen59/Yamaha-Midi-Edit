@@ -1,5 +1,6 @@
-﻿@echo off
-chcp 65001 >nul
+@chcp 65001 >nul
+@echo off
+cls
 title Yamaha PSR-SX920 伴奏風格創作台 (V2)
 cd /d "%~dp0"
 
