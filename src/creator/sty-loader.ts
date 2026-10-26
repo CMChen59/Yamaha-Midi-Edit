@@ -220,6 +220,7 @@ export class StyLoader {
 
     // 2. 聲部與音色、混音參數提取 (100% 原檔 Bank MSB/LSB/PC 無損映射)
     const mixer: Record<string, { volume: number; pan: number; reverb: number; chorus: number }> = {
+      rhythm1: { volume: 90, pan: 64, reverb: 40, chorus: 0 },
       drum: { volume: 100, pan: 64, reverb: 40, chorus: 0 },
       bass: { volume: 95, pan: 64, reverb: 20, chorus: 0 },
       chord: { volume: 90, pan: 52, reverb: 65, chorus: 20 },
@@ -276,11 +277,17 @@ export class StyLoader {
     // 2. 副鼓組 / 打擊樂 (Ch 9 Rhythm 1: SFF2 8 vs SFF1 0)
     const r1Part = pickBestPart(8, 0);
     let selectedRhythm1Kit: YamahaDrumKitPreset | undefined = undefined;
-    if (r1Part && r1Part.programChange !== undefined) {
-      const r1Msb = r1Part.bankMsb ?? 127;
-      const r1Lsb = r1Part.bankLsb ?? 0;
-      const r1Pc = r1Part.programChange;
-      selectedRhythm1Kit = resolveExactDrumKit(r1Msb, r1Lsb, r1Pc);
+    if (r1Part) {
+      if (r1Part.volume !== undefined) mixer.rhythm1.volume = r1Part.volume;
+      if (r1Part.pan !== undefined) mixer.rhythm1.pan = r1Part.pan;
+      if (r1Part.reverb !== undefined) mixer.rhythm1.reverb = r1Part.reverb;
+      if (r1Part.chorus !== undefined) mixer.rhythm1.chorus = r1Part.chorus;
+      if (r1Part.programChange !== undefined) {
+        const r1Msb = r1Part.bankMsb ?? 127;
+        const r1Lsb = r1Part.bankLsb ?? 0;
+        const r1Pc = r1Part.programChange;
+        selectedRhythm1Kit = resolveExactDrumKit(r1Msb, r1Lsb, r1Pc);
+      }
     }
 
     // 3. 貝斯 (Ch 11 Bass: SFF2 10 vs SFF1 1)

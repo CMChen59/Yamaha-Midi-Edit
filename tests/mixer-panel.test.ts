@@ -33,37 +33,50 @@ class MockNode {
     if (!html) return;
 
     const cleanHtml = html.replace(/<!--[\s\S]*?-->/g, '').trim();
-    // 匹配 HTML 開標籤與自閉合標籤或配對閉標籤
-    const tagRegex = /<([a-zA-Z0-9]+)([^>]*?)(?:\/>|>([\s\S]*?)<\/\1>)/g;
+    // 採用標準 HTML Tokenizer 解析標籤與樹狀階層
+    const tokenRegex = /<([\/]?)([a-zA-Z0-9]+)([^>]*?)>/g;
+    const stack: MockNode[] = [this];
+    let lastIndex = 0;
     let match: RegExpExecArray | null;
 
-    while ((match = tagRegex.exec(cleanHtml)) !== null) {
-      const tagName = match[1];
-      const attrStr = match[2];
-      const innerContent = match[3];
-
-      const child = new MockNode(tagName);
-
-      const attrRegex = /([a-zA-Z0-9_-]+)(?:=["']([^"']*)["'])?/g;
-      let attrMatch: RegExpExecArray | null;
-      while ((attrMatch = attrRegex.exec(attrStr)) !== null) {
-        const name = attrMatch[1];
-        const val = attrMatch[2] ?? '';
-        if (name === 'id') child.id = val;
-        else if (name === 'class') child.className = val;
-        else if (name === 'value') child.value = val;
-        child.setAttribute(name, val);
+    while ((match = tokenRegex.exec(cleanHtml)) !== null) {
+      const textBetween = cleanHtml.slice(lastIndex, match.index).trim();
+      const currentParent = stack[stack.length - 1];
+      if (textBetween && currentParent) {
+        currentParent.textContent = textBetween;
       }
+      lastIndex = tokenRegex.lastIndex;
 
-      if (innerContent !== undefined) {
-        if (innerContent.includes('<')) {
-          child.innerHTML = innerContent;
-        } else {
-          child.textContent = innerContent.trim();
+      const isClosing = match[1] === '/';
+      const tagName = match[2];
+      const attrStr = match[3];
+      const isSelfClosing = attrStr.trim().endsWith('/') || ['input', 'img', 'br', 'hr'].includes(tagName.toLowerCase());
+
+      if (isClosing) {
+        if (stack.length > 1) {
+          stack.pop();
+        }
+      } else {
+        const child = new MockNode(tagName);
+        const attrRegex = /([a-zA-Z0-9_-]+)(?:=["']([^"']*)["'])?/g;
+        let attrMatch: RegExpExecArray | null;
+        while ((attrMatch = attrRegex.exec(attrStr)) !== null) {
+          const name = attrMatch[1];
+          const val = attrMatch[2] ?? '';
+          if (name === 'id') child.id = val;
+          else if (name === 'class') child.className = val;
+          else if (name === 'value') child.value = val;
+          child.setAttribute(name, val);
+        }
+
+        if (currentParent) {
+          currentParent.children.push(child);
+        }
+
+        if (!isSelfClosing) {
+          stack.push(child);
         }
       }
-
-      this.children.push(child);
     }
   }
 
@@ -343,5 +356,114 @@ describe('MixerPanel 視覺化混音台', () => {
     expect(playAllBtn.classList.contains('mixer-btn-play-active')).toBe(false);
     expect(playAllIcon.textContent).toBe('▶');
     expect(playAllText.textContent).toBe('播放全曲');
+  });
+
+  it('支援段落音軌活動狀態連動 (updateSectionActivity: 亮燈 ACTIVE vs 熄滅 SILENT)', () => {
+    const panel = new MixerPanel(container, callbacks);
+    panel.setChannels([
+      {
+        id: 'rhythm1',
+        name: 'Rhythm 1',
+        subName: '打擊樂',
+        chNumber: 9,
+        midiChannel: 8,
+        icon: '🪘',
+        color: '#0284c7',
+        voiceName: 'Percussion Kit',
+        volume: 90,
+        pan: 64,
+        reverb: 40,
+        chorus: 0,
+        muted: false,
+        solo: false,
+        hasNotesInCurrentSection: false,
+      },
+      {
+        id: 'drum',
+        name: 'Rhythm 2',
+        subName: '主鼓組',
+        chNumber: 10,
+        midiChannel: 9,
+        icon: '🥁',
+        color: '#38bdf8',
+        voiceName: 'Standard Kit 1',
+        volume: 100,
+        pan: 64,
+        reverb: 40,
+        chorus: 0,
+        muted: false,
+        solo: false,
+        hasNotesInCurrentSection: true,
+      },
+    ]);
+
+    const r1Strip = container.querySelector('[data-strip-id="rhythm1"]');
+    const r1Badge = container.querySelector('[data-status-badge="rhythm1"]');
+    const drumStrip = container.querySelector('[data-strip-id="drum"]');
+    const drumBadge = container.querySelector('[data-status-badge="drum"]');
+
+    expect(r1Strip.classList.contains('strip-silent')).toBe(true);
+    expect(r1Badge.textContent).toBe('⚪ 空白');
+    expect(drumStrip.classList.contains('strip-active')).toBe(true);
+    expect(drumBadge.textContent).toBe('🟢 有音符');
+
+    // 動態切換段落活動
+    panel.updateSectionActivity({
+      rhythm1: true,
+      drum: false,
+    });
+
+    expect(r1Strip.classList.contains('strip-active')).toBe(true);
+    expect(r1Badge.textContent).toBe('🟢 有音符');
+    expect(drumStrip.classList.contains('strip-silent')).toBe(true);
+    expect(drumBadge.textContent).toBe('⚪ 空白');
+  });
+
+  it('支援即時動態 LED VU 音量表跳動 (triggerVuMeter) 與重設 (clearAllVuMeters)', () => {
+    vi.useFakeTimers();
+    const panel = new MixerPanel(container, callbacks);
+    panel.setChannels([
+      {
+        id: 'bass',
+        name: 'Bass',
+        subName: '貝斯',
+        chNumber: 11,
+        midiChannel: 10,
+        icon: '🎸',
+        color: '#10b981',
+        voiceName: 'Finger Bass',
+        volume: 95,
+        pan: 64,
+        reverb: 20,
+        chorus: 0,
+        muted: false,
+        solo: false,
+      },
+    ]);
+
+    const fill = container.querySelector('[data-vu-fill="bass"]');
+    const peak = container.querySelector('[data-vu-peak="bass"]');
+
+    expect(fill).toBeDefined();
+    expect(peak).toBeDefined();
+
+    // 觸發 velocity = 127 (100% 音量表滿格)
+    panel.triggerVuMeter('bass', 127);
+    expect(fill.style.height).toBe('100%');
+    expect(peak.style.bottom).toBe('100%');
+
+    // 衰減時間 150ms 後平滑歸零
+    vi.advanceTimersByTime(160);
+    expect(fill.style.height).toBe('0%');
+    expect(peak.style.bottom).toBe('0%');
+
+    // clearAllVuMeters 立即歸零
+    panel.triggerVuMeter('bass', 64);
+    expect(fill.style.height).toBe('50%');
+    panel.clearAllVuMeters();
+    expect(fill.style.height).toBe('0%');
+    expect(peak.style.bottom).toBe('0%');
+
+    vi.useRealTimers();
   });
 });

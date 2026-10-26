@@ -6,11 +6,11 @@
  */
 
 export interface MixerChannelInfo {
-  id: string; // 'drum' | 'bass' | 'chord' | 'Chord2' | 'Pad' | 'Phrase1' | 'Phrase2'
-  name: string; // 'Rhythm 2' | 'Bass' | 'Chord 1' ...
-  subName: string; // '鼓組' | '貝斯' | '和弦 1' ...
-  chNumber: number; // 10 | 11 | 12 | 13 | 14 | 15 | 16
-  midiChannel: number; // 9 | 10 | 11 | 12 | 13 | 14 | 15
+  id: string; // 'rhythm1' | 'drum' | 'bass' | 'chord' | 'Chord2' | 'Pad' | 'Phrase1' | 'Phrase2'
+  name: string; // 'Rhythm 1' | 'Rhythm 2' | 'Bass' | 'Chord 1' ...
+  subName: string; // '打擊樂' | '主鼓組' | '貝斯' | '和弦 1' ...
+  chNumber: number; // 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16
+  midiChannel: number; // 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15
   icon: string;
   color: string;
   voiceName: string;
@@ -20,6 +20,7 @@ export interface MixerChannelInfo {
   chorus: number; // 0 ~ 127 (CC 93)
   muted: boolean;
   solo: boolean;
+  hasNotesInCurrentSection?: boolean;
 }
 
 export interface MixerPanelCallbacks {
@@ -41,6 +42,7 @@ export class MixerPanel {
   private callbacks: MixerPanelCallbacks;
   private channels: Map<string, MixerChannelInfo> = new Map();
   private isVisibleState: boolean = false;
+  private vuDecayTimers: Map<string, any> = new Map();
 
   constructor(container: HTMLElement, callbacks: MixerPanelCallbacks) {
     this.container = container;
@@ -52,6 +54,84 @@ export class MixerPanel {
     this.channels.clear();
     channelList.forEach(ch => this.channels.set(ch.id, { ...ch }));
     this.render();
+  }
+
+  /**
+   * 即時觸發單軌動態 LED VU 音量表跳動 (隨音符力度 Velocity 響應)
+   * @param id 通道識別碼 (如 'rhythm1', 'drum', 'bass', 'chord', 'Chord2' 等)
+   * @param velocity 音符力度 (1 ~ 127)
+   */
+  public triggerVuMeter(id: string, velocity: number) {
+    const fillEl = this.container.querySelector<HTMLElement>(`[data-vu-fill="${id}"]`);
+    const peakEl = this.container.querySelector<HTMLElement>(`[data-vu-peak="${id}"]`);
+    if (!fillEl) return;
+
+    // 將 MIDI 力度 1~127 映射為 12% ~ 100% 音量表高度
+    const pct = Math.min(100, Math.max(12, Math.round((velocity / 127) * 100)));
+    fillEl.style.height = `${pct}%`;
+    if (peakEl) {
+      peakEl.style.bottom = `${pct}%`;
+    }
+
+    // 清除該軌先前的衰減計時器
+    const prevTimer = this.vuDecayTimers.get(id);
+    if (prevTimer) {
+      clearTimeout(prevTimer);
+    }
+
+    // 約 150ms 後平滑衰減回 0%
+    const decayTimer = setTimeout(() => {
+      if (fillEl) fillEl.style.height = '0%';
+      if (peakEl) peakEl.style.bottom = '0%';
+      this.vuDecayTimers.delete(id);
+    }, 150);
+
+    this.vuDecayTimers.set(id, decayTimer);
+  }
+
+  /**
+   * 重設並平息所有軌道的 VU 音量表 (切換段落、暫停或防掛音時調用)
+   */
+  public clearAllVuMeters() {
+    this.vuDecayTimers.forEach(t => clearTimeout(t));
+    this.vuDecayTimers.clear();
+    const fills = this.container.querySelectorAll<HTMLElement>('[data-vu-fill]');
+    fills.forEach(f => { f.style.height = '0%'; });
+    const peaks = this.container.querySelectorAll<HTMLElement>('[data-vu-peak]');
+    peaks.forEach(p => { p.style.bottom = '0%'; });
+  }
+
+  /**
+   * 動態切換段落音軌活動狀態 (亮燈 ACTIVE vs 熄滅 SILENT)
+   * @param activityMap 各軌道在當前段落是否擁有音符 (hasNotes)
+   */
+  public updateSectionActivity(activityMap: Record<string, boolean>) {
+    for (const [id, hasNotes] of Object.entries(activityMap)) {
+      const ch = this.channels.get(id);
+      if (ch) {
+        ch.hasNotesInCurrentSection = hasNotes;
+      }
+      const strip = this.container.querySelector<HTMLElement>(`[data-strip-id="${id}"]`);
+      const statusBadge = this.container.querySelector<HTMLElement>(`[data-status-badge="${id}"]`);
+      if (strip) {
+        if (hasNotes) {
+          strip.classList.add('strip-active');
+          strip.classList.remove('strip-silent');
+        } else {
+          strip.classList.add('strip-silent');
+          strip.classList.remove('strip-active');
+        }
+      }
+      if (statusBadge) {
+        if (hasNotes) {
+          statusBadge.textContent = '🟢 有音符';
+          statusBadge.className = 'strip-status-badge strip-status-active';
+        } else {
+          statusBadge.textContent = '⚪ 空白';
+          statusBadge.className = 'strip-status-badge strip-status-silent';
+        }
+      }
+    }
   }
 
   public updateVoiceName(id: string, voiceName: string) {
@@ -232,15 +312,22 @@ export class MixerPanel {
     stripsContainer.className = 'mixer-strips-container';
 
     this.channels.forEach((ch) => {
+      const isStripActive = ch.hasNotesInCurrentSection !== false;
       const strip = document.createElement('div');
-      strip.className = 'mixer-channel-strip';
+      strip.className = `mixer-channel-strip ${isStripActive ? 'strip-active' : 'strip-silent'}`;
+      strip.setAttribute('data-strip-id', ch.id);
       strip.style.setProperty('--track-color', ch.color);
 
       strip.innerHTML = `
         <!-- 軌道身分標籤 -->
         <div class="strip-header" style="border-top: 3px solid ${ch.color};">
-          <div class="strip-ch-tag" style="background: ${ch.color}25; color: ${ch.color}; border: 1px solid ${ch.color}50;">
-            CH ${ch.chNumber}
+          <div class="strip-tags-row">
+            <div class="strip-ch-tag" style="background: ${ch.color}25; color: ${ch.color}; border: 1px solid ${ch.color}50;">
+              CH ${ch.chNumber}
+            </div>
+            <div class="strip-status-badge ${isStripActive ? 'strip-status-active' : 'strip-status-silent'}" data-status-badge="${ch.id}">
+              ${isStripActive ? '🟢 有音符' : '⚪ 空白'}
+            </div>
           </div>
           <div class="strip-name" title="${ch.name} (${ch.subName})">
             ${ch.icon} ${ch.name}
@@ -305,7 +392,7 @@ export class MixerPanel {
           </div>
         </div>
 
-        <!-- 音量 (Volume) 直立推桿區 -->
+        <!-- 音量 (Volume) 直立推桿區 與 動態 LED VU 音量表 -->
         <div class="strip-fader-section">
           <div class="strip-vol-meter-wrap">
             <!-- 刻度參考線 -->
@@ -316,6 +403,11 @@ export class MixerPanel {
               <span>50</span>
               <span>25</span>
               <span>0</span>
+            </div>
+            <!-- 即時動態跳動 LED VU 音量表 -->
+            <div class="strip-vu-meter-bar" data-vu-meter="${ch.id}" title="即時動態音量表 (隨播放音符真實力度跳動)">
+              <div class="strip-vu-fill" data-vu-fill="${ch.id}"></div>
+              <div class="strip-vu-peak" data-vu-peak="${ch.id}"></div>
             </div>
             <!-- 直立推桿 -->
             <input

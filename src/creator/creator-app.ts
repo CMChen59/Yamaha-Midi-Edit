@@ -101,6 +101,7 @@ export interface CreatorState {
   isPlaying: boolean;
   activePlayTrack: string | null;
   currentSection: string;
+  selectedRhythm1Kit?: YamahaDrumKitPreset;
   selectedDrumKit: YamahaDrumKitPreset;
   selectedBassVoice: YamahaBassPreset;
   selectedChordVoice: YamahaChordPreset;
@@ -117,6 +118,7 @@ export class CreatorApp {
     isPlaying: false,
     activePlayTrack: null,
     currentSection: 'Main A',
+    selectedRhythm1Kit: YAMAHA_SX920_DRUM_KITS.find(k => k.id === 'cuban-kit') || YAMAHA_SX920_DRUM_KITS[0],
     selectedDrumKit: YAMAHA_SX920_DRUM_KITS[0], // 預設 Standard Kit 1
     selectedBassVoice: YAMAHA_SX920_BASS_VOICES[0], // 預設 Finger Bass
     selectedChordVoice: YAMAHA_SX920_CHORD_VOICES[0], // 預設 Concert Grand
@@ -138,6 +140,15 @@ export class CreatorApp {
   private chainedTimer: any = null;
   private soloAuditionMode: boolean = false;
   private soloAuditionTimer: any = null;
+
+  // 伴奏混音台參數緩存 (包含獨立副鼓組 Rhythm 1 與動態聲部黃金配比)
+  private rhythm1Mixer = { volume: 90, pan: 64, reverb: 40, chorus: 0 };
+  private dynamicMixerDefaults: Record<string, { volume: number; pan: number; reverb: number; chorus: number }> = {
+    Chord2: { volume: 85, pan: 76, reverb: 50, chorus: 40 },
+    Pad: { volume: 80, pan: 64, reverb: 75, chorus: 50 },
+    Phrase1: { volume: 85, pan: 44, reverb: 60, chorus: 20 },
+    Phrase2: { volume: 80, pan: 84, reverb: 60, chorus: 30 },
+  };
 
   // 多段落狀態記憶庫 (Section Name -> SectionStore)
   private sections: Map<string, SectionStore> = new Map();
@@ -448,6 +459,7 @@ export class CreatorApp {
    */
   private sendMidiDynamicTrackTrigger(partId: string, note: number, velocity: number = 100, durMs: number = 350, sourceCh?: number) {
     if (this.isChannelEffectiveMuted(partId)) return;
+    this.mixerPanel?.triggerVuMeter(partId, velocity);
     if (this.state.isMidiConnected) {
       const config = AVAILABLE_CHORD_TRACK_CONFIGS[partId];
       if (config) {
@@ -804,6 +816,10 @@ export class CreatorApp {
         }
       }
     }
+
+    // 6. 即時動態連動混音台：更新各軌道音色名稱、有音符(ACTIVE) / 空白(SILENT) 狀態與清空殘留 VU 燈號
+    this.refreshMixerChannels();
+    this.mixerPanel?.clearAllVuMeters();
 
     this.updateUI();
     if (!preservePlayback) {
@@ -1413,16 +1429,23 @@ export class CreatorApp {
   private triggerDrumSound(note: number, velocity: number = 100, durMs: number = 80, sourceChannel: number = 9) {
     drumSynth.playNote(note, velocity);
     this.sendMidiDrumTrigger(note, velocity, durMs, sourceChannel);
+    if (sourceChannel === 8 || sourceChannel === 0) {
+      this.mixerPanel?.triggerVuMeter('rhythm1', velocity);
+    } else {
+      this.mixerPanel?.triggerVuMeter('drum', velocity);
+    }
   }
 
   private triggerBassSound(note: number, velocity: number = 100, durMs: number = 240, sourceCh?: number) {
     bassSynth.playNote(note, velocity, durMs);
     this.sendMidiBassTrigger(note, velocity, durMs, sourceCh);
+    this.mixerPanel?.triggerVuMeter('bass', velocity);
   }
 
   private triggerChordSound(note: number, velocity: number = 100, durMs: number = 350, sourceCh?: number) {
     chordSynth.playNote(note, velocity, durMs);
     this.sendMidiChordTrigger(note, velocity, durMs, sourceCh);
+    this.mixerPanel?.triggerVuMeter('chord', velocity);
   }
 
   private sendMidiDrumTrigger(note: number, velocity: number = 100, durMs: number = 80, sourceChannel: number = 9) {
@@ -1474,6 +1497,7 @@ export class CreatorApp {
     this.saveCurrentSectionToStore();
     this.refreshSectionOptions();
     this.updateSectionSummary();
+    this.mixerPanel?.updateSectionActivity(this.getSectionChannelActivity());
 
     const hasDrum = this.drumGrid?.hasNotes() ?? false;
     const hasBass = this.bassRoll?.hasNotes() ?? false;
@@ -1818,6 +1842,7 @@ export class CreatorApp {
     this.bassRoll?.setPlayheadStep(null);
     this.chordRoll?.setPlayheadStep(null);
     this.dynamicTracks.forEach(t => t.roll.setPlayheadStep(null));
+    this.mixerPanel?.clearAllVuMeters();
     this.updatePlayButtonsUI();
     this.setStatus('⏹ 已停止。回到第 1 小節起點。');
   }
@@ -1848,6 +1873,7 @@ export class CreatorApp {
 
     // 混音台全曲與各聲部試聽按鈕狀態連動同步
     this.mixerPanel?.setPlayAllState(isPlaying && track === 'all');
+    this.mixerPanel?.setTrackPlaying('rhythm1', isPlaying && track === 'rhythm1');
     this.mixerPanel?.setTrackPlaying('drum', isPlaying && track === 'drum');
     this.mixerPanel?.setTrackPlaying('bass', isPlaying && track === 'bass');
     this.mixerPanel?.setTrackPlaying('chord', isPlaying && track === 'chord');
@@ -1870,11 +1896,12 @@ export class CreatorApp {
     const store = this.sections.get(secName);
 
     const playTrack = this.state.activePlayTrack;
+    const playRhythm1 = playTrack === 'all' || playTrack === 'rhythm1';
     const playDrum = playTrack === 'all' || playTrack === 'drum';
     const playBass = playTrack === 'all' || playTrack === 'bass';
     const playChord = playTrack === 'all' || playTrack === 'chord';
 
-    this.drumGrid?.setPlayheadStep(playDrum ? currentStep : null);
+    this.drumGrid?.setPlayheadStep((playDrum || playRhythm1) ? currentStep : null);
     this.bassRoll?.setPlayheadStep(playBass ? currentStep : null);
     this.chordRoll?.setPlayheadStep(playChord ? currentStep : null);
 
@@ -1927,14 +1954,20 @@ export class CreatorApp {
     });
 
     // 4. 鼓組 (區分 Ch 8 Rhythm 1 打擊樂與 Ch 9 Rhythm 2 主爵士鼓)
-    if (playDrum) {
+    if (playDrum || playRhythm1) {
       const drumNotes = this.drumGrid?.getActiveNotesAtStep(currentStep) || [];
       for (const note of drumNotes) {
         const meta = store?.drumMeta?.get(`${note}_${currentStep}`);
         const vel = meta?.velocity ?? 100;
         const dur = meta?.durationMs ?? Math.max(30, Math.round(stepIntervalMs * 0.8));
         const sourceCh = meta?.sourceChannel ?? 9;
-        this.triggerDrumSound(note, vel, dur, sourceCh);
+        const isR1 = sourceCh === 8 || sourceCh === 0;
+
+        if (isR1 && playRhythm1) {
+          this.triggerDrumSound(note, vel, dur, sourceCh);
+        } else if (!isR1 && playDrum) {
+          this.triggerDrumSound(note, vel, dur, sourceCh);
+        }
       }
     }
 
@@ -2345,18 +2378,22 @@ export class CreatorApp {
       this.syncDrumKitToKeyboard();
       this.mixerPanel?.updateVoiceName('drum', result.drumKit.name);
 
-      if (result.rhythm1Kit && this.state.isMidiConnected) {
-        midiManager.sendVoiceChange(8, {
-          msb: result.rhythm1Kit.msb,
-          lsb: result.rhythm1Kit.lsb,
-          pc: result.rhythm1Kit.pc,
-        });
-        // 同步鏡像至 SFF1 打擊樂通道 (Ch 0 / MIDI Ch 1)
-        midiManager.sendVoiceChange(0, {
-          msb: result.rhythm1Kit.msb,
-          lsb: result.rhythm1Kit.lsb,
-          pc: result.rhythm1Kit.pc,
-        });
+      if (result.rhythm1Kit) {
+        this.state.selectedRhythm1Kit = result.rhythm1Kit;
+        this.mixerPanel?.updateVoiceName('rhythm1', result.rhythm1Kit.name);
+        if (this.state.isMidiConnected) {
+          midiManager.sendVoiceChange(8, {
+            msb: result.rhythm1Kit.msb,
+            lsb: result.rhythm1Kit.lsb,
+            pc: result.rhythm1Kit.pc,
+          });
+          // 同步鏡像至 SFF1 打擊樂通道 (Ch 0 / MIDI Ch 1)
+          midiManager.sendVoiceChange(0, {
+            msb: result.rhythm1Kit.msb,
+            lsb: result.rhythm1Kit.lsb,
+            pc: result.rhythm1Kit.pc,
+          });
+        }
       }
 
       // 6. 設定貝斯音色
@@ -2409,7 +2446,16 @@ export class CreatorApp {
       // 9. 更新混音台音量、聲相與效果器
       if (result.mixer) {
         for (const [partId, mix] of Object.entries(result.mixer)) {
-          if (partId === 'drum') {
+          if (partId === 'rhythm1') {
+            this.rhythm1Mixer.volume = mix.volume;
+            this.rhythm1Mixer.pan = mix.pan;
+            this.rhythm1Mixer.reverb = mix.reverb;
+            this.rhythm1Mixer.chorus = mix.chorus;
+            this.mixerPanel?.updateVolume('rhythm1', mix.volume);
+            this.mixerPanel?.updatePan('rhythm1', mix.pan);
+            this.mixerPanel?.updateReverb('rhythm1', mix.reverb);
+            this.mixerPanel?.updateChorus('rhythm1', mix.chorus);
+          } else if (partId === 'drum') {
             drumSynth.setVolume(mix.volume);
             drumSynth.setPan(mix.pan);
             drumSynth.setReverb(mix.reverb);
@@ -2437,6 +2483,12 @@ export class CreatorApp {
             this.mixerPanel?.updateReverb('chord', mix.reverb);
             this.mixerPanel?.updateChorus('chord', mix.chorus);
           } else {
+            if (this.dynamicMixerDefaults[partId]) {
+              this.dynamicMixerDefaults[partId].volume = mix.volume;
+              this.dynamicMixerDefaults[partId].pan = mix.pan;
+              this.dynamicMixerDefaults[partId].reverb = mix.reverb;
+              this.dynamicMixerDefaults[partId].chorus = mix.chorus;
+            }
             const dynTrack = this.dynamicTracks.get(partId as any);
             if (dynTrack) {
               const s = dynTrack.roll.getSynth();
@@ -2444,11 +2496,11 @@ export class CreatorApp {
               s.setPan(mix.pan);
               s.setReverb(mix.reverb);
               s.setChorus(mix.chorus);
-              this.mixerPanel?.updateVolume(partId, mix.volume);
-              this.mixerPanel?.updatePan(partId, mix.pan);
-              this.mixerPanel?.updateReverb(partId, mix.reverb);
-              this.mixerPanel?.updateChorus(partId, mix.chorus);
             }
+            this.mixerPanel?.updateVolume(partId, mix.volume);
+            this.mixerPanel?.updatePan(partId, mix.pan);
+            this.mixerPanel?.updateReverb(partId, mix.reverb);
+            this.mixerPanel?.updateChorus(partId, mix.chorus);
           }
         }
       }
@@ -2509,25 +2561,157 @@ export class CreatorApp {
   }
 
   /**
-   * 建立當前伴奏混音台通道條資訊清單
+   * 計算特定段落中各伴奏軌道是否包含實際音符 (用於混音台亮燈與灰顯狀態即時動態連動)
+   */
+  public getSectionChannelActivity(sectionName?: string): Record<string, boolean> {
+    const secName = sectionName || this.state.currentSection;
+    const store = this.sections.get(secName);
+    const activity: Record<string, boolean> = {
+      rhythm1: false,
+      drum: false,
+      bass: false,
+      chord: false,
+      Chord2: false,
+      Pad: false,
+      Phrase1: false,
+      Phrase2: false,
+    };
+
+    if (!store) {
+      activity.drum = this.drumGrid?.hasNotes() || false;
+      activity.bass = this.bassRoll?.hasNotes() || false;
+      activity.chord = this.chordRoll?.hasNotes() || false;
+      const dynKeys: Array<'Chord2' | 'Pad' | 'Phrase1' | 'Phrase2'> = ['Chord2', 'Pad', 'Phrase1', 'Phrase2'];
+      dynKeys.forEach(partId => {
+        activity[partId] = this.dynamicTracks.get(partId)?.roll.hasNotes() || false;
+      });
+      return activity;
+    }
+
+    // 1. 鼓組 (區分 Rhythm 1 打擊樂與 Rhythm 2 主鼓組)
+    if (store.drumPattern && store.drumPattern.size > 0) {
+      let hasR1 = false;
+      let hasR2 = false;
+      for (const [note, steps] of store.drumPattern.entries()) {
+        for (let s = 0; s < steps.length; s++) {
+          if (steps[s]) {
+            const meta = store.drumMeta?.get(`${note}_${s}`);
+            if (meta?.sourceChannel === 8 || meta?.sourceChannel === 0) {
+              hasR1 = true;
+            } else {
+              hasR2 = true;
+            }
+          }
+        }
+      }
+      activity.rhythm1 = hasR1;
+      activity.drum = hasR2 || (!hasR1 && store.drumPattern.size > 0);
+    }
+
+    // 2. 貝斯 (Bass)
+    if (store.bassPattern && store.bassPattern.size > 0) {
+      activity.bass = true;
+    }
+
+    // 3. 和弦 1 (Chord 1)
+    if (store.chordPattern && store.chordPattern.size > 0) {
+      for (const notes of store.chordPattern.values()) {
+        if (notes && notes.size > 0) {
+          activity.chord = true;
+          break;
+        }
+      }
+    }
+
+    // 4. 動態伴奏音軌 (Chord 2, Pad, Phrase 1, Phrase 2)
+    const dynPartIds: Array<'Chord2' | 'Pad' | 'Phrase1' | 'Phrase2'> = ['Chord2', 'Pad', 'Phrase1', 'Phrase2'];
+    for (const partId of dynPartIds) {
+      const pat = store.dynamicPatterns?.[partId];
+      if (pat && pat.size > 0) {
+        for (const notes of pat.values()) {
+          if (notes && notes.size > 0) {
+            activity[partId] = true;
+            break;
+          }
+        }
+      } else if (this.dynamicTracks.has(partId) && secName === this.state.currentSection) {
+        activity[partId] = this.dynamicTracks.get(partId)!.roll.hasNotes();
+      }
+    }
+
+    return activity;
+  }
+
+  /**
+   * 建立當前伴奏混音台通道條資訊清單 (完整 8 軌伴奏通道條 CH 9 ~ CH 16)
    */
   private buildMixerChannelList(): MixerChannelInfo[] {
+    const currentStore = this.sections.get(this.state.currentSection);
+    const secVoices = currentStore?.sectionVoices;
+    const activity = this.getSectionChannelActivity();
+
+    // 1. 副鼓組 / 打擊樂 (Ch 9 Rhythm 1: SFF2 8 vs SFF1 0)
+    let r1VoiceName = this.state.selectedRhythm1Kit?.name || 'Percussion Kit';
+    if (secVoices && (secVoices[8] || secVoices[0])) {
+      const sv = secVoices[8] || secVoices[0];
+      r1VoiceName = resolveExactDrumKit(sv.msb, sv.lsb, sv.pc).name;
+    }
+
+    // 2. 主鼓組 (Ch 10 Rhythm 2: SFF2 9 vs SFF1 7)
+    let drumVoiceName = this.state.selectedDrumKit.name;
+    if (secVoices && (secVoices[9] || secVoices[7])) {
+      const sv = secVoices[9] || secVoices[7];
+      drumVoiceName = resolveExactDrumKit(sv.msb, sv.lsb, sv.pc).name;
+    }
+
+    // 3. 貝斯 (Ch 11 Bass: SFF2 10 vs SFF1 1)
+    let bassVoiceName = this.state.selectedBassVoice.name;
+    if (secVoices && (secVoices[10] || secVoices[1])) {
+      const sv = secVoices[10] || secVoices[1];
+      bassVoiceName = resolveExactBassVoice(sv.msb, sv.lsb, sv.pc).name;
+    }
+
+    // 4. 和弦 1 (Ch 12 Chord 1: SFF2 11 vs SFF1 2)
+    let chordVoiceName = this.state.selectedChordVoice.name;
+    if (secVoices && (secVoices[11] || secVoices[2])) {
+      const sv = secVoices[11] || secVoices[2];
+      chordVoiceName = resolveExactChordVoice(sv.msb, sv.lsb, sv.pc, 'Piano').name;
+    }
+
     const list: MixerChannelInfo[] = [
+      {
+        id: 'rhythm1',
+        name: 'Rhythm 1',
+        subName: '打擊樂',
+        chNumber: 9,
+        midiChannel: 8,
+        icon: '🪘',
+        color: '#0284c7',
+        voiceName: r1VoiceName,
+        volume: this.rhythm1Mixer.volume,
+        pan: this.rhythm1Mixer.pan,
+        reverb: this.rhythm1Mixer.reverb,
+        chorus: this.rhythm1Mixer.chorus,
+        muted: this.mutedChannels.has('rhythm1'),
+        solo: this.soloChannels.has('rhythm1'),
+        hasNotesInCurrentSection: activity.rhythm1,
+      },
       {
         id: 'drum',
         name: 'Rhythm 2',
-        subName: '鼓組',
+        subName: '主鼓組',
         chNumber: 10,
         midiChannel: 9,
         icon: '🥁',
         color: '#38bdf8',
-        voiceName: this.state.selectedDrumKit.name,
+        voiceName: drumVoiceName,
         volume: drumSynth.getVolume(),
         pan: drumSynth.getPan(),
         reverb: drumSynth.getReverb(),
         chorus: drumSynth.getChorus(),
         muted: this.mutedChannels.has('drum'),
         solo: this.soloChannels.has('drum'),
+        hasNotesInCurrentSection: activity.drum,
       },
       {
         id: 'bass',
@@ -2537,13 +2721,14 @@ export class CreatorApp {
         midiChannel: 10,
         icon: '🎸',
         color: '#10b981',
-        voiceName: this.state.selectedBassVoice.name,
+        voiceName: bassVoiceName,
         volume: bassSynth.getVolume(),
         pan: bassSynth.getPan(),
         reverb: bassSynth.getReverb(),
         chorus: bassSynth.getChorus(),
         muted: this.mutedChannels.has('bass'),
         solo: this.soloChannels.has('bass'),
+        hasNotesInCurrentSection: activity.bass,
       },
       {
         id: 'chord',
@@ -2553,41 +2738,71 @@ export class CreatorApp {
         midiChannel: 11,
         icon: '🎹',
         color: '#a855f7',
-        voiceName: this.state.selectedChordVoice.name,
+        voiceName: chordVoiceName,
         volume: chordSynth.getVolume(),
         pan: chordSynth.getPan(),
         reverb: chordSynth.getReverb(),
         chorus: chordSynth.getChorus(),
         muted: this.mutedChannels.has('chord'),
         solo: this.soloChannels.has('chord'),
+        hasNotesInCurrentSection: activity.chord,
       },
     ];
 
     // 動態伴奏音軌 (Chord 2, Pad, Phrase 1, Phrase 2)
-    const partOrder: Array<'Chord2' | 'Pad' | 'Phrase1' | 'Phrase2'> = ['Chord2', 'Pad', 'Phrase1', 'Phrase2'];
-    partOrder.forEach(partId => {
+    const dynConfigs: Array<{
+      partId: 'Chord2' | 'Pad' | 'Phrase1' | 'Phrase2';
+      sff2Ch: number;
+      sff1Ch: number;
+      defCat: string;
+      color: string;
+      defaultVoiceId: string;
+    }> = [
+      { partId: 'Chord2', sff2Ch: 12, sff1Ch: 3, defCat: 'Guitar', color: '#f97316', defaultVoiceId: 'steel-guitar' },
+      { partId: 'Pad', sff2Ch: 13, sff1Ch: 4, defCat: 'Pad', color: '#06b6d4', defaultVoiceId: 'warm-pad' },
+      { partId: 'Phrase1', sff2Ch: 14, sff1Ch: 5, defCat: 'Guitar', color: '#eab308', defaultVoiceId: 'pop-brass' },
+      { partId: 'Phrase2', sff2Ch: 15, sff1Ch: 6, defCat: 'Strings', color: '#ec4899', defaultVoiceId: 'tenor-sax' },
+    ];
+
+    dynConfigs.forEach(({ partId, sff2Ch, sff1Ch, defCat, color, defaultVoiceId }) => {
+      const cfg = AVAILABLE_CHORD_TRACK_CONFIGS[partId];
       const dynTrack = this.dynamicTracks.get(partId);
-      if (dynTrack) {
-        const cfg = AVAILABLE_CHORD_TRACK_CONFIGS[partId];
-        const color = partId === 'Chord2' ? '#f97316' : (partId === 'Pad' ? '#06b6d4' : (partId === 'Phrase1' ? '#eab308' : '#ec4899'));
-        const synth = dynTrack.roll.getSynth();
-        list.push({
-          id: partId,
-          name: cfg ? cfg.trackId.toUpperCase() : partId,
-          subName: cfg ? cfg.title.replace(/\(.*\)/, '').trim() : partId,
-          chNumber: cfg ? cfg.panelCh : 13,
-          midiChannel: cfg ? cfg.channel : 12,
-          icon: cfg ? cfg.icon : '🎵',
-          color,
-          voiceName: dynTrack.selectedVoice.name,
-          volume: synth.getVolume(),
-          pan: synth.getPan(),
-          reverb: synth.getReverb(),
-          chorus: synth.getChorus(),
-          muted: this.mutedChannels.has(partId),
-          solo: this.soloChannels.has(partId),
-        });
+
+      // 解析音色名稱 (優先自該段落 sectionVoices，其次 dynTrack，再次預設值)
+      let voiceName = dynTrack ? dynTrack.selectedVoice.name : '';
+      if (secVoices && (secVoices[sff2Ch] || secVoices[sff1Ch])) {
+        const sv = secVoices[sff2Ch] || secVoices[sff1Ch];
+        voiceName = resolveExactChordVoice(sv.msb, sv.lsb, sv.pc, defCat).name;
+      } else if (!voiceName) {
+        const found = YAMAHA_SX920_CHORD_VOICES.find(v => v.id === defaultVoiceId);
+        voiceName = found ? found.name : defaultVoiceId;
       }
+
+      // 音量與控制參數
+      const synth = dynTrack?.roll.getSynth();
+      const defs = this.dynamicMixerDefaults[partId] || { volume: 80, pan: 64, reverb: 50, chorus: 30 };
+      const vol = synth ? synth.getVolume() : defs.volume;
+      const pan = synth ? synth.getPan() : defs.pan;
+      const rev = synth ? synth.getReverb() : defs.reverb;
+      const cho = synth ? synth.getChorus() : defs.chorus;
+
+      list.push({
+        id: partId,
+        name: cfg ? cfg.trackId.toUpperCase() : partId,
+        subName: cfg ? cfg.title.replace(/\(.*\)/, '').trim() : partId,
+        chNumber: cfg ? cfg.panelCh : (partId === 'Phrase2' ? 16 : 15),
+        midiChannel: cfg ? cfg.channel : (partId === 'Phrase2' ? 15 : 14),
+        icon: cfg ? cfg.icon : '🎵',
+        color,
+        voiceName,
+        volume: vol,
+        pan,
+        reverb: rev,
+        chorus: cho,
+        muted: this.mutedChannels.has(partId),
+        solo: this.soloChannels.has(partId),
+        hasNotesInCurrentSection: activity[partId],
+      });
     });
 
     return list;
@@ -2617,6 +2832,12 @@ export class CreatorApp {
    * 套用混音台音訊與 MIDI 發聲狀態至各合成器與琴端
    */
   private applyMixerAudioStates() {
+    const r1Muted = this.isChannelEffectiveMuted('rhythm1');
+    if (this.state.isMidiConnected) {
+      midiManager.sendMixerControllers(8, { volume: r1Muted ? 0 : this.rhythm1Mixer.volume });
+      midiManager.sendMixerControllers(0, { volume: r1Muted ? 0 : this.rhythm1Mixer.volume });
+    }
+
     const drumMuted = this.isChannelEffectiveMuted('drum');
     drumSynth.setChannelMuted(drumMuted);
     if (this.state.isMidiConnected) {
@@ -2635,12 +2856,17 @@ export class CreatorApp {
       midiManager.sendMixerControllers(11, { volume: chordMuted ? 0 : chordSynth.getVolume() });
     }
 
-    this.dynamicTracks.forEach((t, partId) => {
+    const dynKeys: Array<'Chord2' | 'Pad' | 'Phrase1' | 'Phrase2'> = ['Chord2', 'Pad', 'Phrase1', 'Phrase2'];
+    dynKeys.forEach(partId => {
       const dynMuted = this.isChannelEffectiveMuted(partId);
-      t.roll.getSynth().setChannelMuted(dynMuted);
+      const dynTrack = this.dynamicTracks.get(partId);
+      if (dynTrack) {
+        dynTrack.roll.getSynth().setChannelMuted(dynMuted);
+      }
       const cfg = AVAILABLE_CHORD_TRACK_CONFIGS[partId];
       if (this.state.isMidiConnected && cfg) {
-        midiManager.sendMixerControllers(cfg.channel, { volume: dynMuted ? 0 : t.roll.getSynth().getVolume() });
+        const curVol = dynTrack ? dynTrack.roll.getSynth().getVolume() : (this.dynamicMixerDefaults[partId]?.volume ?? 80);
+        midiManager.sendMixerControllers(cfg.channel, { volume: dynMuted ? 0 : curVol });
       }
     });
   }
@@ -2650,6 +2876,23 @@ export class CreatorApp {
    */
   public syncMixerControllersToKeyboard() {
     if (!this.state.isMidiConnected) return;
+
+    // Rhythm 1 (Ch 8 & Ch 0)
+    const r1Vol = this.isChannelEffectiveMuted('rhythm1') ? 0 : this.rhythm1Mixer.volume;
+    midiManager.sendMixerControllers(8, {
+      volume: r1Vol,
+      pan: this.rhythm1Mixer.pan,
+      reverb: this.rhythm1Mixer.reverb,
+      chorus: this.rhythm1Mixer.chorus,
+    });
+    midiManager.sendMixerControllers(0, {
+      volume: r1Vol,
+      pan: this.rhythm1Mixer.pan,
+      reverb: this.rhythm1Mixer.reverb,
+      chorus: this.rhythm1Mixer.chorus,
+    });
+
+    // Rhythm 2 (Ch 9)
     const drumVol = this.isChannelEffectiveMuted('drum') ? 0 : drumSynth.getVolume();
     midiManager.sendMixerControllers(9, {
       volume: drumVol,
@@ -2658,6 +2901,7 @@ export class CreatorApp {
       chorus: drumSynth.getChorus(),
     });
 
+    // Bass (Ch 10)
     const bassVol = this.isChannelEffectiveMuted('bass') ? 0 : bassSynth.getVolume();
     midiManager.sendMixerControllers(10, {
       volume: bassVol,
@@ -2666,6 +2910,7 @@ export class CreatorApp {
       chorus: bassSynth.getChorus(),
     });
 
+    // Chord 1 (Ch 11)
     const chordVol = this.isChannelEffectiveMuted('chord') ? 0 : chordSynth.getVolume();
     midiManager.sendMixerControllers(11, {
       volume: chordVol,
@@ -2674,23 +2919,37 @@ export class CreatorApp {
       chorus: chordSynth.getChorus(),
     });
 
-    this.dynamicTracks.forEach((t, partId) => {
+    // 動態聲部 (Ch 12 ~ 15)
+    const dynKeys: Array<'Chord2' | 'Pad' | 'Phrase1' | 'Phrase2'> = ['Chord2', 'Pad', 'Phrase1', 'Phrase2'];
+    dynKeys.forEach(partId => {
       const cfg = AVAILABLE_CHORD_TRACK_CONFIGS[partId];
       if (cfg) {
-        const s = t.roll.getSynth();
-        const dynVol = this.isChannelEffectiveMuted(partId) ? 0 : s.getVolume();
+        const dynTrack = this.dynamicTracks.get(partId);
+        const s = dynTrack?.roll.getSynth();
+        const defs = this.dynamicMixerDefaults[partId] || { volume: 80, pan: 64, reverb: 50, chorus: 30 };
+        const vol = s ? s.getVolume() : defs.volume;
+        const pan = s ? s.getPan() : defs.pan;
+        const rev = s ? s.getReverb() : defs.reverb;
+        const cho = s ? s.getChorus() : defs.chorus;
+
         midiManager.sendMixerControllers(cfg.channel, {
-          volume: dynVol,
-          pan: s.getPan(),
-          reverb: s.getReverb(),
-          chorus: s.getChorus(),
+          volume: this.isChannelEffectiveMuted(partId) ? 0 : vol,
+          pan,
+          reverb: rev,
+          chorus: cho,
         });
       }
     });
   }
 
   private onMixerVolumeChange(id: string, vol: number) {
-    if (id === 'drum') {
+    if (id === 'rhythm1') {
+      this.rhythm1Mixer.volume = vol;
+      if (this.state.isMidiConnected && !this.isChannelEffectiveMuted('rhythm1')) {
+        midiManager.sendMixerControllers(8, { volume: vol });
+        midiManager.sendMixerControllers(0, { volume: vol });
+      }
+    } else if (id === 'drum') {
       drumSynth.setVolume(vol);
       if (this.state.isMidiConnected && !this.isChannelEffectiveMuted('drum')) {
         midiManager.sendMixerControllers(9, { volume: vol });
@@ -2705,9 +2964,14 @@ export class CreatorApp {
       if (this.state.isMidiConnected && !this.isChannelEffectiveMuted('chord')) {
         midiManager.sendMixerControllers(11, { volume: vol });
       }
-    } else if (this.dynamicTracks.has(id)) {
-      const t = this.dynamicTracks.get(id)!;
-      t.roll.getSynth().setVolume(vol);
+    } else {
+      if (this.dynamicMixerDefaults[id]) {
+        this.dynamicMixerDefaults[id].volume = vol;
+      }
+      const t = this.dynamicTracks.get(id);
+      if (t) {
+        t.roll.getSynth().setVolume(vol);
+      }
       const cfg = AVAILABLE_CHORD_TRACK_CONFIGS[id];
       if (this.state.isMidiConnected && cfg && !this.isChannelEffectiveMuted(id)) {
         midiManager.sendMixerControllers(cfg.channel, { volume: vol });
@@ -2716,7 +2980,13 @@ export class CreatorApp {
   }
 
   private onMixerPanChange(id: string, pan: number) {
-    if (id === 'drum') {
+    if (id === 'rhythm1') {
+      this.rhythm1Mixer.pan = pan;
+      if (this.state.isMidiConnected) {
+        midiManager.sendMixerControllers(8, { pan });
+        midiManager.sendMixerControllers(0, { pan });
+      }
+    } else if (id === 'drum') {
       drumSynth.setPan(pan);
       if (this.state.isMidiConnected) {
         midiManager.sendMixerControllers(9, { pan });
@@ -2731,9 +3001,14 @@ export class CreatorApp {
       if (this.state.isMidiConnected) {
         midiManager.sendMixerControllers(11, { pan });
       }
-    } else if (this.dynamicTracks.has(id)) {
-      const t = this.dynamicTracks.get(id)!;
-      t.roll.getSynth().setPan(pan);
+    } else {
+      if (this.dynamicMixerDefaults[id]) {
+        this.dynamicMixerDefaults[id].pan = pan;
+      }
+      const t = this.dynamicTracks.get(id);
+      if (t) {
+        t.roll.getSynth().setPan(pan);
+      }
       const cfg = AVAILABLE_CHORD_TRACK_CONFIGS[id];
       if (this.state.isMidiConnected && cfg) {
         midiManager.sendMixerControllers(cfg.channel, { pan });
@@ -2742,7 +3017,13 @@ export class CreatorApp {
   }
 
   private onMixerReverbChange(id: string, reverb: number) {
-    if (id === 'drum') {
+    if (id === 'rhythm1') {
+      this.rhythm1Mixer.reverb = reverb;
+      if (this.state.isMidiConnected) {
+        midiManager.sendMixerControllers(8, { reverb });
+        midiManager.sendMixerControllers(0, { reverb });
+      }
+    } else if (id === 'drum') {
       drumSynth.setReverb(reverb);
       if (this.state.isMidiConnected) {
         midiManager.sendMixerControllers(9, { reverb });
@@ -2757,9 +3038,14 @@ export class CreatorApp {
       if (this.state.isMidiConnected) {
         midiManager.sendMixerControllers(11, { reverb });
       }
-    } else if (this.dynamicTracks.has(id)) {
-      const t = this.dynamicTracks.get(id)!;
-      t.roll.getSynth().setReverb(reverb);
+    } else {
+      if (this.dynamicMixerDefaults[id]) {
+        this.dynamicMixerDefaults[id].reverb = reverb;
+      }
+      const t = this.dynamicTracks.get(id);
+      if (t) {
+        t.roll.getSynth().setReverb(reverb);
+      }
       const cfg = AVAILABLE_CHORD_TRACK_CONFIGS[id];
       if (this.state.isMidiConnected && cfg) {
         midiManager.sendMixerControllers(cfg.channel, { reverb });
@@ -2768,7 +3054,13 @@ export class CreatorApp {
   }
 
   private onMixerChorusChange(id: string, chorus: number) {
-    if (id === 'drum') {
+    if (id === 'rhythm1') {
+      this.rhythm1Mixer.chorus = chorus;
+      if (this.state.isMidiConnected) {
+        midiManager.sendMixerControllers(8, { chorus });
+        midiManager.sendMixerControllers(0, { chorus });
+      }
+    } else if (id === 'drum') {
       drumSynth.setChorus(chorus);
       if (this.state.isMidiConnected) {
         midiManager.sendMixerControllers(9, { chorus });
@@ -2783,9 +3075,14 @@ export class CreatorApp {
       if (this.state.isMidiConnected) {
         midiManager.sendMixerControllers(11, { chorus });
       }
-    } else if (this.dynamicTracks.has(id)) {
-      const t = this.dynamicTracks.get(id)!;
-      t.roll.getSynth().setChorus(chorus);
+    } else {
+      if (this.dynamicMixerDefaults[id]) {
+        this.dynamicMixerDefaults[id].chorus = chorus;
+      }
+      const t = this.dynamicTracks.get(id);
+      if (t) {
+        t.roll.getSynth().setChorus(chorus);
+      }
       const cfg = AVAILABLE_CHORD_TRACK_CONFIGS[id];
       if (this.state.isMidiConnected && cfg) {
         midiManager.sendMixerControllers(cfg.channel, { chorus });
@@ -2812,6 +3109,8 @@ export class CreatorApp {
   }
 
   public resetMixerToGoldenDefaults() {
+    this.rhythm1Mixer = { volume: 90, pan: 64, reverb: 40, chorus: 0 };
+
     drumSynth.setVolume(100);
     drumSynth.setPan(64);
     drumSynth.setReverb(40);
@@ -2826,6 +3125,13 @@ export class CreatorApp {
     chordSynth.setPan(52); // L12
     chordSynth.setReverb(65);
     chordSynth.setChorus(20);
+
+    this.dynamicMixerDefaults = {
+      Chord2: { volume: 85, pan: 76, reverb: 50, chorus: 40 },
+      Pad: { volume: 80, pan: 64, reverb: 75, chorus: 50 },
+      Phrase1: { volume: 85, pan: 44, reverb: 60, chorus: 20 },
+      Phrase2: { volume: 80, pan: 84, reverb: 60, chorus: 30 },
+    };
 
     if (this.dynamicTracks.has('Chord2')) {
       const t = this.dynamicTracks.get('Chord2')!;
@@ -2885,14 +3191,17 @@ export class CreatorApp {
     }
 
     let hasNotes = false;
-    if (trackId === 'drum') {
-      hasNotes = this.drumGrid?.hasNotes() || false;
+    const act = this.getSectionChannelActivity();
+    if (trackId === 'rhythm1') {
+      hasNotes = act.rhythm1;
+    } else if (trackId === 'drum') {
+      hasNotes = act.drum;
     } else if (trackId === 'bass') {
-      hasNotes = this.bassRoll?.hasNotes() || false;
+      hasNotes = act.bass;
     } else if (trackId === 'chord') {
-      hasNotes = this.chordRoll?.hasNotes() || false;
-    } else if (this.dynamicTracks.has(trackId)) {
-      hasNotes = this.dynamicTracks.get(trackId)!.roll.hasNotes();
+      hasNotes = act.chord;
+    } else if (act[trackId] !== undefined) {
+      hasNotes = act[trackId];
     }
 
     if (hasNotes) {
@@ -2911,17 +3220,36 @@ export class CreatorApp {
     }
 
     let trackTitle = trackId;
-    if (trackId === 'drum') trackTitle = '鼓組 (Rhythm 2)';
+    if (trackId === 'rhythm1') trackTitle = '副鼓 / 打擊樂 (Rhythm 1)';
+    else if (trackId === 'drum') trackTitle = '主鼓組 (Rhythm 2)';
     else if (trackId === 'bass') trackTitle = '貝斯 (Bass)';
     else if (trackId === 'chord') trackTitle = '和弦 1 (Chord 1)';
     else if (this.dynamicTracks.has(trackId)) {
       const cfg = AVAILABLE_CHORD_TRACK_CONFIGS[trackId];
       trackTitle = `${cfg?.title || trackId}`;
+    } else if (AVAILABLE_CHORD_TRACK_CONFIGS[trackId]) {
+      trackTitle = AVAILABLE_CHORD_TRACK_CONFIGS[trackId].title;
     }
 
     this.mixerPanel?.setTrackPlaying(trackId, true);
 
-    if (trackId === 'drum') {
+    if (trackId === 'rhythm1') {
+      // 依序示範拉丁打擊樂: Tambourine (54) -> Maracas (70) -> Conga (63) -> Claves (75)
+      const demoHits = [
+        { note: 54, delay: 0 },
+        { note: 70, delay: 180 },
+        { note: 63, delay: 360 },
+        { note: 75, delay: 540 },
+      ];
+      demoHits.forEach(h => {
+        setTimeout(() => {
+          this.triggerDrumSound(h.note, 100, 150, 8);
+        }, h.delay);
+      });
+      setTimeout(() => {
+        this.mixerPanel?.setTrackPlaying(trackId, false);
+      }, 750);
+    } else if (trackId === 'drum') {
       // 依序示範: Kick -> HiHat -> Snare -> HiHat
       const demoHits = [
         { note: 36, delay: 0 },
@@ -2931,7 +3259,7 @@ export class CreatorApp {
       ];
       demoHits.forEach(h => {
         setTimeout(() => {
-          this.triggerDrumSound(h.note, 100, 150);
+          this.triggerDrumSound(h.note, 100, 150, 9);
         }, h.delay);
       });
       setTimeout(() => {
@@ -2970,6 +3298,18 @@ export class CreatorApp {
       setTimeout(() => {
         this.mixerPanel?.setTrackPlaying(trackId, false);
       }, 650);
+    } else {
+      // 若尚未建立動態軌道 DOM，使用通用和弦音色示範並發送 MIDI
+      const cfg = AVAILABLE_CHORD_TRACK_CONFIGS[trackId];
+      if (cfg) {
+        [48, 52, 55].forEach(note => {
+          chordSynth.playNote(note, 100, 600);
+          this.sendMidiDynamicTrackTrigger(trackId, note, 100, 600);
+        });
+      }
+      setTimeout(() => {
+        this.mixerPanel?.setTrackPlaying(trackId, false);
+      }, 650);
     }
 
     this.setStatus(`🔊 已播放【${trackTitle}】試聽示範音（若要循環播放，可在下方編輯區點選音符）`);
@@ -2982,7 +3322,8 @@ export class CreatorApp {
     if (this.state.isMidiConnected) {
       midiManager.panicAllChannels();
     }
-    this.setStatus('🔇 已發送全聲部防掛音中斷 (Panic) 與即時靜音指令！');
+    this.mixerPanel?.clearAllVuMeters();
+    this.setStatus('🔇 已發送全聲部防掛音中斷 (Panic) 與即時靜音指令，並重設混音台音量表！');
   }
 
   private updateMixerButtonState(visible: boolean) {

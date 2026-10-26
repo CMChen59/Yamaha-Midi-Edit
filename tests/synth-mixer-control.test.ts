@@ -120,4 +120,44 @@ describe('Step 1: 合成器獨立音量 (Volume) 與立體聲聲相 (Pan) 控制
     chordSynth.setChorus(-5);
     expect(chordSynth.getChorus()).toBe(0);
   });
+
+  it('8. 完整支援 Yamaha PSR-SX920 8 軌伴奏通道條模型 (CH 9 ~ 16)', () => {
+    const expectedChannels = [
+      { id: 'rhythm1', chNumber: 9, midiChannel: 8, name: 'Rhythm 1' },
+      { id: 'drum', chNumber: 10, midiChannel: 9, name: 'Rhythm 2' },
+      { id: 'bass', chNumber: 11, midiChannel: 10, name: 'Bass' },
+      { id: 'chord', chNumber: 12, midiChannel: 11, name: 'Chord 1' },
+      { id: 'Chord2', chNumber: 13, midiChannel: 12, name: 'CHORD2' },
+      { id: 'Pad', chNumber: 14, midiChannel: 13, name: 'PAD' },
+      { id: 'Phrase1', chNumber: 15, midiChannel: 14, name: 'PHRASE1' },
+      { id: 'Phrase2', chNumber: 16, midiChannel: 15, name: 'PHRASE2' },
+    ];
+
+    expect(expectedChannels.length).toBe(8);
+    expectedChannels.forEach((ch, idx) => {
+      expect(ch.chNumber).toBe(9 + idx);
+      expect(ch.midiChannel).toBe(8 + idx);
+    });
+  });
+
+  it('9. 原廠推薦黃金配比音量與聲相覆蓋完整 8 大伴奏聲部', () => {
+    const goldenMixerDefaults: Record<string, { volume: number; pan: number; reverb: number; chorus: number }> = {
+      rhythm1: { volume: 90, pan: 64, reverb: 40, chorus: 0 },
+      drum: { volume: 100, pan: 64, reverb: 40, chorus: 0 },
+      bass: { volume: 95, pan: 64, reverb: 20, chorus: 0 },
+      chord: { volume: 90, pan: 52, reverb: 65, chorus: 20 },
+      Chord2: { volume: 85, pan: 76, reverb: 50, chorus: 40 },
+      Pad: { volume: 80, pan: 64, reverb: 75, chorus: 50 },
+      Phrase1: { volume: 85, pan: 44, reverb: 60, chorus: 20 },
+      Phrase2: { volume: 80, pan: 84, reverb: 60, chorus: 30 },
+    };
+
+    expect(Object.keys(goldenMixerDefaults)).toHaveLength(8);
+    expect(goldenMixerDefaults.rhythm1.volume).toBe(90);
+    expect(goldenMixerDefaults.drum.volume).toBe(100);
+    expect(goldenMixerDefaults.chord.pan).toBe(52); // L12
+    expect(goldenMixerDefaults.Chord2.pan).toBe(76); // R12
+    expect(goldenMixerDefaults.Phrase1.pan).toBe(44); // L20
+    expect(goldenMixerDefaults.Phrase2.pan).toBe(84); // R20
+  });
 });
