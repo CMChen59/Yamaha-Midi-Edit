@@ -1825,6 +1825,7 @@ export class CreatorApp {
 
       const ext = this.state.mode === 'STY' ? '.sty' : '.pad';
       const finalFilename = promptName.toLowerCase().endsWith(ext) ? promptName : `${promptName}${ext}`;
+      let sectionsInput: TemplateSectionInput[] = [];
 
       if (this.state.mode === 'STY') {
         // 動態伴奏音軌之音色配置
@@ -1839,7 +1840,7 @@ export class CreatorApp {
 
         // 整理所有段落之樂音與 Pattern 輸入
         const currentStepsPerBar = this.drumGrid?.getStepsPerBar() || 16;
-        const sectionsInput: TemplateSectionInput[] = [];
+        sectionsInput = [];
         this.sections.forEach((store, name) => {
           let curDrum = store.drumPattern;
           let curBass = store.bassPattern;
@@ -2005,11 +2006,11 @@ export class CreatorApp {
       URL.revokeObjectURL(url);
 
       const sizeKb = (binaryBytes.length / 1024).toFixed(1);
-      const secCount = this.state.mode === 'STY' ? editedSections.length : 1;
       const partCount = 3 + this.dynamicTracks.size;
       const partNames = ['鼓組', '貝斯', '和弦 1', ...Array.from(this.dynamicTracks.values()).map(t => AVAILABLE_CHORD_TRACK_CONFIGS[t.partId]?.title || t.partId)];
-      this.setStatus(`✓ 已成功匯出 [${finalFilename}] (${sizeKb} KB，包含 ${secCount} 個段落、${partCount} 個伴奏聲部)！請拷貝至隨身碟插琴驗收。`);
-      alert(`🎉 恭喜！檔案 [${finalFilename}] 匯出成功！\n\n- 格式: Yamaha ${this.state.mode === 'STY' ? 'SFF2 伴奏風格 (.STY)' : 'Multi Pad (.PAD)'}\n- 伴奏段落: 已寫入 ${secCount} 個段落\n- 伴奏聲部: 啟用 ${partCount} 軌 (${partNames.join(', ')})\n- 套用鼓組: ${chosenKit.name}\n- 套用貝斯: ${chosenBass.name}\n- 套用和弦: ${chosenChord.name}\n- 檔案大小: ${sizeKb} KB\n- 驗收指引: 請將此檔案複製到隨身碟，插上 PSR-SX920 面板直接按 Start/Stop 試聽！`);
+      const activeSecNames = this.state.mode === 'STY' ? Array.from(new Set(sectionsInput.map(s => s.name))).join(', ') : 'Pad 1~4';
+      this.setStatus(`✓ 已成功匯出 [${finalFilename}] (${sizeKb} KB，啟用段落: ${activeSecNames})！琴端僅點亮有資料之段落按鈕。`);
+      alert(`🎉 恭喜！檔案 [${finalFilename}] 匯出成功！\n\n- 格式: Yamaha ${this.state.mode === 'STY' ? 'SFF2 伴奏風格 (.STY)' : 'Multi Pad (.PAD)'}\n- 啟用段落（琴端亮燈）: ${activeSecNames}\n- 未編寫段落（琴端暗燈）: 自動保持熄燈，杜絕演奏誤觸空白！\n- 伴奏聲部: 啟用 ${partCount} 軌 (${partNames.join(', ')})\n- 套用鼓組: ${chosenKit.name}\n- 套用貝斯: ${chosenBass.name}\n- 套用和弦: ${chosenChord.name}\n- 檔案大小: ${sizeKb} KB\n- 驗收指引: 請將此檔案複製到隨身碟，插上 PSR-SX920 驗證琴面按鈕燈號！`);
     } catch (err: any) {
       console.error('匯出失敗:', err);
       alert(`❌ 匯出失敗: ${err.message}`);

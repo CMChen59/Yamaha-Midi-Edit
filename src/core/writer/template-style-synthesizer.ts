@@ -319,7 +319,7 @@ export class YamahaTemplateStyleSynthesizer {
 
     // 3. 動態小節時間軸排程 (Dynamic Section Timeline Allocation)
     // 按照 Yamaha SFF2 原廠定義之標準段落序列，依據使用者設定之小節長度動態排定各段落起訖 Tick
-    // 並在各段落精準寫入 Meta 0x06 (Marker) 與 Meta 0x01 (fn:<SectionName>)
+    // 並在各段落精準寫入 Meta 0x06 (Marker) 與 Meta 0x01 (fn:<SectionName>\0)
     const templateMusicalSections = [
       'Main A', 'Main B', 'Main C', 'Main D',
       'Fill In AA', 'Fill In BB', 'Fill In CC', 'Fill In DD',
@@ -329,6 +329,10 @@ export class YamahaTemplateStyleSynthesizer {
     ];
 
     let currentSectionStartTick = ticksPerBar; // SInt 佔據第 0 小節 (0 ~ ticksPerBar)
+    const updatedSections: YamahaSection[] = [
+      { name: 'SFF2', startTick: 0, endTick: 0, measureCount: 0 },
+      { name: 'SInt', startTick: 0, endTick: ticksPerBar, measureCount: 1 },
+    ];
 
     for (const secName of templateMusicalSections) {
       let targetUserSec = userSectionMap.get(secName);
@@ -347,26 +351,31 @@ export class YamahaTemplateStyleSynthesizer {
         } else if (secName === 'Fill In DD' && userSectionMap.has('Main D')) {
           targetUserSec = userSectionMap.get('Main D');
           isAutoDerivedFill = true;
+        } else if (secName === 'Fill In BA' && userSectionMap.has('Main A') && userSectionMap.has('Main B')) {
+          targetUserSec = userSectionMap.get('Main B');
+          isAutoDerivedFill = true;
         }
-        // 注意：未經使用者編輯的 Intro B/C、Ending B/C、Main C/D 等段落，保持 targetUserSec 為 undefined
-        // 僅保留合法段落 Marker 標記與 1 小節無聲架構，絕不複製其他段落音符，防止實體琴誤播
+      }
+
+      // 【動態段落亮燈架構 (Dynamic Active Sections)】
+      // 若該段落使用者未編輯且非相關過門，則跳過不寫入 Track 0！
+      // 實體琴 (Yamaha PSR-SX920) 掃描不到該段落 Marker 時，面板上的對應按鈕 LED 就會自動熄滅（暗燈），
+      // 達到「有資料才亮燈，沒做的段落自動熄燈」的專業原廠體驗！
+      if (!targetUserSec) {
+        continue;
       }
 
       // 決定該段落小節長度
-      let secBars = 1;
-      if (targetUserSec) {
-        if (isAutoDerivedFill) {
-          secBars = 1; // Yamaha 標準過門固定為 1 小節
-        } else {
-          secBars = Math.max(1, targetUserSec.bars || 4);
-        }
-      } else {
-        // 未編輯之段落預設分配 1 小節靜音佔位，以維持完整 Yamaha 15 段落相容架構
-        secBars = 1;
-      }
-
+      const secBars = isAutoDerivedFill ? 1 : Math.max(1, targetUserSec.bars || 4);
       const secStart = currentSectionStartTick;
       const secDurationTicks = secBars * ticksPerBar;
+
+      updatedSections.push({
+        name: secName,
+        startTick: secStart,
+        endTick: secStart + secDurationTicks,
+        measureCount: secBars,
+      });
 
       // 3.1 寫入段落 Marker (Meta 0x06) 與 Function Name (Meta 0x01)
       // 注意：Yamaha 原廠二進位標準中，fn:<secName>\0 必須以 0x00 Null 結尾，以確保琴端 DSP 晶片 strcmp 能精準匹配！
@@ -596,26 +605,6 @@ export class YamahaTemplateStyleSynthesizer {
     tr0.events = finalEvents;
 
     // 7. 同步更新 parsed.sections 結構，供 inspectPreExport 與下游精準校驗
-    const updatedSections: YamahaSection[] = [
-      { name: 'SFF2', startTick: 0, endTick: 0, measureCount: 0 },
-      { name: 'SInt', startTick: 0, endTick: ticksPerBar, measureCount: 1 },
-    ];
-    let checkSecTick = ticksPerBar;
-    for (const secName of templateMusicalSections) {
-      const userSec = userSectionMap.get(secName);
-      let bars = 1;
-      if (userSec) {
-        bars = (secName.startsWith('Fill') ? 1 : Math.max(1, userSec.bars || 4));
-      }
-      const dur = bars * ticksPerBar;
-      updatedSections.push({
-        name: secName,
-        startTick: checkSecTick,
-        endTick: checkSecTick + dur,
-        measureCount: bars,
-      });
-      checkSecTick += dur;
-    }
     parsed.sections = updatedSections;
 
     // 8. 重新封裝 Track 0 的 MTrk 二進位 RawChunk
