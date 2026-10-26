@@ -632,24 +632,101 @@ export class StyLoader {
     const activeDrumNotes = Array.from(foundDrumNotes).sort((a, b) => a - b);
     const activeDynamicPartIds = Array.from(activeDynamicParts);
 
-    // 若特定動態聲部在某些段落被啟用 (例如 Phrase 1 在 Intro B 包含吉他獨奏)，校正全域 dynamicVoices
-    for (const partId of activeDynamicParts) {
-      if (!dynamicVoices[partId] || dynamicVoices[partId].pc === 49) {
-        for (const sec of sections.values()) {
-          const pat = sec.dynamicPatterns?.[partId];
-          let hasNotes = false;
-          if (pat) {
-            for (const s of pat.values()) {
-              if (s.size > 0) { hasNotes = true; break; }
+    // ✨ 校正全域 selectedChordVoice：優先自具有和弦音符的 Main 主伴奏段落提取音符來源通道之真實音色
+    const mainSectionNames = ['Main A', 'Main B', 'Main C', 'Main D'];
+    for (const name of mainSectionNames) {
+      const sec = sections.get(name);
+      if (sec && sec.chordPattern) {
+        let hasNotes = false;
+        for (const s of sec.chordPattern.values()) {
+          if (s.size > 0) { hasNotes = true; break; }
+        }
+        if (hasNotes && sec.sectionVoices) {
+          // 優先自 chordMeta 取得音符來源通道
+          let srcCh: number | undefined = undefined;
+          if (sec.chordMeta) {
+            for (const m of sec.chordMeta.values()) {
+              if (m.sourceChannel !== undefined) {
+                srcCh = m.sourceChannel;
+                break;
+              }
             }
           }
-          if (hasNotes && sec.sectionVoices) {
-            const targetCh = partId === 'Phrase1' ? 14 : (partId === 'Phrase2' ? 15 : (partId === 'Chord2' ? 12 : 13));
-            const secV = sec.sectionVoices[targetCh];
-            if (secV) {
-              const defCat = partId === 'Phrase1' ? 'Guitar' : 'Strings';
-              dynamicVoices[partId] = resolveExactChordVoice(secV.msb, secV.lsb, secV.pc, defCat);
-              break;
+          const chosenCh = (srcCh !== undefined && sec.sectionVoices[srcCh]) ? srcCh : 11;
+          const secV = sec.sectionVoices[chosenCh] || sec.sectionVoices[11];
+          if (secV) {
+            selectedChordVoice = resolveExactChordVoice(secV.msb, secV.lsb, secV.pc, 'Guitar');
+            break;
+          }
+        }
+      }
+    }
+
+    // 若特定動態聲部在全域未設定 (或僅有預設 Strings fallback pc=49)，自具有音符之 Main 主伴奏段落 (若無則擴展至其它段落) 提取真實音色
+    for (const partId of activeDynamicParts) {
+      if (!dynamicVoices[partId] || dynamicVoices[partId].pc === 49) {
+        let foundVoice = false;
+        // 1. 優先在 Main 主伴奏段落尋找
+        for (const name of mainSectionNames) {
+          const sec = sections.get(name);
+          if (sec) {
+            const pat = sec.dynamicPatterns?.[partId];
+            let hasNotes = false;
+            if (pat) {
+              for (const s of pat.values()) {
+                if (s.size > 0) { hasNotes = true; break; }
+              }
+            }
+            if (hasNotes && sec.sectionVoices) {
+              let srcCh: number | undefined = undefined;
+              if (sec.dynamicMeta?.[partId]) {
+                for (const m of sec.dynamicMeta[partId].values()) {
+                  if (m.sourceChannel !== undefined) {
+                    srcCh = m.sourceChannel;
+                    break;
+                  }
+                }
+              }
+              const targetCh = partId === 'Phrase1' ? 14 : (partId === 'Phrase2' ? 15 : (partId === 'Chord2' ? 12 : 13));
+              const chosenCh = (srcCh !== undefined && sec.sectionVoices[srcCh]) ? srcCh : targetCh;
+              const secV = sec.sectionVoices[chosenCh] || sec.sectionVoices[targetCh];
+              if (secV) {
+                const defCat = partId === 'Phrase1' ? 'Guitar' : (partId === 'Pad' ? 'Pad' : 'Strings');
+                dynamicVoices[partId] = resolveExactChordVoice(secV.msb, secV.lsb, secV.pc, defCat);
+                foundVoice = true;
+                break;
+              }
+            }
+          }
+        }
+        // 2. 若 Main 段落無此聲部 (例如 Phrase 1 僅出現在 Intro 或 Ending)，再至其它段落尋找
+        if (!foundVoice) {
+          for (const sec of sections.values()) {
+            const pat = sec.dynamicPatterns?.[partId];
+            let hasNotes = false;
+            if (pat) {
+              for (const s of pat.values()) {
+                if (s.size > 0) { hasNotes = true; break; }
+              }
+            }
+            if (hasNotes && sec.sectionVoices) {
+              let srcCh: number | undefined = undefined;
+              if (sec.dynamicMeta?.[partId]) {
+                for (const m of sec.dynamicMeta[partId].values()) {
+                  if (m.sourceChannel !== undefined) {
+                    srcCh = m.sourceChannel;
+                    break;
+                  }
+                }
+              }
+              const targetCh = partId === 'Phrase1' ? 14 : (partId === 'Phrase2' ? 15 : (partId === 'Chord2' ? 12 : 13));
+              const chosenCh = (srcCh !== undefined && sec.sectionVoices[srcCh]) ? srcCh : targetCh;
+              const secV = sec.sectionVoices[chosenCh] || sec.sectionVoices[targetCh];
+              if (secV) {
+                const defCat = partId === 'Phrase1' ? 'Guitar' : (partId === 'Pad' ? 'Pad' : 'Strings');
+                dynamicVoices[partId] = resolveExactChordVoice(secV.msb, secV.lsb, secV.pc, defCat);
+                break;
+              }
             }
           }
         }

@@ -118,7 +118,11 @@ export class ChordRollLite {
     return this.config;
   }
 
-  // 和弦音域：C5 (72) 至 C3 (48) 共 25 個半音，由高至低排列
+  // 和弦音域：預設 C5 (72) 至 C3 (48)，支援依據音符自適應擴展 (例如高音短句/旋律 C7 或低音 C2)
+  private minPitch: number = 48;
+  private maxPitch: number = 72;
+  private baseMinPitch: number = 48;
+  private baseMaxPitch: number = 72;
   private pitches: ChordPitchInfo[] = [];
 
   // 音符狀態：stepIndex -> Set<number> (多音複音)
@@ -155,6 +159,15 @@ export class ChordRollLite {
     }
     this.onSoloPlayToggle = onSoloPlayToggle;
     this.onOpenVoiceSearch = onOpenVoiceSearch;
+
+    // 依據音軌類型設定基礎預設音域
+    if (this.config.partId === 'Phrase1' || this.config.partId === 'Phrase2') {
+      this.baseMaxPitch = 84; // 預設提供 C3 ~ C6 (3 個八度) 充足旋律空間
+      this.maxPitch = 84;
+    } else if (this.config.partId === 'Pad') {
+      this.baseMaxPitch = 84; // 預設提供 C3 ~ C6
+      this.maxPitch = 84;
+    }
 
     this.initPitches();
     this.render();
@@ -207,15 +220,27 @@ export class ChordRollLite {
     return this.selectedVoiceId;
   }
 
+  public getMinPitch(): number {
+    return this.minPitch;
+  }
+
+  public getMaxPitch(): number {
+    return this.maxPitch;
+  }
+
+  public getPitchesCount(): number {
+    return this.pitches.length;
+  }
+
   /**
-   * 初始化 2 個八度的和弦音高清單 (C5 ~ C3: 72 ~ 48)
+   * 初始化和弦/旋律音高清單 (涵蓋 minPitch 至 maxPitch，由高至低排列)
    */
   private initPitches() {
     const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
     const blackIndices = [1, 3, 6, 8, 10]; // C#, D#, F#, G#, A#
     this.pitches = [];
 
-    for (let note = 72; note >= 48; note--) {
+    for (let note = this.maxPitch; note >= this.minPitch; note--) {
       const octave = Math.floor(note / 12) - 1;
       const semitone = note % 12;
       const name = `${noteNames[semitone]}${octave}`;
@@ -224,7 +249,7 @@ export class ChordRollLite {
       let role: ChordPitchInfo['role'] = undefined;
       let roleLabel: string | undefined = undefined;
 
-      // Yamaha C 大調基準轉調防呆角色
+      // Yamaha C 大調基準轉調防呆角色 (全音域通用)
       if (semitone === 0) {
         role = 'root';
         roleLabel = '根音 (1)';
@@ -331,9 +356,42 @@ export class ChordRollLite {
 
   public setPatternData(data: Map<number, Set<number>>) {
     this.pattern = new Map();
+    let minNote = Infinity;
+    let maxNote = -Infinity;
+
     data.forEach((set, step) => {
-      this.pattern.set(step, new Set(set));
+      const copySet = new Set<number>();
+      set.forEach((note) => {
+        copySet.add(note);
+        if (note < minNote) minNote = note;
+        if (note > maxNote) maxNote = note;
+      });
+      if (copySet.size > 0) {
+        this.pattern.set(step, copySet);
+      }
     });
+
+    // 智能自適應音域擴展：若導入之音符超出預設範圍，自動向上/向下擴展至八度 C 邊界
+    let targetMin = this.baseMinPitch;
+    let targetMax = this.baseMaxPitch;
+
+    if (minNote < Infinity && maxNote > -Infinity) {
+      const noteMinC = Math.max(24, Math.floor(minNote / 12) * 12);
+      if (noteMinC < targetMin) {
+        targetMin = noteMinC;
+      }
+      const noteMaxC = Math.min(108, Math.ceil((maxNote + 1) / 12) * 12);
+      if (noteMaxC > targetMax) {
+        targetMax = noteMaxC;
+      }
+    }
+
+    if (targetMin !== this.minPitch || targetMax !== this.maxPitch) {
+      this.minPitch = targetMin;
+      this.maxPitch = targetMax;
+      this.initPitches();
+    }
+
     this.render();
   }
 
@@ -550,6 +608,15 @@ export class ChordRollLite {
       </div>
 
       <div class="grid-toolbar-right">
+        <span class="pitch-range-badge" style="font-size: 0.72rem; color: #94a3b8; background: rgba(255,255,255,0.06); padding: 2px 7px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1); display: inline-flex; align-items: center; gap: 4px;" title="當前可編輯音域範圍">
+          🎼 音域: C${Math.floor(this.minPitch / 12) - 1} ~ C${Math.floor(this.maxPitch / 12) - 1}
+        </span>
+        <button id="btn-oct-high" class="btn-grid-tool" style="padding: 2px 6px; font-size: 0.72rem;" title="向上擴展 1 個高音八度 (最高至 C8)">
+          🔼 +高音
+        </button>
+        <button id="btn-oct-low" class="btn-grid-tool" style="padding: 2px 6px; font-size: 0.72rem;" title="向下擴展 1 個低音八度 (最低至 C1)">
+          🔽 +低音
+        </button>
         <button id="btn-chord-play" class="btn-grid-tool btn-track-play" title="單獨循環試聽此軌 (Solo)">
           <span>▶</span> 試聽${soloLabel}
         </button>
@@ -587,6 +654,22 @@ export class ChordRollLite {
 
     toolbar.querySelector('#btn-search-chord-voice')?.addEventListener('click', () => {
       this.onOpenVoiceSearch?.();
+    });
+
+    toolbar.querySelector('#btn-oct-high')?.addEventListener('click', () => {
+      if (this.maxPitch < 108) {
+        this.maxPitch = Math.min(108, this.maxPitch + 12);
+        this.initPitches();
+        this.render();
+      }
+    });
+
+    toolbar.querySelector('#btn-oct-low')?.addEventListener('click', () => {
+      if (this.minPitch > 24) {
+        this.minPitch = Math.max(24, this.minPitch - 12);
+        this.initPitches();
+        this.render();
+      }
     });
 
     toolbar.querySelector('#btn-chord-play')?.addEventListener('click', () => this.onSoloPlayToggle?.());
@@ -741,5 +824,18 @@ export class ChordRollLite {
 
     scrollWrap.appendChild(rollBody);
     this.container.appendChild(scrollWrap);
+
+    // 自動垂直捲動至音符所在視野 (若有音符)
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => {
+        const activeCell = rollBody.querySelector('.step-cell.active');
+        if (activeCell) {
+          const activeRow = activeCell.closest('.piano-pitch-row') as HTMLElement | null;
+          if (activeRow && typeof activeRow.scrollIntoView === 'function') {
+            activeRow.scrollIntoView({ block: 'center' });
+          }
+        }
+      });
+    }
   }
 }

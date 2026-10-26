@@ -23,7 +23,7 @@ import { YamahaPadModifier } from '../core/writer/pad-modifier';
 import { YamahaWriter } from '../core/writer/yamaha-writer';
 import { MixerPanel, type MixerChannelInfo } from './mixer-panel';
 import { SectionPresetsEngine, type GeneratedSectionPattern } from './section-presets-engine';
-import { StyLoader } from './sty-loader';
+import { StyLoader, resolveExactChordVoice, resolveExactBassVoice, resolveExactDrumKit } from './sty-loader';
 
 export type CreatorMode = 'STY' | 'PAD';
 
@@ -630,6 +630,7 @@ export class CreatorApp {
       dynamicMeta: existing?.dynamicMeta,
       ccEvents: existing?.ccEvents,
       pitchBendEvents: existing?.pitchBendEvents,
+      sectionVoices: existing?.sectionVoices,
     });
   }
 
@@ -740,15 +741,67 @@ export class CreatorApp {
       track.roll.setPatternData(pat);
     });
 
-    // ✨ 若該段落有專屬音色定義 (sectionVoices)，同步切換琴端音色
-    if (this.state.isMidiConnected && store.sectionVoices) {
-      for (const [chStr, v] of Object.entries(store.sectionVoices)) {
-        const ch = parseInt(chStr, 10);
-        midiManager.sendVoiceChange(ch, {
-          msb: v.msb,
-          lsb: v.lsb,
-          pc: v.pc,
-        });
+    // ✨ 若該段落有專屬音色定義 (sectionVoices)，同步更新軟體 UI (軌道音色/合成器/混音台) 與實體琴端
+    if (store.sectionVoices) {
+      // 1. 和弦 1 (Chord 1 / Ch 12, SFF2 11)
+      if (store.sectionVoices[11]) {
+        const sv = store.sectionVoices[11];
+        const voice = resolveExactChordVoice(sv.msb, sv.lsb, sv.pc, 'Guitar');
+        this.state.selectedChordVoice = voice;
+        this.chordRoll?.setVoice(voice);
+        this.chordRoll?.getSynth().setVoice(voice);
+        this.mixerPanel?.updateVoiceName('chord', voice.name);
+      }
+
+      // 2. 貝斯 (Bass / Ch 11, SFF2 10 vs SFF1 1)
+      const bassSv = store.sectionVoices[10] || store.sectionVoices[1];
+      if (bassSv) {
+        const voice = resolveExactBassVoice(bassSv.msb, bassSv.lsb, bassSv.pc);
+        this.state.selectedBassVoice = voice;
+        this.bassRoll?.setVoice(voice);
+        bassSynth.setVoice(voice);
+        this.mixerPanel?.updateVoiceName('bass', voice.name);
+      }
+
+      // 3. 鼓組 (Rhythm 2 / Ch 10, SFF2 9)
+      if (store.sectionVoices[9]) {
+        const sv = store.sectionVoices[9];
+        const kit = resolveExactDrumKit(sv.msb, sv.lsb, sv.pc);
+        this.state.selectedDrumKit = kit;
+        this.drumGrid?.setSelectedDrumKit(kit.id);
+        this.mixerPanel?.updateVoiceName('drum', kit.name);
+      }
+
+      // 4. 動態伴奏軌 (Chord 2: 12, Pad: 13, Phrase 1: 14, Phrase 2: 15)
+      const dynChannelMap: Record<string, number> = {
+        Chord2: 12,
+        Pad: 13,
+        Phrase1: 14,
+        Phrase2: 15,
+      };
+      this.dynamicTracks.forEach((track, partId) => {
+        const destCh = dynChannelMap[partId];
+        if (destCh && store!.sectionVoices && store!.sectionVoices[destCh]) {
+          const sv = store!.sectionVoices[destCh];
+          const defCat = partId === 'Phrase1' ? 'Guitar' : (partId === 'Pad' ? 'Pad' : 'Strings');
+          const voice = resolveExactChordVoice(sv.msb, sv.lsb, sv.pc, defCat);
+          track.selectedVoice = voice;
+          track.roll.setVoice(voice);
+          track.roll.getSynth().setVoice(voice);
+          this.mixerPanel?.updateVoiceName(partId, voice.name);
+        }
+      });
+
+      // 5. 若已連接 USB 實體琴，同步切換琴端專屬音色
+      if (this.state.isMidiConnected) {
+        for (const [chStr, v] of Object.entries(store.sectionVoices)) {
+          const ch = parseInt(chStr, 10);
+          midiManager.sendVoiceChange(ch, {
+            msb: v.msb,
+            lsb: v.lsb,
+            pc: v.pc,
+          });
+        }
       }
     }
 
@@ -1086,6 +1139,7 @@ export class CreatorApp {
       bassPattern: bassCopy,
       chordPattern: chordCopy,
       dynamicPatterns: dynamicCopies,
+      sectionVoices: currentStore.sectionVoices ? { ...currentStore.sectionVoices } : undefined,
     });
 
     this.refreshSectionOptions();
