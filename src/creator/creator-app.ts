@@ -14,7 +14,6 @@ import { YAMAHA_SX920_BASS_VOICES, type YamahaBassPreset } from './bass-voices';
 import { ChordRollLite, AVAILABLE_CHORD_TRACK_CONFIGS } from './chord-roll-lite';
 import { chordSynth } from './chord-synth';
 import { YAMAHA_SX920_CHORD_VOICES, type YamahaChordPreset } from './chord-voices';
-import { getSharedAudioContext } from './shared-audio-context';
 import { setComputerAudioMuted } from './audio-routing';
 import { searchYamahaVoices, type YamahaVoice, type VoiceCategory } from '../core/data/yamaha-voices';
 import { midiManager } from '../core/audio/midi-manager';
@@ -2119,10 +2118,10 @@ export class CreatorApp {
   }
 
   /**
-   * 零抖動微秒級節拍排程器 (Web Worker High-Precision Metronome Clock)
-   * 1. 採用獨立執行緒背景 Worker 定時器 (不受分頁最小化、DOM 重排或滑鼠滾動影響)。
-   * 2. Web MIDI 即時直發實體琴 PSR-SX920，無 Windows 計時器量化結塊，速度穩如節拍器。
-   * 3. 視覺游標與音訊步進 100% 鎖步推進，自適應縮放模式下零滾動，絕不亂跳。
+   * 零抖動穩健節拍定時器 (Rock-Solid Single-Paced Interval Metronome)
+   * 1. 回歸 Commit 41f8b0a 實測完美的單步定時器模型 (setInterval 每步等距推進)。
+   * 2. 徹底摒除 while 追趕補償機制，杜絕「慢一下、快一下 (酒醉搶拍)」與「0ms 雙擊結塊」。
+   * 3. 在自適應縮放總覽視窗 (Fit Mode) 下零 DOM 滾動排版負擔，Web MIDI 零延遲直發實體琴 PSR-SX920。
    */
   private startPlaybackTimer(options?: {
     targetSection?: string;
@@ -2133,62 +2132,54 @@ export class CreatorApp {
   }) {
     this.stopPlaybackTimer();
 
-    const ctx = getSharedAudioContext();
     const stepIntervalMs = this.getStepIntervalMs();
-    const stepsPerBar = this.drumGrid?.getStepsPerBar() || 16;
-    const totalSteps = this.state.totalBars * stepsPerBar;
-
-    const startPerf = performance.now();
-    let nextStepTargetMs = 0; // step 0 立即發聲
-    let currentStep = this.currentPlayStep;
     let scheduledCount = 0;
     let currentSec = options?.targetSection || this.state.currentSection;
     let isTransitioned = false;
 
-    this.metronomeClock = new PreciseMetronomeClock(() => {
+    const tick = () => {
       if (!this.state.isPlaying) {
         this.stopPlaybackTimer();
         return;
       }
 
-      const elapsedMs = performance.now() - startPerf;
-
-      while (elapsedMs >= nextStepTargetMs) {
-        if (options?.stopAfterSteps !== undefined && scheduledCount >= options.stopAfterSteps) {
-          this.stopPlaybackTimer();
-          if (options.onComplete) options.onComplete();
-          else this.stop();
-          return;
-        }
-
-        // 檢查段落平滑過渡 (例如 Intro -> Main A 或 Main A -> Ending)
-        if (options?.transitionAfterSteps !== undefined && options?.transitionToSection && !isTransitioned) {
-          if (scheduledCount >= options.transitionAfterSteps) {
-            isTransitioned = true;
-            currentSec = options.transitionToSection;
-            this.switchSection(options.transitionToSection, true);
-            this.state.isPlaying = true;
-            this.state.activePlayTrack = 'all';
-            this.updatePlayButtonsUI();
-            this.setStatus(`✨ 完美交棒！已平滑進入【${options.transitionToSection} 主歌伴奏】！`);
-          }
-        }
-
-        // 發送該步進的聲音與 Web MIDI 即時直發
-        const audioTime = ctx ? ctx.currentTime : undefined;
-        this.playAuditionStep(currentStep, stepIntervalMs, currentSec, audioTime);
-
-        // 游標更新 (自適應縮放模式下無需滾動，平滑步進)
-        this.currentPlayStep = currentStep;
-        this.updatePlayheadVisual(currentStep);
-
-        currentStep = (currentStep + 1) % totalSteps;
-        scheduledCount++;
-        nextStepTargetMs += stepIntervalMs;
+      if (options?.stopAfterSteps !== undefined && scheduledCount >= options.stopAfterSteps) {
+        this.stopPlaybackTimer();
+        if (options.onComplete) options.onComplete();
+        else this.stop();
+        return;
       }
-    });
 
-    this.metronomeClock.start();
+      // 檢查段落平滑過渡 (例如 Intro -> Main A 或 Main A -> Ending)
+      if (options?.transitionAfterSteps !== undefined && options?.transitionToSection && !isTransitioned) {
+        if (scheduledCount >= options.transitionAfterSteps) {
+          isTransitioned = true;
+          currentSec = options.transitionToSection;
+          this.currentPlayStep = 0;
+          this.switchSection(options.transitionToSection, true);
+          this.state.isPlaying = true;
+          this.state.activePlayTrack = 'all';
+          this.updatePlayButtonsUI();
+          this.setStatus(`✨ 完美交棒！已平滑進入【${options.transitionToSection} 主歌伴奏】！`);
+        }
+      }
+
+      const stepsPerBar = this.drumGrid?.getStepsPerBar() || 16;
+      const targetStore = this.sections.get(currentSec);
+      const totalSteps = (targetStore?.bars || this.state.totalBars) * stepsPerBar;
+
+      // 發送該步進的聲音與 Web MIDI 即時直發 (零時間戳排隊、零通道鏡像重複)
+      this.playAuditionStep(this.currentPlayStep, stepIntervalMs, currentSec);
+
+      // 游標更新 (自適應縮放模式下無需滾動，平滑步進)
+      this.updatePlayheadVisual(this.currentPlayStep);
+
+      this.currentPlayStep = (this.currentPlayStep + 1) % totalSteps;
+      scheduledCount++;
+    };
+
+    tick();
+    this.playbackTimer = setInterval(tick, stepIntervalMs);
   }
 
   private updatePlayheadVisual(step: number) {
