@@ -31,6 +31,9 @@ export class PianoRollLite {
   private pattern: Map<number, number> = new Map();
   private selectedVoiceId: string = 'finger-bass';
 
+  // 4 小節整頁翻頁 (Page-by-page) 滾動狀態索引 (0: Bars 1~4, 1: Bars 5~8...)
+  private currentPageIndex: number = 0;
+
   private onPatternChange?: () => void;
   private onTriggerNote?: (note: number, velocity: number) => void;
   private onBassVoiceChange?: (voiceId: string) => void;
@@ -331,51 +334,62 @@ export class PianoRollLite {
       current.forEach(el => el.classList.add('active-playhead'));
 
       if (autoScroll) {
-        this.scrollToPlayhead(stepIndex);
+        this.checkPageScroll(stepIndex);
       }
     }
   }
 
   public resetScroll(): void {
+    this.currentPageIndex = 0;
     if (!this.container) return;
     if (typeof this.container.scrollTo === 'function') {
-      this.container.scrollTo({ left: 0, behavior: 'smooth' });
-    } else {
-      this.container.scrollLeft = 0;
+      this.container.scrollTo({ left: 0 });
     }
+    this.container.scrollLeft = 0;
   }
 
-  private scrollToPlayhead(stepIndex: number): void {
+  public getCurrentPageIndex(): number {
+    return this.currentPageIndex;
+  }
+
+  /**
+   * 4 小節整頁翻頁式視窗跟隨 (Page-by-page DAW Scrolling)
+   */
+  private checkPageScroll(stepIndex: number): void {
     if (!this.container) return;
-    if (stepIndex === 0) {
-      this.resetScroll();
+    const stepsPerBar = this.getStepsPerBar();
+    const currentBar = Math.floor(stepIndex / stepsPerBar);
+    const pageIndex = Math.floor(currentBar / 4);
+
+    if (pageIndex === this.currentPageIndex) {
       return;
     }
 
-    const targetHeader = this.container.querySelector<HTMLElement>(`.step-header-cell[data-step="${stepIndex}"]`);
-    if (!targetHeader || typeof targetHeader.getBoundingClientRect !== 'function' || typeof this.container.getBoundingClientRect !== 'function') {
-      return;
-    }
+    this.currentPageIndex = pageIndex;
 
-    const panelRect = this.container.getBoundingClientRect();
-    const targetRect = targetHeader.getBoundingClientRect();
-    const stickyHeaderWidth = 225;
-
-    if (targetRect.right > panelRect.right - 50) {
-      const diff = targetRect.left - (panelRect.left + stickyHeaderWidth + 24);
-      const targetLeft = this.container.scrollLeft + diff;
+    if (pageIndex === 0) {
+      this.container.scrollLeft = 0;
       if (typeof this.container.scrollTo === 'function') {
-        this.container.scrollTo({ left: targetLeft, behavior: 'smooth' });
-      } else {
-        this.container.scrollLeft = targetLeft;
+        this.container.scrollTo({ left: 0 });
       }
-    } else if (targetRect.left < panelRect.left + stickyHeaderWidth) {
-      const diff = targetRect.left - (panelRect.left + stickyHeaderWidth + 24);
+      return;
+    }
+
+    const targetStep = pageIndex * 4 * stepsPerBar;
+    const targetHeader = this.container.querySelector<HTMLElement>(`.step-header-cell[data-step="${targetStep}"]`);
+    if (targetHeader && typeof targetHeader.getBoundingClientRect === 'function' && typeof this.container.getBoundingClientRect === 'function') {
+      const containerRect = this.container.getBoundingClientRect();
+      const headerRect = targetHeader.getBoundingClientRect();
+      const stickyHeader = this.container.querySelector<HTMLElement>('.row-header-label, .piano-key-label');
+      const stickyRight = (stickyHeader && typeof stickyHeader.getBoundingClientRect === 'function')
+        ? stickyHeader.getBoundingClientRect().right
+        : containerRect.left + 225;
+
+      const diff = headerRect.left - stickyRight;
       const targetLeft = Math.max(0, this.container.scrollLeft + diff);
+      this.container.scrollLeft = targetLeft;
       if (typeof this.container.scrollTo === 'function') {
-        this.container.scrollTo({ left: targetLeft, behavior: 'smooth' });
-      } else {
-        this.container.scrollLeft = targetLeft;
+        this.container.scrollTo({ left: targetLeft });
       }
     }
   }
@@ -417,6 +431,7 @@ export class PianoRollLite {
    * 採用與鼓組完全一致的 steps-container -> bar-group -> beat-group 橫向流式排版
    */
   public render() {
+    this.currentPageIndex = 0;
     this.container.innerHTML = '';
 
     const stepsPerBar = this.getStepsPerBar();

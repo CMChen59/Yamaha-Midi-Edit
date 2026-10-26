@@ -69,6 +69,9 @@ export class DrumStepGrid {
   // 緊湊模式旗標：預設為 true (僅顯示該段落有音符之樂器行，徹底隱藏未使用之空白行)
   private isCompactMode: boolean = true;
 
+  // 4 小節整頁翻頁 (Page-by-page) 滾動狀態索引 (0: Bars 1~4, 1: Bars 5~8...)
+  private currentPageIndex: number = 0;
+
   // 當前畫面上啟用的打擊樂行
   private activeVoices: DrumVoiceOption[] = getStandardDefaultDrumVoices();
 
@@ -539,53 +542,67 @@ export class DrumStepGrid {
       current.forEach(el => el.classList.add('active-playhead'));
 
       if (autoScroll) {
-        this.scrollToPlayhead(stepIndex);
+        this.checkPageScroll(stepIndex);
       }
     }
   }
 
   public resetScroll(): void {
+    this.currentPageIndex = 0;
     if (!this.container) return;
     if (typeof this.container.scrollTo === 'function') {
-      this.container.scrollTo({ left: 0, behavior: 'smooth' });
-    } else {
-      this.container.scrollLeft = 0;
+      this.container.scrollTo({ left: 0 });
     }
+    this.container.scrollLeft = 0;
   }
 
-  private scrollToPlayhead(stepIndex: number): void {
+  public getCurrentPageIndex(): number {
+    return this.currentPageIndex;
+  }
+
+  /**
+   * 4 小節整頁翻頁式視窗跟隨 (Page-by-page DAW Scrolling)
+   * 當播放指針處於同一個 4 小節視窗時零重算、零震盪、零定時器干擾；
+   * 跨越至第 5、9、13... 小節時瞬間整頁翻頁切換。
+   */
+  private checkPageScroll(stepIndex: number): void {
     if (!this.container) return;
-    if (stepIndex === 0) {
-      this.resetScroll();
+    const stepsPerBar = this.getStepsPerBar();
+    const currentBar = Math.floor(stepIndex / stepsPerBar);
+    const pageIndex = Math.floor(currentBar / 4);
+
+    // 仍在同一 4 小節頁面範圍內時直接返回，零 DOM 計算、零重排、零效能負擔
+    if (pageIndex === this.currentPageIndex) {
       return;
     }
 
-    const targetHeader = this.container.querySelector<HTMLElement>(`.step-header-cell[data-step="${stepIndex}"]`);
-    if (!targetHeader || typeof targetHeader.getBoundingClientRect !== 'function' || typeof this.container.getBoundingClientRect !== 'function') {
-      return;
-    }
+    this.currentPageIndex = pageIndex;
 
-    const panelRect = this.container.getBoundingClientRect();
-    const targetRect = targetHeader.getBoundingClientRect();
-    const stickyHeaderWidth = 225; // 樂器標籤欄與邊距 (210px + padding)
-
-    // 若游標即將超出可視視窗右側 (保留 50px 邊界緩衝)
-    if (targetRect.right > panelRect.right - 50) {
-      const diff = targetRect.left - (panelRect.left + stickyHeaderWidth + 24);
-      const targetLeft = this.container.scrollLeft + diff;
+    // 回到第一頁 (第 1~4 小節)
+    if (pageIndex === 0) {
+      this.container.scrollLeft = 0;
       if (typeof this.container.scrollTo === 'function') {
-        this.container.scrollTo({ left: targetLeft, behavior: 'smooth' });
-      } else {
-        this.container.scrollLeft = targetLeft;
+        this.container.scrollTo({ left: 0 });
       }
-    } else if (targetRect.left < panelRect.left + stickyHeaderWidth) {
-      // 若游標落於左側 Sticky 標籤下方
-      const diff = targetRect.left - (panelRect.left + stickyHeaderWidth + 24);
+      return;
+    }
+
+    // 翻至後續頁面 (第 5~8 小節、第 9~12 小節...)
+    const targetStep = pageIndex * 4 * stepsPerBar;
+    const targetHeader = this.container.querySelector<HTMLElement>(`.step-header-cell[data-step="${targetStep}"]`);
+    if (targetHeader && typeof targetHeader.getBoundingClientRect === 'function' && typeof this.container.getBoundingClientRect === 'function') {
+      const containerRect = this.container.getBoundingClientRect();
+      const headerRect = targetHeader.getBoundingClientRect();
+      const stickyHeader = this.container.querySelector<HTMLElement>('.row-header-label');
+      const stickyRight = (stickyHeader && typeof stickyHeader.getBoundingClientRect === 'function')
+        ? stickyHeader.getBoundingClientRect().right
+        : containerRect.left + 225;
+
+      const diff = headerRect.left - stickyRight;
       const targetLeft = Math.max(0, this.container.scrollLeft + diff);
+      this.container.scrollLeft = targetLeft;
       if (typeof this.container.scrollTo === 'function') {
-        this.container.scrollTo({ left: targetLeft, behavior: 'smooth' });
-      } else {
-        this.container.scrollLeft = targetLeft;
+        this.container.scrollTo({ left: targetLeft });
       }
     }
   }
@@ -594,6 +611,7 @@ export class DrumStepGrid {
    * 渲染完整步進網格
    */
   public render(): void {
+    this.currentPageIndex = 0;
     this.container.innerHTML = '';
 
     const stepsPerBar = this.getStepsPerBar();
