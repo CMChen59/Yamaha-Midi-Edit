@@ -1175,6 +1175,87 @@
       user-select: none;
     }
 
+    .note-resize-handle {
+      position: absolute;
+      right: 0;
+      top: 0;
+      width: 7px;
+      height: 100%;
+      cursor: ew-resize;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 0 3px 3px 0;
+      transition: background 0.15s;
+    }
+
+    .note-resize-handle:hover {
+      background: #ffffff;
+      box-shadow: 0 0 6px #fff;
+    }
+
+    .editor-note-block.is-dragging {
+      opacity: 0.9 !important;
+      cursor: grabbing !important;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6), 0 0 10px #ffffff !important;
+      z-index: 10 !important;
+      transition: none !important;
+    }
+
+    .editor-quantize-box {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .editor-tool-label {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: #94a3b8;
+    }
+
+    .editor-select {
+      background: #090d16;
+      border: 1px solid var(--border-color);
+      color: #38bdf8;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      padding: 3px 6px;
+      outline: none;
+      cursor: pointer;
+    }
+
+    .editor-action-btn {
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid var(--border-color);
+      transition: all 0.15s;
+    }
+
+    .editor-action-btn.btn-danger {
+      background: rgba(244, 63, 94, 0.2);
+      border-color: var(--accent-rose);
+      color: #fda4af;
+    }
+
+    .editor-action-btn.btn-danger:hover {
+      background: rgba(244, 63, 94, 0.4);
+      color: #fff;
+    }
+
+    .editor-hint-bar {
+      font-size: 0.72rem;
+      color: #94a3b8;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px dashed rgba(255, 255, 255, 0.08);
+      padding: 6px 12px;
+      border-radius: 6px;
+    }
+
     /* 播放游標線 (GPU 加速) */
     .editor-playhead {
       position: absolute;

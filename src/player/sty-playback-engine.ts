@@ -488,6 +488,14 @@ export class StyPlaybackEngine {
     return this.sectionEvents.filter(e => e.channel === channel);
   }
 
+  /**
+   * 更新特定聲部的音符事件集合 (供單軌專注編輯器即時回寫)
+   */
+  public setChannelEvents(channel: number, newEvents: PlaybackNoteEvent[]) {
+    const others = this.sectionEvents.filter(e => e.channel !== channel);
+    this.sectionEvents = [...others, ...newEvents].sort((a, b) => a.relTick - b.relTick);
+  }
+
   public getChordSynth(channel: number): ChordSynth | undefined {
     return this.chordSynths.get(channel);
   }

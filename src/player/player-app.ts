@@ -79,6 +79,9 @@ export class PlayerApp {
 
     const editorEl = document.getElementById('single-track-editor')!;
     this.trackEditor = new SingleTrackEditor(editorEl);
+    this.trackEditor.setOnEventsChanged(() => {
+      this.updateFocusedBanner();
+    });
 
     this.setFocusedChannel(8); // 預設聚焦 CH 9 Rhythm 1
     this.initMidi();
