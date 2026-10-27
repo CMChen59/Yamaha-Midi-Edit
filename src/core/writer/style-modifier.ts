@@ -1205,6 +1205,95 @@ export class YamahaStyleModifier {
     return deletedCount;
   }
 
+  /**
+   * 批次替換指定段落、指定聲部之所有演奏音符 (SingleTrackEditor 匯出與即時回寫核心)
+   * 自動保留 Track 0 標記、控制項、CASM 與 OTS，並重建 MTrk rawChunk
+   */
+  public static replaceSectionChannelNotes(
+    parsed: YamahaFileParsed,
+    sectionName: string,
+    channel: number,
+    notes: Array<{ noteNumber: number; relTick: number; durationTicks: number; velocity: number; sourceChannel?: number }>,
+    targetChannelOverride?: number
+  ): boolean {
+    const range = StyleRemixer.getSectionTickRange(parsed, sectionName);
+    if (!range) return false;
+    const track0 = parsed.tracks[0];
+    if (!track0 || !track0.events) return false;
+
+    // 決定寫入 MIDI Track 之通道
+    const targetMidiChannel = targetChannelOverride !== undefined
+      ? targetChannelOverride
+      : (notes.length > 0 && notes[0].sourceChannel !== undefined ? notes[0].sourceChannel : channel);
+
+    // 需自段落中清除的舊音符通道集合 (包含目標通道與其 SFF1/SFF2 鏡像通道)
+    const clearChannels = new Set<number>([targetMidiChannel, channel]);
+    if (channel >= 8) clearChannels.add(channel - 8);
+    if (channel < 8) clearChannels.add(channel + 8);
+    notes.forEach(n => {
+      if (n.sourceChannel !== undefined) clearChannels.add(n.sourceChannel);
+    });
+
+    // 標註所有現有事件的絕對 Tick
+    let curTick = 0;
+    const keptEvents: Array<{ ev: MidiEvent; absTick: number; index: number }> = [];
+    track0.events.forEach((ev, idx) => {
+      curTick += ev.delta;
+      const isNote = (ev.type === 'noteOn' || ev.type === 'noteOff') && ev.channel !== undefined && clearChannels.has(ev.channel);
+      const inRange = curTick >= range.startTick && curTick < range.endTick;
+      if (isNote && inRange) {
+        // 清除此段落中該聲部的舊音符
+        return;
+      }
+      keptEvents.push({ ev: { ...ev }, absTick: curTick, index: idx });
+    });
+
+    // 加入新音符的 NoteOn 與 NoteOff
+    let virtualIndex = 9000000;
+    for (const n of notes) {
+      const absStart = range.startTick + Math.max(0, Math.round(n.relTick));
+      const dur = Math.max(12, Math.round(n.durationTicks));
+      const absEnd = Math.min(range.endTick, absStart + dur);
+      const noteNum = Math.max(0, Math.min(127, Math.round(n.noteNumber)));
+      const vel = Math.max(1, Math.min(127, Math.round(n.velocity)));
+      const ch = n.sourceChannel !== undefined ? n.sourceChannel : targetMidiChannel;
+
+      keptEvents.push({
+        ev: { delta: 0, type: 'noteOn', channel: ch, noteNumber: noteNum, velocity: vel },
+        absTick: absStart,
+        index: virtualIndex++
+      });
+      keptEvents.push({
+        ev: { delta: 0, type: 'noteOff', channel: ch, noteNumber: noteNum, velocity: 0 },
+        absTick: absEnd,
+        index: virtualIndex++
+      });
+    }
+
+    // 按時間排序 (NoteOff 在前，NoteOn 在後，保留 Meta 事件順序)
+    keptEvents.sort((a, b) => {
+      if (a.absTick !== b.absTick) return a.absTick - b.absTick;
+      const aIsOff = a.ev.type === 'noteOff' || (a.ev.type === 'noteOn' && (a.ev.velocity ?? 0) === 0);
+      const bIsOff = b.ev.type === 'noteOff' || (b.ev.type === 'noteOn' && (b.ev.velocity ?? 0) === 0);
+      if (aIsOff && !bIsOff) return -1;
+      if (!aIsOff && bIsOff) return 1;
+      return a.index - b.index;
+    });
+
+    // 重新計算 Delta-times
+    let prev = 0;
+    track0.events = keptEvents.map((item) => {
+      item.ev.delta = Math.max(0, item.absTick - prev);
+      prev = item.absTick;
+      return item.ev;
+    });
+
+    YamahaPadModifier.sanitizeTrackDuplicateNotes(track0);
+    YamahaPadModifier.rebuildTrackRawChunk(track0);
+    return true;
+  }
+
+
   // ========================================================
   // 段落聲部開口矩陣 (Section Part On/Off Matrix) 核心管理
   // ========================================================

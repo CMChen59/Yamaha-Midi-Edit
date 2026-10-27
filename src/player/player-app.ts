@@ -4,6 +4,9 @@ import { midiManager } from '../core/audio/midi-manager';
 import type { YamahaFileParsed } from '../core/models/types';
 import { getSharedAudioContext } from '../creator/shared-audio-context';
 import { SingleTrackEditor } from './single-track-editor';
+import { YamahaWriter } from '../core/writer/yamaha-writer';
+import { YamahaStyleModifier } from '../core/writer/style-modifier';
+import type { PlaybackNoteEvent } from './sty-playback-engine';
 
 // Yamaha 標準 8 伴奏聲部定義
 interface PartDef {
@@ -66,6 +69,7 @@ export class PlayerApp {
   private btnRefreshMidi!: HTMLButtonElement;
   private btnTestPiano!: HTMLButtonElement;
   private outputCurrentStatus!: HTMLElement;
+  private btnExportSty!: HTMLButtonElement;
 
   constructor() {
     document.addEventListener('DOMContentLoaded', () => this.init());
@@ -79,8 +83,9 @@ export class PlayerApp {
 
     const editorEl = document.getElementById('single-track-editor')!;
     this.trackEditor = new SingleTrackEditor(editorEl);
-    this.trackEditor.setOnEventsChanged(() => {
+    this.trackEditor.setOnEventsChanged((channel, events) => {
       this.updateFocusedBanner();
+      this.syncEditorEventsToParsed(channel, events);
     });
 
     this.setFocusedChannel(8); // 預設聚焦 CH 9 Rhythm 1
@@ -105,6 +110,7 @@ export class PlayerApp {
     this.labelStyleInfo = document.getElementById('style-info')!;
     this.mixerContainer = document.getElementById('mixer-grid')!;
     this.midiStatusPill = document.getElementById('midi-status-pill')!;
+    this.btnExportSty = document.getElementById('btn-export-sty') as HTMLButtonElement;
 
     // 🎯 聚焦聲部資訊橫幅元件
     this.focusedTrackBanner = document.getElementById('focused-track-banner')!;
@@ -268,6 +274,11 @@ export class PlayerApp {
 
     this.btnTestPiano.addEventListener('click', () => {
       midiManager.playTestChime(0);
+    });
+
+    // 💾 匯出 STY 伴奏檔案
+    this.btnExportSty.addEventListener('click', () => {
+      this.exportCurrentStyle();
     });
   }
 
@@ -679,6 +690,79 @@ export class PlayerApp {
       }
     } catch {
       this.midiStatusPill.textContent = '⚪ MIDI 權限未開啟';
+    }
+  }
+
+  /**
+   * 將單軌編輯器當前的音符即時同步回記憶體中的 STY 結構 (parsed)
+   */
+  private syncEditorEventsToParsed(channel: number, events: PlaybackNoteEvent[]) {
+    if (!this.currentParsed) return;
+    const currentSec = styPlaybackEngine.getCurrentSection()?.name;
+    if (!currentSec) return;
+    YamahaStyleModifier.replaceSectionChannelNotes(
+      this.currentParsed,
+      currentSec,
+      channel,
+      events
+    );
+  }
+
+  /**
+   * 匯出完整 STY 伴奏檔並觸發瀏覽器下載
+   */
+  private exportCurrentStyle() {
+    if (!this.currentParsed) {
+      alert('尚未載入任何 STY 伴奏檔案，請先拖曳或選擇伴奏檔案！');
+      return;
+    }
+
+    try {
+      // 1. 同步當前段落所有聲部的即時事件與混音音量
+      const currentSec = styPlaybackEngine.getCurrentSection()?.name;
+      if (currentSec) {
+        for (let ch = 8; ch <= 15; ch++) {
+          const events = styPlaybackEngine.getChannelEvents(ch);
+          YamahaStyleModifier.replaceSectionChannelNotes(
+            this.currentParsed,
+            currentSec,
+            ch,
+            events
+          );
+          const vol = styPlaybackEngine.getChannelVolume(ch);
+          YamahaStyleModifier.setPartMixing(this.currentParsed, ch, { volume: vol });
+        }
+      }
+
+      // 2. 執行二進位安全匯出與反向完整性驗證 (含 CASM & OTS 校驗)
+      const exportResult = YamahaWriter.validateAndWrite(this.currentParsed);
+
+      // 3. 觸發瀏覽器下載
+      const blob = new Blob([exportResult.bytes as unknown as BlobPart], { type: 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const baseName = (this.currentFileName || 'YamahaStyle').replace(/\.(sty|prs|sst|mid)$/i, '');
+      const downloadName = `${baseName}_edited.sty`;
+      a.download = downloadName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      // 4. 提供成功回饋
+      alert(
+        `🎉 伴奏檔匯出成功！\n\n` +
+        `檔案名稱: ${downloadName}\n` +
+        `檔案大小: ${(exportResult.fileSize / 1024).toFixed(1)} KB\n` +
+        `伴奏段落: ${exportResult.sectionCount} 個段落\n` +
+        `總音符數: ${exportResult.totalNotes} 個\n` +
+        `CASM 和弦轉調區塊: ${exportResult.hasCasm ? '✅ 完整保留 (琴端自動伴奏轉調正常)' : '無'}\n\n` +
+        `💡 說明：檔案已下載至電腦，可直接複製存入 USB 隨身碟，插上 PSR-SX920 琴端載入演奏！`
+      );
+    } catch (err: any) {
+      console.error('匯出 STY 失敗:', err);
+      alert(`匯出 STY 伴奏檔失敗: ${err.message}`);
     }
   }
 }
