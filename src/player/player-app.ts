@@ -28,12 +28,14 @@ export class PlayerApp {
   public currentFileName: string = '';
   public activeSectionName: string = '';
   private baseBpm: number = 120;
+  private focusedChannel: number = 8; // 預設聚焦 Channel 8 (即面板 CH 9 Rhythm 1)
 
   // UI Elements
   private dropZone!: HTMLElement;
   private fileInput!: HTMLInputElement;
   private sectionButtonsContainer!: HTMLElement;
   private btnPlay!: HTMLButtonElement;
+  private btnPlaySolo!: HTMLButtonElement;
   private btnStop!: HTMLButtonElement;
   private btnLoop!: HTMLButtonElement;
   private sliderBpm!: HTMLInputElement;
@@ -43,6 +45,14 @@ export class PlayerApp {
   private labelStyleInfo!: HTMLElement;
   private mixerContainer!: HTMLElement;
   private midiStatusPill!: HTMLElement;
+
+  // 🎯 聚焦聲部資訊橫幅 (Phase 1 聚焦聯動)
+  private focusedTrackBanner!: HTMLElement;
+  private focusedTrackTitle!: HTMLElement;
+  private focusedTrackVoice!: HTMLElement;
+  private focusedTrackMeta!: HTMLElement;
+  private btnBannerSolo!: HTMLButtonElement;
+  private btnBannerMute!: HTMLButtonElement;
 
   // 聲音輸出控制
   private btnOutputWebAudio!: HTMLButtonElement;
@@ -62,6 +72,7 @@ export class PlayerApp {
     this.setupEventListeners();
     this.setupEngineCallbacks();
     this.renderMixer();
+    this.setFocusedChannel(8); // 預設聚焦 CH 9 Rhythm 1
     this.initMidi();
 
     // 自動嘗試載入 LoveSong 示範檔案
@@ -73,6 +84,7 @@ export class PlayerApp {
     this.fileInput = document.getElementById('file-input') as HTMLInputElement;
     this.sectionButtonsContainer = document.getElementById('section-buttons')!;
     this.btnPlay = document.getElementById('btn-play') as HTMLButtonElement;
+    this.btnPlaySolo = document.getElementById('btn-play-solo') as HTMLButtonElement;
     this.btnStop = document.getElementById('btn-stop') as HTMLButtonElement;
     this.btnLoop = document.getElementById('btn-loop') as HTMLButtonElement;
     this.sliderBpm = document.getElementById('slider-bpm') as HTMLInputElement;
@@ -82,6 +94,14 @@ export class PlayerApp {
     this.labelStyleInfo = document.getElementById('style-info')!;
     this.mixerContainer = document.getElementById('mixer-grid')!;
     this.midiStatusPill = document.getElementById('midi-status-pill')!;
+
+    // 🎯 聚焦聲部資訊橫幅元件
+    this.focusedTrackBanner = document.getElementById('focused-track-banner')!;
+    this.focusedTrackTitle = document.getElementById('focused-track-title')!;
+    this.focusedTrackVoice = document.getElementById('focused-track-voice')!;
+    this.focusedTrackMeta = document.getElementById('focused-track-meta')!;
+    this.btnBannerSolo = document.getElementById('btn-banner-solo') as HTMLButtonElement;
+    this.btnBannerMute = document.getElementById('btn-banner-mute') as HTMLButtonElement;
 
     // 聲音輸出控制元件
     this.btnOutputWebAudio = document.getElementById('btn-output-webaudio') as HTMLButtonElement;
@@ -128,25 +148,64 @@ export class PlayerApp {
 
     // 播放主控
     this.btnPlay.addEventListener('click', () => {
-      // 確保使用者交互解鎖 AudioContext
       const ctx = getSharedAudioContext();
       if (ctx && ctx.state === 'suspended') {
         ctx.resume();
       }
 
-      if (styPlaybackEngine.getIsPlaying()) {
+      if (styPlaybackEngine.getIsPlaying() && styPlaybackEngine.getChannelSolo() === null) {
         styPlaybackEngine.stop();
-        this.updatePlayStateUI(false);
+        this.updatePlayStateUI();
       } else {
+        // 全曲模式：解除任何 Solo，全軌發聲
+        styPlaybackEngine.setChannelSolo(null);
+        this.syncMixerSoloButtons();
         styPlaybackEngine.play();
-        this.updatePlayStateUI(true);
+        this.updatePlayStateUI();
+      }
+    });
+
+    // 🎧 單軌獨奏播放
+    this.btnPlaySolo.addEventListener('click', () => {
+      const ctx = getSharedAudioContext();
+      if (ctx && ctx.state === 'suspended') {
+        ctx.resume();
+      }
+
+      if (styPlaybackEngine.getIsPlaying() && styPlaybackEngine.getChannelSolo() === this.focusedChannel) {
+        styPlaybackEngine.stop();
+        this.updatePlayStateUI();
+      } else {
+        // 獨奏模式：鎖定當前聚焦聲部
+        styPlaybackEngine.setChannelSolo(this.focusedChannel);
+        this.syncMixerSoloButtons();
+        styPlaybackEngine.play();
+        this.updatePlayStateUI();
       }
     });
 
     this.btnStop.addEventListener('click', () => {
       styPlaybackEngine.stop();
-      this.updatePlayStateUI(false);
-      this.labelPosition.textContent = '小節 01 / 01 | 拍 1.0 | Tick 000000';
+      this.updatePlayStateUI();
+      const totalBars = styPlaybackEngine.getTotalBars();
+      this.labelPosition.textContent = `小節 01 / ${totalBars.toString().padStart(2, '0')} | 拍 1.0 | Tick 000000`;
+    });
+
+    // 焦點橫幅快捷按鈕
+    this.btnBannerSolo.addEventListener('click', () => {
+      const currentSolo = styPlaybackEngine.getChannelSolo();
+      const nextSolo = currentSolo === this.focusedChannel ? null : this.focusedChannel;
+      styPlaybackEngine.setChannelSolo(nextSolo);
+      this.syncMixerSoloButtons();
+      this.updatePlayStateUI();
+    });
+
+    this.btnBannerMute.addEventListener('click', () => {
+      const isMuted = styPlaybackEngine.isChannelMuted(this.focusedChannel);
+      styPlaybackEngine.setChannelMute(this.focusedChannel, !isMuted);
+      const cardBtn = document.getElementById(`btn-mute-${this.focusedChannel}`);
+      if (cardBtn) cardBtn.classList.toggle('muted', !isMuted);
+      this.updateFocusedBanner();
     });
 
     this.btnLoop.addEventListener('click', () => {
@@ -331,7 +390,7 @@ export class PlayerApp {
         this.selectSection(defaultSec.name);
       }
 
-      this.updatePlayStateUI(false);
+      this.updatePlayStateUI();
     } catch (err: any) {
       console.error('解析 STY 伴奏檔失敗:', err);
       alert(`解析伴奏檔失敗: ${err.message}`);
@@ -409,18 +468,76 @@ export class PlayerApp {
 
     const totalBars = styPlaybackEngine.getTotalBars();
     this.labelPosition.textContent = `小節 01 / ${totalBars.toString().padStart(2, '0')} | 拍 1.0 | Tick 000000`;
+
+    // 更新當前聚焦聲部的音符統計與資訊
+    this.updateFocusedBanner();
+  }
+
+  public setFocusedChannel(channel: number) {
+    this.focusedChannel = channel;
+
+    // 更新所有卡片聚焦高亮外框
+    YAMAHA_PARTS.forEach((p) => {
+      const card = document.getElementById(`card-ch-${p.channel}`);
+      if (card) {
+        card.classList.toggle('is-focused', p.channel === channel);
+      }
+    });
+
+    // 若當前正處於 Solo 模式播放中，切換聚焦卡牌時同步切換 Solo 發聲聲部 (Seamless Live Solo)
+    if (styPlaybackEngine.getIsPlaying() && styPlaybackEngine.getChannelSolo() !== null) {
+      styPlaybackEngine.setChannelSolo(channel);
+      this.syncMixerSoloButtons();
+    }
+
+    this.updateFocusedBanner();
+    this.updatePlayStateUI();
+  }
+
+  public updateFocusedBanner() {
+    const part = YAMAHA_PARTS.find(p => p.channel === this.focusedChannel) || YAMAHA_PARTS[0];
+    const voiceInfo = styPlaybackEngine.getPartVoices().get(part.channel);
+    const noteCount = styPlaybackEngine.getChannelEvents(part.channel).length;
+
+    this.focusedTrackBanner.style.setProperty('--part-accent', part.color);
+    this.focusedTrackTitle.textContent = `CH ${part.channel + 1} - ${part.label}`;
+    this.focusedTrackVoice.textContent = voiceInfo?.voiceName || part.defaultName;
+    this.focusedTrackMeta.textContent = `本段音符數: ${noteCount} 個 ｜ MIDI 通道: CH ${part.channel + 1} ｜ 類型: ${voiceInfo?.category || 'General'}`;
+
+    // 更新橫幅上的獨奏與靜音按鈕狀態
+    const isMuted = styPlaybackEngine.isChannelMuted(part.channel);
+    this.btnBannerMute.classList.toggle('active-mute', isMuted);
+    this.btnBannerMute.textContent = isMuted ? '🔊 取消靜音' : '🔇 靜音此軌';
+
+    const isSolo = styPlaybackEngine.getChannelSolo() === part.channel;
+    this.btnBannerSolo.classList.toggle('active-solo', isSolo);
+    this.btnBannerSolo.textContent = isSolo ? '⏹ 解除獨奏' : '🎧 獨奏此軌 (Solo)';
+  }
+
+  private syncMixerSoloButtons() {
+    const currentSolo = styPlaybackEngine.getChannelSolo();
+    YAMAHA_PARTS.forEach(p => {
+      const btn = document.getElementById(`btn-solo-${p.channel}`);
+      btn?.classList.toggle('soloed', currentSolo === p.channel);
+    });
+    this.updateFocusedBanner();
   }
 
   private renderMixer() {
     this.mixerContainer.innerHTML = '';
     YAMAHA_PARTS.forEach((part) => {
       const card = document.createElement('div');
+      card.id = `card-ch-${part.channel}`;
       card.className = 'mixer-card';
+      if (part.channel === this.focusedChannel) {
+        card.classList.add('is-focused');
+      }
       card.style.setProperty('--part-accent', part.color);
 
       card.innerHTML = `
         <div class="part-top-bar">
           <span class="channel-pill">CH ${part.channel + 1}</span>
+          <span class="focus-badge">🎯 焦點</span>
           <div id="led-ch-${part.channel}" class="activity-led"></div>
         </div>
         <div class="part-title">${part.label}</div>
@@ -435,6 +552,11 @@ export class PlayerApp {
         </div>
       `;
 
+      // 點擊卡牌本體即可切換焦點聲部（最多只開一個）
+      card.addEventListener('click', () => {
+        this.setFocusedChannel(part.channel);
+      });
+
       this.mixerContainer.appendChild(card);
 
       // 事件綁定
@@ -442,25 +564,29 @@ export class PlayerApp {
       const btnSolo = card.querySelector(`#btn-solo-${part.channel}`) as HTMLButtonElement;
       const sliderVol = card.querySelector(`#vol-${part.channel}`) as HTMLInputElement;
 
-      btnMute.addEventListener('click', () => {
+      btnMute.addEventListener('click', (e) => {
+        e.stopPropagation();
         const isMuted = styPlaybackEngine.isChannelMuted(part.channel);
         styPlaybackEngine.setChannelMute(part.channel, !isMuted);
         btnMute.classList.toggle('muted', !isMuted);
+        if (this.focusedChannel === part.channel) {
+          this.updateFocusedBanner();
+        }
       });
 
-      btnSolo.addEventListener('click', () => {
+      btnSolo.addEventListener('click', (e) => {
+        e.stopPropagation();
         const currentSolo = styPlaybackEngine.getChannelSolo();
         const nextSolo = currentSolo === part.channel ? null : part.channel;
         styPlaybackEngine.setChannelSolo(nextSolo);
-
-        // 更新所有 Solo 按鈕狀態
-        YAMAHA_PARTS.forEach(p => {
-          const btn = document.getElementById(`btn-solo-${p.channel}`);
-          btn?.classList.toggle('soloed', nextSolo === p.channel);
-        });
+        this.setFocusedChannel(part.channel);
+        this.syncMixerSoloButtons();
+        this.updatePlayStateUI();
       });
 
-      sliderVol.addEventListener('input', () => {
+      sliderVol.addEventListener('click', (e) => e.stopPropagation());
+      sliderVol.addEventListener('input', (e) => {
+        e.stopPropagation();
         const vol = parseInt(sliderVol.value, 10);
         styPlaybackEngine.setChannelVolume(part.channel, vol);
         const txt = card.querySelector(`#vol-txt-${part.channel}`);
@@ -469,14 +595,32 @@ export class PlayerApp {
     });
   }
 
-  private updatePlayStateUI(isPlaying: boolean) {
+  private updatePlayStateUI() {
+    const isPlaying = styPlaybackEngine.getIsPlaying();
+    const currentSolo = styPlaybackEngine.getChannelSolo();
+
     if (isPlaying) {
-      this.btnPlay.classList.add('playing');
-      this.btnPlay.innerHTML = '⏸ 暫停 (Pause)';
+      if (currentSolo === null) {
+        // 全曲合奏播放中
+        this.btnPlay.classList.add('playing');
+        this.btnPlay.innerHTML = '⏸ 暫停全曲 (Pause)';
+        this.btnPlaySolo.classList.remove('playing');
+        this.btnPlaySolo.innerHTML = '🎧 僅播此軌 (Solo)';
+      } else {
+        // 單軌獨奏中
+        this.btnPlay.classList.remove('playing');
+        this.btnPlay.innerHTML = '▶ 播放全曲 (All)';
+        this.btnPlaySolo.classList.add('playing');
+        this.btnPlaySolo.innerHTML = '⏸ 暫停獨奏 (Pause)';
+      }
     } else {
       this.btnPlay.classList.remove('playing');
-      this.btnPlay.innerHTML = '▶ 播放 (Play)';
+      this.btnPlay.innerHTML = '▶ 播放全曲 (All)';
+      this.btnPlaySolo.classList.remove('playing');
+      this.btnPlaySolo.innerHTML = '🎧 僅播此軌 (Solo)';
     }
+
+    this.updateFocusedBanner();
   }
 
   private async initMidi() {

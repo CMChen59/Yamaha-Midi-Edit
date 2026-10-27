@@ -439,6 +439,32 @@
       box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
     }
 
+    .btn-solo-play {
+      background: linear-gradient(135deg, #6366f1, #4f46e5);
+      color: #fff;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+    }
+
+    .btn-solo-play:hover {
+      background: linear-gradient(135deg, #4f46e5, #4338ca);
+      transform: translateY(-1px);
+    }
+
+    .btn-solo-play.playing {
+      background: linear-gradient(135deg, #ec4899, #db2777);
+      box-shadow: 0 4px 12px rgba(236, 72, 153, 0.4);
+    }
+
     .btn-stop {
       background: rgba(255, 255, 255, 0.08);
       color: #fff;
@@ -563,7 +589,143 @@
       flex-direction: column;
       gap: 8px;
       border-top: 3px solid var(--part-accent, var(--accent));
-      transition: all 0.2s;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      cursor: pointer;
+      position: relative;
+      user-select: none;
+    }
+
+    .mixer-card:hover {
+      border-color: var(--part-accent, var(--accent));
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+    }
+
+    .mixer-card.is-focused {
+      border: 2px solid var(--part-accent, var(--accent));
+      border-top: 4px solid var(--part-accent, var(--accent));
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(0, 0, 0, 0.3) 100%), var(--bg-card);
+      box-shadow: 0 0 16px rgba(56, 189, 248, 0.2), 0 4px 14px rgba(0, 0, 0, 0.4);
+      transform: translateY(-2px);
+    }
+
+    .focus-badge {
+      display: none;
+      font-size: 0.58rem;
+      font-weight: 800;
+      color: #0f172a;
+      background: var(--part-accent, var(--accent));
+      padding: 1px 4px;
+      border-radius: 3px;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+    }
+
+    .mixer-card.is-focused .focus-badge {
+      display: inline-block;
+    }
+
+    /* 🎯 聚焦聲部資訊列 (Phase 1 聚焦聯動，為 Phase 2 鋼琴捲軸預備) */
+    .focused-track-banner {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-color);
+      border-left: 5px solid var(--part-accent, var(--accent));
+      border-radius: 12px;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+      transition: all 0.25s ease;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    }
+
+    .focused-track-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    .focused-tag {
+      font-size: 0.72rem;
+      font-weight: 800;
+      color: #0f172a;
+      background: var(--part-accent, var(--accent));
+      padding: 4px 9px;
+      border-radius: 4px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    }
+
+    .focused-title-wrap {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+    }
+
+    .focused-title {
+      font-size: 1.15rem;
+      font-weight: 800;
+      color: #fff;
+    }
+
+    .focused-voice {
+      font-size: 0.85rem;
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .focused-meta {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.05);
+      padding: 3px 8px;
+      border-radius: 4px;
+    }
+
+    .focused-track-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .btn-banner-action {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 7px 14px;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s;
+    }
+
+    .btn-banner-action:hover {
+      background: rgba(56, 189, 248, 0.15);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .btn-banner-action.active-solo {
+      background: rgba(245, 158, 11, 0.25);
+      border-color: #f59e0b;
+      color: #fbbf24;
+      font-weight: 700;
+    }
+
+    .btn-banner-action.active-mute {
+      background: rgba(244, 63, 94, 0.25);
+      border-color: var(--accent-rose);
+      color: #fda4af;
+      font-weight: 700;
     }
 
     .part-top-bar {
@@ -763,7 +925,8 @@
     <!-- 播放主控制列 -->
     <section class="transport-bar">
       <div class="transport-main">
-        <button id="btn-play" class="btn-play">▶ 播放 (Play)</button>
+        <button id="btn-play" class="btn-play">▶ 播放全曲 (All)</button>
+        <button id="btn-play-solo" class="btn-solo-play">🎧 僅播此軌 (Solo)</button>
         <button id="btn-stop" class="btn-stop">⏹ 停止</button>
         <button id="btn-loop" class="btn-loop active">🔁 循環: 開啟</button>
       </div>
@@ -799,10 +962,26 @@
     <section class="mixer-panel">
       <div class="panel-header">
         <span>8 大伴奏聲部狀態與混音盤 (8-Part Arranger Mixer)</span>
-        <span style="font-size: 0.75rem; color: #94a3b8; font-weight: normal;">即時發聲 LED 閃爍 / 靜音 / 獨奏 / 音量</span>
+        <span style="font-size: 0.75rem; color: #94a3b8; font-weight: normal;">點選任一卡牌切換焦點編輯聲部 ｜ LED 發聲閃爍 ｜ 靜音 ｜ 獨奏 ｜ 音量</span>
       </div>
       <div id="mixer-grid" class="mixer-grid">
         <!-- 動態渲染 8 個聲部卡片 -->
+      </div>
+    </section>
+
+    <!-- 🎯 當前編輯焦點聲部條 (Phase 1 聚焦聯動，為 Phase 2 鋼琴捲軸預備) -->
+    <section id="focused-track-banner" class="focused-track-banner">
+      <div class="focused-track-left">
+        <span class="focused-tag">🎯 當前編輯焦點</span>
+        <div class="focused-title-wrap">
+          <span id="focused-track-title" class="focused-title">CH 9 - Rhythm 1</span>
+          <span id="focused-track-voice" class="focused-voice">Live! StudioDrumKit</span>
+        </div>
+        <span id="focused-track-meta" class="focused-meta">音符數: 0 ｜ MIDI 通道: 9</span>
+      </div>
+      <div class="focused-track-actions">
+        <button id="btn-banner-solo" class="btn-banner-action">🎧 獨奏此軌 (Solo)</button>
+        <button id="btn-banner-mute" class="btn-banner-action">🔇 靜音此軌 (Mute)</button>
       </div>
     </section>
 

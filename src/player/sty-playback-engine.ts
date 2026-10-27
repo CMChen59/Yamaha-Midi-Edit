@@ -476,6 +476,14 @@ export class StyPlaybackEngine {
     return this.totalBars;
   }
 
+  public getSectionEvents(): PlaybackNoteEvent[] {
+    return this.sectionEvents;
+  }
+
+  public getChannelEvents(channel: number): PlaybackNoteEvent[] {
+    return this.sectionEvents.filter(e => e.channel === channel);
+  }
+
   /**
    * 啟動微秒級高精度排程播放
    */
