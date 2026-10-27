@@ -540,7 +540,7 @@
 
     .mixer-grid {
       display: grid;
-      grid-template-columns: repeat(8, minmax(115px, 1fr));
+      grid-template-columns: repeat(8, minmax(110px, 1fr));
       gap: 10px;
       overflow-x: auto;
     }
@@ -549,7 +549,7 @@
       font-size: 0.72rem;
       font-weight: 700;
       color: var(--text-muted);
-      min-width: 26px;
+      min-width: 24px;
       text-align: right;
       font-family: monospace;
     }
@@ -558,33 +558,38 @@
       background: var(--bg-card);
       border: 1px solid var(--border-color);
       border-radius: 8px;
-      padding: 12px;
+      padding: 10px 10px;
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 8px;
       border-top: 3px solid var(--part-accent, var(--accent));
       transition: all 0.2s;
     }
 
-    .part-header {
+    .part-top-bar {
       display: flex;
       align-items: center;
       justify-content: space-between;
     }
 
     .channel-pill {
-      font-size: 0.65rem;
+      font-size: 0.68rem;
+      font-weight: 700;
       background: rgba(255, 255, 255, 0.08);
       padding: 2px 6px;
       border-radius: 4px;
-      color: var(--text-muted);
+      color: var(--accent);
+      letter-spacing: 0.5px;
     }
 
     .part-title {
-      font-size: 0.85rem;
+      font-size: 0.88rem;
       font-weight: 700;
       color: #fff;
-      margin-left: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.2;
     }
 
     .activity-led {
@@ -601,11 +606,13 @@
     }
 
     .part-voice {
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       color: var(--text-muted);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      min-height: 18px;
+      line-height: 18px;
     }
 
     .part-controls {
@@ -645,7 +652,8 @@
     }
 
     .part-vol-slider {
-      width: 100%;
+      flex: 1;
+      min-width: 0;
       accent-color: var(--part-accent, var(--accent));
       cursor: pointer;
     }

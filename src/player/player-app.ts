@@ -419,13 +419,11 @@ export class PlayerApp {
       card.style.setProperty('--part-accent', part.color);
 
       card.innerHTML = `
-        <div class="part-header">
-          <div class="part-name">
-            <span class="channel-pill">Ch ${part.channel + 1}</span>
-            <span class="part-title">${part.label}</span>
-          </div>
+        <div class="part-top-bar">
+          <span class="channel-pill">CH ${part.channel + 1}</span>
           <div id="led-ch-${part.channel}" class="activity-led"></div>
         </div>
+        <div class="part-title">${part.label}</div>
         <div id="part-voice-${part.channel}" class="part-voice">${part.defaultName}</div>
         <div class="part-controls">
           <button id="btn-mute-${part.channel}" class="mixer-btn btn-mute">Mute</button>
