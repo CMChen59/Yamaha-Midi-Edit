@@ -6,6 +6,8 @@
  * 支援獨立音軌立體聲聲相 (StereoPannerNode) 與軌道主音量 (GainNode) 調控。
  */
 
+import { getSharedAudioContext } from './shared-audio-context';
+
 export class BassSynth {
   private static muted: boolean = false;
   private isInstanceMuted: boolean = false;
@@ -60,9 +62,19 @@ export class BassSynth {
   }
 
   private initAudio() {
-    if (!this.ctx) {
+    const shared = getSharedAudioContext();
+    if (shared) {
+      if (this.ctx !== shared) {
+        this.ctx = shared;
+        this.masterGain = null;
+        this.pannerNode = null;
+      }
+    } else if (!this.ctx) {
       const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
       this.ctx = new AudioCtxClass();
+    }
+    if (!this.ctx) return;
+    if (!this.masterGain) {
       this.masterGain = this.ctx.createGain();
       const currentGain = this.isInstanceMuted ? 0 : (this.volume / 127) * 0.8;
       this.masterGain.gain.setValueAtTime(currentGain, this.ctx.currentTime);
@@ -78,7 +90,7 @@ export class BassSynth {
       }
     }
     if (this.ctx.state === 'suspended') {
-      this.ctx.resume();
+      this.ctx.resume().catch(() => {});
     }
   }
 
@@ -132,15 +144,16 @@ export class BassSynth {
     return 440 * Math.pow(2, (note - 69) / 12);
   }
 
-  public playNote(note: number, velocity: number = 100, durationMs: number = 240) {
+  public playNote(note: number, velocity: number = 100, durationMs: number = 240, when?: number) {
     if (BassSynth.muted || this.isInstanceMuted) return;
     this.initAudio();
     if (!this.ctx || !this.masterGain) return;
 
-    const now = this.ctx.currentTime;
+    const now = when !== undefined ? when : this.ctx.currentTime;
     const freq = this.midiToFreq(note);
     const velRatio = Math.max(0.2, Math.min(1.0, velocity / 127));
     const durSec = Math.max(0.08, durationMs / 1000);
+    const disconnectDelayMs = Math.max(50, (now - this.ctx.currentTime + durSec + 0.08) * 1000);
 
     const isAcoustic = this.currentCategory === 'Acoustic' || this.currentVoiceId.includes('acoustic');
     const isSynth = this.currentCategory === 'Synth' || this.currentVoiceId.includes('sub') || this.currentVoiceId.includes('synth');
@@ -192,7 +205,7 @@ export class BassSynth {
           lowpass.disconnect();
           ampGain.disconnect();
         } catch (_) {}
-      }, (durSec + 0.08) * 1000);
+      }, disconnectDelayMs);
 
     } else if (isSynth) {
       // 合成貝斯 (Sub / Synth Bass)：厚重方波 + 鋸齒波，帶有經典 Moog 24dB 低通濾波器包絡
@@ -236,7 +249,7 @@ export class BassSynth {
           filter.disconnect();
           ampGain.disconnect();
         } catch (_) {}
-      }, (durSec + 0.08) * 1000);
+      }, disconnectDelayMs);
 
     } else {
       // 電貝斯 (Finger / Pick / Slap)：經典 4 弦電貝斯，雙振盪器 (鋸齒 + 三角)
@@ -281,7 +294,7 @@ export class BassSynth {
           filter.disconnect();
           ampGain.disconnect();
         } catch (_) {}
-      }, (durSec + 0.08) * 1000);
+      }, disconnectDelayMs);
     }
   }
 }

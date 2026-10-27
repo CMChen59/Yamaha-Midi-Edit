@@ -7,6 +7,8 @@
  * 風琴 (Organ Drawbar)、手風琴 (Accordion)、氛圍長音 (Pad)、人聲 (Choir)
  */
 
+import { getSharedAudioContext } from './shared-audio-context';
+
 export class ChordSynth {
   private static muted: boolean = false;
   private isInstanceMuted: boolean = false;
@@ -70,12 +72,20 @@ export class ChordSynth {
   }
 
   private initAudio() {
-    if (!ChordSynth.sharedCtx) {
+    const shared = getSharedAudioContext();
+    if (shared) {
+      ChordSynth.sharedCtx = shared;
+    } else if (!ChordSynth.sharedCtx) {
       const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
       ChordSynth.sharedCtx = new AudioCtxClass();
     }
-    this.ctx = ChordSynth.sharedCtx;
-    if (!this.masterGain && this.ctx) {
+    if (this.ctx !== ChordSynth.sharedCtx) {
+      this.ctx = ChordSynth.sharedCtx;
+      this.masterGain = null;
+      this.pannerNode = null;
+    }
+    if (!this.ctx) return;
+    if (!this.masterGain) {
       this.masterGain = this.ctx.createGain();
       const currentGain = this.isInstanceMuted ? 0 : (this.volume / 127) * 0.75;
       this.masterGain.gain.setValueAtTime(currentGain, this.ctx.currentTime);
@@ -91,7 +101,7 @@ export class ChordSynth {
       }
     }
     if (this.ctx && this.ctx.state === 'suspended') {
-      this.ctx.resume();
+      this.ctx.resume().catch(() => {});
     }
   }
 
@@ -151,12 +161,12 @@ export class ChordSynth {
    * @param velocity 力度 (0 ~ 127)
    * @param durationMs 發聲長度 (毫秒)
    */
-  public playNote(note: number, velocity: number = 100, durationMs: number = 450) {
+  public playNote(note: number, velocity: number = 100, durationMs: number = 450, when?: number) {
     if (ChordSynth.muted || this.isInstanceMuted) return;
     this.initAudio();
     if (!this.ctx || !this.masterGain) return;
 
-    const now = this.ctx.currentTime;
+    const now = when !== undefined ? when : this.ctx.currentTime;
     const freq = this.midiToFreq(note);
     const velRatio = Math.max(0.15, Math.min(1.0, velocity / 127));
     const durSec = Math.max(0.12, durationMs / 1000);
@@ -226,7 +236,7 @@ export class ChordSynth {
     osc1.stop(now + durSec + 0.05);
     osc2.stop(now + durSec + 0.05);
 
-    this.scheduleCleanup([osc1, osc2, osc2Gain, filter, noteGain], durSec + 0.1);
+    this.scheduleCleanup([osc1, osc2, osc2Gain, filter, noteGain], durSec + 0.1, now);
   }
 
   /**
@@ -270,7 +280,7 @@ export class ChordSynth {
     modulator.stop(now + durSec + 0.05);
     carrier.stop(now + durSec + 0.05);
 
-    this.scheduleCleanup([carrier, modulator, modGain, noteGain], durSec + 0.1);
+    this.scheduleCleanup([carrier, modulator, modGain, noteGain], durSec + 0.1, now);
   }
 
   /**
@@ -304,7 +314,7 @@ export class ChordSynth {
     osc.start(now);
     osc.stop(now + durSec + 0.05);
 
-    this.scheduleCleanup([osc, filter, noteGain], durSec + 0.1);
+    this.scheduleCleanup([osc, filter, noteGain], durSec + 0.1, now);
   }
 
   /**
@@ -344,7 +354,7 @@ export class ChordSynth {
     osc1.stop(now + durSec + 0.15);
     osc2.stop(now + durSec + 0.15);
 
-    this.scheduleCleanup([osc1, osc2, filter, noteGain], durSec + 0.2);
+    this.scheduleCleanup([osc1, osc2, filter, noteGain], durSec + 0.2, now);
   }
 
   /**
@@ -379,7 +389,7 @@ export class ChordSynth {
     osc.start(now);
     osc.stop(now + durSec + 0.08);
 
-    this.scheduleCleanup([osc, filter, noteGain], durSec + 0.12);
+    this.scheduleCleanup([osc, filter, noteGain], durSec + 0.12, now);
   }
 
   /**
@@ -426,7 +436,7 @@ export class ChordSynth {
     osc2.stop(now + durSec + 0.06);
     osc3.stop(now + durSec + 0.06);
 
-    this.scheduleCleanup([osc1, osc2, osc3, mixGain, noteGain], durSec + 0.1);
+    this.scheduleCleanup([osc1, osc2, osc3, mixGain, noteGain], durSec + 0.1, now);
   }
 
   /**
@@ -465,7 +475,7 @@ export class ChordSynth {
     osc1.stop(now + durSec + 0.3);
     osc2.stop(now + durSec + 0.3);
 
-    this.scheduleCleanup([osc1, osc2, filter, noteGain], durSec + 0.35);
+    this.scheduleCleanup([osc1, osc2, filter, noteGain], durSec + 0.35, now);
   }
 
   /**
@@ -498,7 +508,7 @@ export class ChordSynth {
     osc.start(now);
     osc.stop(now + durSec + 0.18);
 
-    this.scheduleCleanup([osc, filter, noteGain], durSec + 0.22);
+    this.scheduleCleanup([osc, filter, noteGain], durSec + 0.22, now);
   }
 
   /**
@@ -531,10 +541,12 @@ export class ChordSynth {
     osc.start(now);
     osc.stop(now + durSec + 0.05);
 
-    this.scheduleCleanup([osc, filter, noteGain], durSec + 0.1);
+    this.scheduleCleanup([osc, filter, noteGain], durSec + 0.1, now);
   }
 
-  private scheduleCleanup(nodes: any[], delaySec: number) {
+  private scheduleCleanup(nodes: any[], delaySec: number, startTime?: number) {
+    const baseTime = startTime !== undefined && this.ctx ? (startTime - this.ctx.currentTime) : 0;
+    const totalDelayMs = Math.max(50, (baseTime + delaySec) * 1000);
     setTimeout(() => {
       try {
         nodes.forEach(n => {
@@ -543,15 +555,15 @@ export class ChordSynth {
           }
         });
       } catch (_) {}
-    }, delaySec * 1000);
+    }, totalDelayMs);
   }
 
   /**
    * 播放一組完整和弦 (例如 [60, 64, 67])
    */
-  public playChord(notes: number[], velocity: number = 100, durationMs: number = 450) {
+  public playChord(notes: number[], velocity: number = 100, durationMs: number = 450, when?: number) {
     for (const n of notes) {
-      this.playNote(n, velocity, durationMs);
+      this.playNote(n, velocity, durationMs, when);
     }
   }
 }
