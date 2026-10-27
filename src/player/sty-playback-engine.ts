@@ -2,16 +2,27 @@ import type { YamahaFileParsed, YamahaSection, MidiEvent } from '../core/models/
 import { getSharedAudioContext } from '../creator/shared-audio-context';
 import { drumSynth } from '../creator/drum-synth';
 import { bassSynth } from '../creator/bass-synth';
-import { chordSynth } from '../creator/chord-synth';
+import { ChordSynth } from '../creator/chord-synth';
 import { midiManager } from '../core/audio/midi-manager';
+import { findYamahaVoice } from '../core/data/yamaha-voices';
 
 export interface PlaybackNoteEvent {
   relTick: number;          // 相對於段落起始的 Tick
-  channel: number;          // MIDI Channel (0-indexed, 通常 8~15 為 SFF2)
+  channel: number;          // 目的 MIDI Channel (標準 8~15，對應 Yamaha 8 大伴奏聲部)
+  sourceChannel: number;    // 原始 MIDI 檔案中的來源 Channel (0~15)
   noteNumber: number;       // 音高 (0~127)
   velocity: number;         // 力度 (1~127)
   durationTicks: number;    // 發聲長度 (Ticks)
   durationMs: number;       // 發聲長度 (毫秒)
+}
+
+export interface PartVoiceInfo {
+  channel: number;          // 8~15
+  msb: number;
+  lsb: number;
+  pc: number;
+  voiceName: string;
+  category: string;
 }
 
 export interface PlaybackState {
@@ -47,7 +58,11 @@ export class StyPlaybackEngine {
   private playbackStartAudioTime: number = 0;
   private lastScheduledTick: number = 0;
 
-  // 聲部靜音與獨奏 (Channel 8~15, 以及 0~7)
+  // 聲部專屬合成器 (Channel 11~15 各自獨立 ChordSynth 實例，避免音色互相覆蓋)
+  private chordSynths: Map<number, ChordSynth> = new Map();
+  private partVoices: Map<number, PartVoiceInfo> = new Map();
+
+  // 聲部靜音與獨奏 (Channel 8~15)
   private mutedChannels: Set<number> = new Set();
   private soloChannel: number | null = null;
   private channelVolumes: Map<number, number> = new Map(); // 0~127
@@ -58,9 +73,12 @@ export class StyPlaybackEngine {
   private activeChannelsInWindow: Set<number> = new Set();
 
   constructor() {
-    // 預設全聲部音量為 100
-    for (let c = 0; c < 16; c++) {
+    // 預設全聲部音量為 100，並為每個和弦/樂句聲部建立專屬合成器
+    for (let c = 8; c <= 15; c++) {
       this.channelVolumes.set(c, 100);
+      if (c >= 11) {
+        this.chordSynths.set(c, new ChordSynth());
+      }
     }
   }
 
@@ -70,6 +88,7 @@ export class StyPlaybackEngine {
     this.bpm = parsed.bpm || 120;
     this.currentSection = null;
     this.sectionEvents = [];
+    this.partVoices.clear();
   }
 
   public getSections(): YamahaSection[] {
@@ -157,15 +176,24 @@ export class StyPlaybackEngine {
   }
 
   public setChannelVolume(channel: number, vol: number) {
-    this.channelVolumes.set(channel, Math.max(0, Math.min(127, Math.round(vol))));
+    const clamped = Math.max(0, Math.min(127, Math.round(vol)));
+    this.channelVolumes.set(channel, clamped);
+    const synth = this.chordSynths.get(channel);
+    if (synth) synth.setVolume(clamped);
+    if (channel === 10) bassSynth.setVolume(clamped);
+    if (channel === 8 || channel === 9) drumSynth.setVolume(clamped);
   }
 
   public getChannelVolume(channel: number): number {
     return this.channelVolumes.get(channel) ?? 100;
   }
 
+  public getPartVoices(): Map<number, PartVoiceInfo> {
+    return this.partVoices;
+  }
+
   /**
-   * 選擇段落並萃取原始音符事件流
+   * 選擇段落並萃取原始音符事件流 (完整支援 CASM 路由與 Per-Part SFF2 仲裁)
    */
   public selectSection(sectionName: string): boolean {
     if (!this.parsed) return false;
@@ -173,9 +201,7 @@ export class StyPlaybackEngine {
     if (!target) return false;
 
     const wasPlaying = this.isPlaying;
-    if (wasPlaying) {
-      this.stop();
-    }
+    if (wasPlaying) this.stop();
 
     this.currentSection = target;
     const division = this.parsed.division || 480;
@@ -186,73 +212,136 @@ export class StyPlaybackEngine {
     const startTick = target.startTick;
     const endTick = target.endTick ?? (startTick + ticksPerBar);
     this.totalSectionTicks = Math.max(ticksPerBar, endTick - startTick);
-    this.totalBars = Math.max(1, Math.round(this.totalSectionTicks / ticksPerBar));
+    this.totalBars = target.measureCount ?? Math.max(1, Math.round(this.totalSectionTicks / ticksPerBar));
 
-    // 檢查伴奏是否包含 SFF2 專用通道 (8~15)
-    let hasSff2Channels = false;
+    // 1. 取得該段落專屬 CASM 映射表 (將 Source Channel 映射至 Destination Channel)
+    const secNameLower = target.name.toLowerCase();
+    const casmSecMap = this.parsed.casmMappings?.[secNameLower]
+      || this.parsed.casmMappings?.[secNameLower.replace(/\s+/g, '')];
+
+    // 2. 收集音軌展平事件 (含全域與段落內的 CC 0, CC 32, Program Change)
+    interface FlatEvent {
+      absTick: number;
+      delta: number;
+      ev: MidiEvent;
+    }
+    const flatEvents: FlatEvent[] = [];
     for (const trk of this.parsed.tracks) {
       let cur = 0;
       for (const ev of trk.events) {
         cur += ev.delta;
-        if (cur >= startTick && cur < endTick && ev.channel !== undefined && ev.channel >= 8 && ev.channel <= 15) {
-          hasSff2Channels = true;
-          break;
-        }
+        flatEvents.push({ absTick: cur, delta: ev.delta, ev });
       }
-      if (hasSff2Channels) break;
+    }
+    flatEvents.sort((a, b) => a.absTick - b.absTick);
+
+    // 收集通道音色 (MSB, LSB, PC)
+    const rawVoices: Record<number, { msb: number; lsb: number; pc: number }> = {};
+    for (const p of this.parsed.parts) {
+      if (p.programChange !== undefined) {
+        rawVoices[p.channel] = {
+          msb: p.bankMsb ?? 0,
+          lsb: p.bankLsb ?? 0,
+          pc: p.programChange,
+        };
+      }
     }
 
-    // 提取該段落的所有 NoteOn 與 NoteOff
-    const rawEvents: { tick: number; ev: MidiEvent }[] = [];
-    for (const trk of this.parsed.tracks) {
-      let cur = 0;
-      for (const ev of trk.events) {
-        cur += ev.delta;
-        if (cur >= startTick && cur < endTick) {
-          // 若有 SFF2 軌道，則完全排除 SFF1 (0~7) 以免半音衝突
-          if (hasSff2Channels && ev.channel !== undefined && ev.channel < 8) {
-            continue;
+    for (const item of flatEvents) {
+      if (item.absTick >= startTick && item.absTick < endTick) {
+        const ev = item.ev;
+        const ch = ev.channel;
+        if (ch !== undefined) {
+          if (ev.type === 'controlChange' && ev.controller !== undefined && ev.value !== undefined) {
+            if (ev.controller === 0 || ev.controller === 32) {
+              if (!rawVoices[ch]) rawVoices[ch] = { msb: 0, lsb: 0, pc: 0 };
+              if (ev.controller === 0) rawVoices[ch].msb = ev.value;
+              if (ev.controller === 32) rawVoices[ch].lsb = ev.value;
+            }
+          } else if (ev.type === 'programChange' && ev.program !== undefined) {
+            if (!rawVoices[ch]) rawVoices[ch] = { msb: 0, lsb: 0, pc: ev.program };
+            else rawVoices[ch].pc = ev.program;
           }
-          rawEvents.push({ tick: cur, ev });
         }
       }
     }
 
-    // 組合 NoteOn 與其長度
-    const noteOnMap: Map<string, { tick: number; ev: MidiEvent }> = new Map();
-    const resultEvents: PlaybackNoteEvent[] = [];
+    // 3. 通道分流映射函數：將原始來源通道 (0~15) 映射至標準 Yamaha 伴奏聲部 (8~15)
+    const resolveDestChannel = (srcCh: number): number => {
+      if (casmSecMap && casmSecMap[srcCh] !== undefined) {
+        return casmSecMap[srcCh];
+      }
+      if (srcCh >= 8 && srcCh <= 15) return srcCh;
+      // SFF1 傳統通道預設映射
+      switch (srcCh) {
+        case 0: return 8;  // Rhythm 1 (Sub)
+        case 1: return 10; // Bass
+        case 2: return 11; // Chord 1
+        case 3: return 12; // Chord 2
+        case 4: return 13; // Pad
+        case 5: return 14; // Phrase 1
+        case 6: return 15; // Phrase 2
+        case 7: return 8;  // Extra Rhythm
+        default: return srcCh;
+      }
+    };
 
-    // 先依 tick 排序
-    rawEvents.sort((a, b) => a.tick - b.tick);
+    // 4. 偵測段落內各目標聲部 (8~15) 是否同時具有原生 SFF2 軌道 (8~15)
+    // 進行 Per-Part 精準仲裁：若目標聲部已經有原生 SFF2，則排除 SFF1 (0~7) 鏡像音軌，避免半音重複！
+    const notesInSec = flatEvents.filter(
+      item => item.absTick >= startTick && item.absTick < endTick &&
+      (item.ev.type === 'noteOn' || item.ev.type === 'noteOff')
+    );
 
-    for (const item of rawEvents) {
-      const { tick, ev } = item;
-      const ch = ev.channel ?? 0;
+    const destPartsWithSff2 = new Set<number>();
+    for (const item of notesInSec) {
+      const srcCh = item.ev.channel ?? 0;
+      if (srcCh >= 8 && srcCh <= 15) {
+        const dest = resolveDestChannel(srcCh);
+        destPartsWithSff2.add(dest);
+      }
+    }
+
+    // 5. 組合 NoteOn 與其長度
+    const rawNoteEvents: PlaybackNoteEvent[] = [];
+    const noteOnMap: Map<string, { absTick: number; ev: MidiEvent; destCh: number; srcCh: number }> = new Map();
+
+    for (const item of notesInSec) {
+      const { absTick, ev } = item;
+      const srcCh = ev.channel ?? 0;
+      const destCh = resolveDestChannel(srcCh);
+
+      // 若該目標聲部 (destCh) 已經有原生的 SFF2 (8~15) 音符，且當前音符來自 SFF1 (0~7) 鏡像，則跳過以防雙重發聲
+      if (srcCh < 8 && destPartsWithSff2.has(destCh)) {
+        continue;
+      }
+
       const note = ev.noteNumber ?? 0;
-      const key = `${ch}_${note}`;
+      const key = `${destCh}_${note}`;
 
       if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
-        // 如果前一個音尚未 NoteOff，先結算前一個音
         if (noteOnMap.has(key)) {
           const prev = noteOnMap.get(key)!;
-          const durTicks = Math.max(24, tick - prev.tick);
-          resultEvents.push({
-            relTick: prev.tick - startTick,
-            channel: ch,
+          const durTicks = Math.max(24, absTick - prev.absTick);
+          rawNoteEvents.push({
+            relTick: prev.absTick - startTick,
+            channel: prev.destCh,
+            sourceChannel: prev.srcCh,
             noteNumber: note,
             velocity: prev.ev.velocity ?? 100,
             durationTicks: durTicks,
             durationMs: (durTicks / division) * (60 / this.bpm) * 1000,
           });
         }
-        noteOnMap.set(key, item);
+        noteOnMap.set(key, { absTick, ev, destCh, srcCh });
       } else if (ev.type === 'noteOff' || (ev.type === 'noteOn' && (ev.velocity ?? 0) === 0)) {
         if (noteOnMap.has(key)) {
           const prev = noteOnMap.get(key)!;
-          const durTicks = Math.max(24, tick - prev.tick);
-          resultEvents.push({
-            relTick: prev.tick - startTick,
-            channel: ch,
+          const durTicks = Math.max(24, absTick - prev.absTick);
+          rawNoteEvents.push({
+            relTick: prev.absTick - startTick,
+            channel: prev.destCh,
+            sourceChannel: prev.srcCh,
             noteNumber: note,
             velocity: prev.ev.velocity ?? 100,
             durationTicks: durTicks,
@@ -265,12 +354,12 @@ export class StyPlaybackEngine {
 
     // 處理尚未 NoteOff 的剩餘音符
     noteOnMap.forEach((prev) => {
-      const ch = prev.ev.channel ?? 0;
       const note = prev.ev.noteNumber ?? 0;
-      const durTicks = Math.min(ticksPerBar, Math.max(48, endTick - prev.tick));
-      resultEvents.push({
-        relTick: prev.tick - startTick,
-        channel: ch,
+      const durTicks = Math.min(ticksPerBar, Math.max(48, endTick - prev.absTick));
+      rawNoteEvents.push({
+        relTick: prev.absTick - startTick,
+        channel: prev.destCh,
+        sourceChannel: prev.srcCh,
         noteNumber: note,
         velocity: prev.ev.velocity ?? 100,
         durationTicks: durTicks,
@@ -278,15 +367,82 @@ export class StyPlaybackEngine {
       });
     });
 
-    // 依相對 Tick 嚴格排序
-    resultEvents.sort((a, b) => a.relTick - b.relTick);
-    this.sectionEvents = resultEvents;
+    rawNoteEvents.sort((a, b) => a.relTick - b.relTick);
+    this.sectionEvents = rawNoteEvents;
 
-    if (wasPlaying) {
-      this.play();
-    }
+    // 6. 為每個目標聲部 (8~15) 建立音色資訊並設定各 ChannelSynth 音色類別
+    this.setupPartVoices(rawVoices, casmSecMap);
 
+    if (wasPlaying) this.play();
     return true;
+  }
+
+  private setupPartVoices(rawVoices: Record<number, { msb: number; lsb: number; pc: number }>, casmSecMap?: Record<number, number>) {
+    this.partVoices.clear();
+
+    // 映射各聲部音色
+    for (let destCh = 8; destCh <= 15; destCh++) {
+      // 找出指向此 destCh 的 sourceChannel
+      let matchedSrc = destCh;
+      if (!rawVoices[destCh]) {
+        // 從 CASM 或預設 SFF1 尋找
+        for (const [srcStr, dst] of Object.entries(casmSecMap || {})) {
+          if (dst === destCh && rawVoices[parseInt(srcStr, 10)]) {
+            matchedSrc = parseInt(srcStr, 10);
+            break;
+          }
+        }
+        if (!rawVoices[matchedSrc]) {
+          // 嘗試 SFF1 預設映射反推
+          const sff1FallbackMap: Record<number, number> = { 10: 1, 11: 2, 12: 3, 13: 4, 14: 5, 15: 6, 8: 0, 9: 9 };
+          const fb = sff1FallbackMap[destCh];
+          if (fb !== undefined && rawVoices[fb]) matchedSrc = fb;
+        }
+      }
+
+      const v = rawVoices[matchedSrc] || rawVoices[destCh] || { msb: 0, lsb: 0, pc: 0 };
+      const found = findYamahaVoice(v.msb, v.lsb, v.pc);
+      const name = found ? (found.chineseName ? `${found.name} (${found.chineseName})` : found.name) : `Voice (${v.msb}-${v.lsb}-${v.pc + 1})`;
+      const category = found?.category || this.inferCategoryByChannel(destCh);
+
+      const info: PartVoiceInfo = {
+        channel: destCh,
+        msb: v.msb,
+        lsb: v.lsb,
+        pc: v.pc,
+        voiceName: name,
+        category,
+      };
+      this.partVoices.set(destCh, info);
+
+      // 設定該聲部專屬合成器之音色類別
+      const synth = this.chordSynths.get(destCh);
+      if (synth) {
+        synth.setVoice({ category, name });
+      }
+    }
+  }
+
+  private inferCategoryByChannel(ch: number): string {
+    switch (ch) {
+      case 8:
+      case 9:
+        return 'Drums';
+      case 10:
+        return 'Bass';
+      case 11:
+        return 'Guitar';
+      case 12:
+        return 'E.Piano';
+      case 13:
+        return 'Strings';
+      case 14:
+        return 'Brass';
+      case 15:
+        return 'Synth';
+      default:
+        return 'Piano';
+    }
   }
 
   public getCurrentSection(): YamahaSection | null {
@@ -354,7 +510,7 @@ export class StyPlaybackEngine {
         const evTick = event.relTick;
         // 檢查音符是否落在當前預排視窗中
         if (evTick > this.lastScheduledTick && evTick <= windowEndTick) {
-          // 聲部靜音檢查
+          // 聲部靜音檢查 (依目的聲部通道 8~15 判定)
           if (this.isChannelMuted(event.channel)) continue;
 
           // 計算發聲精確音訊時間
@@ -436,16 +592,18 @@ export class StyPlaybackEngine {
   }
 
   private playWebAudioNote(channel: number, note: number, velocity: number, durMs: number, when: number) {
-    // 依 Yamaha 標準聲部指派合成器
-    if (channel === 8 || channel === 9 || channel === 0) {
-      // 節奏部 (Rhythm 1 / Rhythm 2 / Sub Rhythm)
+    if (channel === 8 || channel === 9) {
+      // 節奏部 (Rhythm 1: Ch 8, Rhythm 2: Ch 9)
       drumSynth.playNote(note, velocity, when);
-    } else if (channel === 10 || channel === 1) {
-      // 貝斯 (Bass)
+    } else if (channel === 10) {
+      // 貝斯部 (Bass: Ch 10)
       bassSynth.playNote(note, velocity, durMs, when);
     } else {
-      // 和弦與樂句 (Chord 1, Chord 2, Pad, Phrase 1, Phrase 2)
-      chordSynth.playNote(note, velocity, durMs, when);
+      // 和弦與樂句部 (Ch 11~15 各自專屬合成器實例)
+      const synth = this.chordSynths.get(channel);
+      if (synth) {
+        synth.playNote(note, velocity, durMs, when);
+      }
     }
   }
 

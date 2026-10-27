@@ -307,6 +307,17 @@ export class PlayerApp {
       b.classList.toggle('active', sec?.toLowerCase() === name.toLowerCase());
     });
 
+    // 更新各聲部的真實解析音色名稱
+    const voices = styPlaybackEngine.getPartVoices();
+    YAMAHA_PARTS.forEach((part) => {
+      const voiceEl = document.getElementById(`part-voice-${part.channel}`);
+      const info = voices.get(part.channel);
+      if (voiceEl && info) {
+        voiceEl.textContent = info.voiceName;
+        voiceEl.title = `${info.voiceName} (Category: ${info.category}, MSB: ${info.msb}, LSB: ${info.lsb}, PC: ${info.pc + 1})`;
+      }
+    });
+
     const totalBars = styPlaybackEngine.getTotalBars();
     this.labelPosition.textContent = `小節 01 / ${totalBars.toString().padStart(2, '0')} | 拍 1.0 | Tick 000000`;
   }
@@ -326,7 +337,7 @@ export class PlayerApp {
           </div>
           <div id="led-ch-${part.channel}" class="activity-led"></div>
         </div>
-        <div class="part-voice">${part.defaultName}</div>
+        <div id="part-voice-${part.channel}" class="part-voice">${part.defaultName}</div>
         <div class="part-controls">
           <button id="btn-mute-${part.channel}" class="mixer-btn btn-mute">Mute</button>
           <button id="btn-solo-${part.channel}" class="mixer-btn btn-solo">Solo</button>
