@@ -433,6 +433,7 @@ export class PlayerApp {
         </div>
         <div class="part-vol-wrap">
           <input type="range" id="vol-${part.channel}" class="part-vol-slider" min="0" max="127" value="100">
+          <span id="vol-txt-${part.channel}" class="vol-badge">100</span>
         </div>
       `;
 
@@ -464,6 +465,8 @@ export class PlayerApp {
       sliderVol.addEventListener('input', () => {
         const vol = parseInt(sliderVol.value, 10);
         styPlaybackEngine.setChannelVolume(part.channel, vol);
+        const txt = card.querySelector(`#vol-txt-${part.channel}`);
+        if (txt) txt.textContent = vol.toString();
       });
     });
   }

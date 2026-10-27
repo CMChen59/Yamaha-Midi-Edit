@@ -540,8 +540,18 @@
 
     .mixer-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-      gap: 12px;
+      grid-template-columns: repeat(8, minmax(115px, 1fr));
+      gap: 10px;
+      overflow-x: auto;
+    }
+
+    .vol-badge {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      min-width: 26px;
+      text-align: right;
+      font-family: monospace;
     }
 
     .mixer-card {
@@ -631,6 +641,7 @@
     .part-vol-wrap {
       display: flex;
       align-items: center;
+      gap: 6px;
     }
 
     .part-vol-slider {
