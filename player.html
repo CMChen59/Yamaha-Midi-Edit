@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Yamaha STY 純伴奏極速播放器 (Pure STY Player)</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎵</text></svg>">
+  <style>
+    :root {
+      --bg-dark: #090d16;
+      --bg-panel: #131b2e;
+      --bg-card: #1c2744;
+      --border-color: rgba(255, 255, 255, 0.08);
+      --accent: #38bdf8;
+      --accent-hover: #0ea5e9;
+      --accent-gold: #f59e0b;
+      --accent-green: #10b981;
+      --accent-rose: #f43f5e;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding-bottom: 40px;
+    }
+
+    /* 頂部導航 */
+    header {
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border-color);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      font-size: 26px;
+    }
+
+    .brand-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      background: linear-gradient(135deg, #38bdf8, #818cf8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .brand-sub {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-left: 6px;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .btn-nav {
+      background: rgba(56, 189, 248, 0.12);
+      color: var(--accent);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .btn-nav:hover {
+      background: rgba(56, 189, 248, 0.25);
+      border-color: var(--accent);
+    }
+
+    .status-pill {
+      font-size: 0.75rem;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-muted);
+      border: 1px solid var(--border-color);
+    }
+
+    .status-pill.connected {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border-color: rgba(16, 185, 129, 0.3);
+    }
+
+    /* 主要容器 */
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px 24px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* 檔案載入區 */
+    .drop-zone {
+      border: 2px dashed rgba(56, 189, 248, 0.35);
+      border-radius: 12px;
+      background: rgba(30, 41, 59, 0.4);
+      padding: 22px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .drop-zone:hover, .drop-zone.drag-over {
+      border-color: var(--accent);
+      background: rgba(56, 189, 248, 0.08);
+    }
+
+    .drop-zone-icon {
+      font-size: 32px;
+    }
+
+    .drop-zone-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+
+    .drop-zone-desc {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .sample-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+
+    .sample-btn {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-color);
+      color: var(--accent);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .sample-btn:hover {
+      background: rgba(56, 189, 248, 0.2);
+      border-color: var(--accent);
+    }
+
+    /* 伴奏資訊卡片 */
+    .style-banner {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 16px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .style-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .style-info {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .audio-output-select {
+      background: #0f172a;
+      color: #fff;
+      border: 1px solid var(--border-color);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      outline: none;
+      cursor: pointer;
+    }
+
+    /* 段落選擇矩陣 */
+    .section-matrix-panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 18px 20px;
+    }
+
+    .panel-header {
+      font-size: 0.9rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--accent);
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .section-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 10px;
+    }
+
+    .section-btn {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: var(--text-main);
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.15s;
+      text-align: center;
+    }
+
+    .section-btn:hover {
+      border-color: rgba(56, 189, 248, 0.5);
+      background: rgba(56, 189, 248, 0.1);
+    }
+
+    .section-btn.active {
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.25), rgba(6, 182, 212, 0.25));
+      border-color: var(--accent-green);
+      box-shadow: 0 0 12px rgba(16, 185, 129, 0.35);
+    }
+
+    .sec-badge {
+      font-weight: 700;
+      font-size: 0.95rem;
+    }
+
+    .badge-intro { color: #f59e0b; }
+    .badge-main { color: #10b981; }
+    .badge-ending { color: #f43f5e; }
+    .badge-other { color: #38bdf8; }
+
+    .sec-bars {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+
+    /* 播放主控制列 */
+    .transport-bar {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+
+    .transport-main {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .btn-play {
+      background: linear-gradient(135deg, #10b981, #059669);
+      color: #fff;
+      border: none;
+      padding: 10px 24px;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s;
+      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    }
+
+    .btn-play:hover {
+      background: linear-gradient(135deg, #059669, #047857);
+      transform: translateY(-1px);
+    }
+
+    .btn-play.playing {
+      background: linear-gradient(135deg, #f59e0b, #d97706);
+      box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+    }
+
+    .btn-stop {
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+      border: 1px solid var(--border-color);
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .btn-stop:hover {
+      background: rgba(244, 63, 94, 0.2);
+      border-color: var(--accent-rose);
+      color: #fda4af;
+    }
+
+    .btn-loop {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-muted);
+      border: 1px solid var(--border-color);
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .btn-loop.active {
+      background: rgba(56, 189, 248, 0.2);
+      border-color: var(--accent);
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    /* 播放進度顯示大字體 */
+    .position-display {
+      font-family: "Courier New", Courier, monospace;
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: #38bdf8;
+      background: #090d16;
+      padding: 8px 16px;
+      border-radius: 6px;
+      border: 1px solid rgba(56, 189, 248, 0.2);
+      letter-spacing: 1px;
+    }
+
+    /* 速度控制群 */
+    .bpm-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .bpm-label {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--text-muted);
+    }
+
+    .bpm-val {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: #fff;
+      min-width: 44px;
+      text-align: right;
+    }
+
+    .bpm-slider {
+      width: 120px;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    .bpm-btn {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.72rem;
+      cursor: pointer;
+    }
+
+    .bpm-btn:hover {
+      background: rgba(56, 189, 248, 0.2);
+      border-color: var(--accent);
+    }
+
+    /* 8 伴奏聲部混音盤 */
+    .mixer-panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 18px 20px;
+    }
+
+    .mixer-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 12px;
+    }
+
+    .mixer-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      border-top: 3px solid var(--part-accent, var(--accent));
+      transition: all 0.2s;
+    }
+
+    .part-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .channel-pill {
+      font-size: 0.65rem;
+      background: rgba(255, 255, 255, 0.08);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--text-muted);
+    }
+
+    .part-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #fff;
+      margin-left: 4px;
+    }
+
+    .activity-led {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.15);
+      transition: background 0.05s;
+    }
+
+    .activity-led.flash {
+      background: var(--part-accent, var(--accent));
+      box-shadow: 0 0 8px var(--part-accent, var(--accent));
+    }
+
+    .part-voice {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .part-controls {
+      display: flex;
+      gap: 6px;
+    }
+
+    .mixer-btn {
+      flex: 1;
+      padding: 4px 0;
+      border-radius: 4px;
+      border: 1px solid var(--border-color);
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-muted);
+      font-size: 0.72rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .btn-mute.muted {
+      background: var(--accent-rose);
+      color: #fff;
+      border-color: var(--accent-rose);
+    }
+
+    .btn-solo.soloed {
+      background: var(--accent-gold);
+      color: #000;
+      border-color: var(--accent-gold);
+    }
+
+    .part-vol-wrap {
+      display: flex;
+      align-items: center;
+    }
+
+    .part-vol-slider {
+      width: 100%;
+      accent-color: var(--part-accent, var(--accent));
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <span class="brand-icon">🎵</span>
+      <div>
+        <span class="brand-title">Yamaha STY 純伴奏極速播放器</span>
+        <span class="brand-sub">Pure STY Player (零 DOM 拖累 / 微秒級時鐘)</span>
+      </div>
+    </div>
+    <div class="header-actions">
+      <span id="midi-status-pill" class="status-pill">⚪ 偵測 MIDI 中...</span>
+      <a href="/index.html" class="btn-nav">🎹 返回全功能伴奏創作台 (Creator App)</a>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- 檔案上傳與快速範本 -->
+    <section>
+      <div id="drop-zone" class="drop-zone">
+        <span class="drop-zone-icon">📂</span>
+        <div class="drop-zone-title">點擊選擇或拖曳 Yamaha STY 伴奏檔案至此</div>
+        <div class="drop-zone-desc">支援 .sty, .prs, .sst 等 Yamaha 原廠伴奏格式</div>
+        <div class="sample-bar" onclick="event.stopPropagation()">
+          <span style="font-size: 0.75rem; color: #94a3b8;">經典示範伴奏：</span>
+          <button class="sample-btn" data-file="LoveSong.T547.sty">🎵 LoveSong.T547.sty (70 BPM)</button>
+          <button class="sample-btn" data-file="4006_SX900.T547.sty">🎵 4006_SX900.T547.sty (92 BPM)</button>
+          <button class="sample-btn" data-file="1024_容易受傷的女人.sty">🎵 容易受傷的女人.sty (66 BPM)</button>
+          <button class="sample-btn" data-file="SX920_V2_4Bar_Test.sty">🎵 SX920_V2_4Bar_Test.sty (120 BPM)</button>
+        </div>
+      </div>
+      <input type="file" id="file-input" accept=".sty,.prs,.sst,.mid" style="display: none;">
+    </section>
+
+    <!-- 伴奏規格儀表板 -->
+    <section class="style-banner">
+      <div>
+        <div id="style-title" class="style-title">準備就緒</div>
+        <div id="style-info" class="style-info">請載入 STY 檔案以開始播放</div>
+      </div>
+      <div>
+        <select id="select-audio-output" class="audio-output-select">
+          <option value="webaudio">🔊 瀏覽器 Web Audio 軟體合成器</option>
+        </select>
+      </div>
+    </section>
+
+    <!-- 播放主控制列 -->
+    <section class="transport-bar">
+      <div class="transport-main">
+        <button id="btn-play" class="btn-play">▶ 播放 (Play)</button>
+        <button id="btn-stop" class="btn-stop">⏹ 停止</button>
+        <button id="btn-loop" class="btn-loop active">🔁 循環: 開啟</button>
+      </div>
+
+      <div id="label-position" class="position-display">
+        小節 01 / 01 | 拍 1.0 | Tick 000000
+      </div>
+
+      <div class="bpm-control">
+        <span class="bpm-label">BPM:</span>
+        <span id="bpm-value" class="bpm-val">120</span>
+        <button id="btn-bpm-minus-10" class="bpm-btn">-10</button>
+        <button id="btn-bpm-minus-1" class="bpm-btn">-1</button>
+        <input type="range" id="slider-bpm" class="bpm-slider" min="40" max="240" value="120">
+        <button id="btn-bpm-plus-1" class="bpm-btn">+1</button>
+        <button id="btn-bpm-plus-10" class="bpm-btn">+10</button>
+        <button id="btn-bpm-reset" class="bpm-btn">重設</button>
+      </div>
+    </section>
+
+    <!-- 段落選擇器矩陣 -->
+    <section class="section-matrix-panel">
+      <div class="panel-header">
+        <span>伴奏段落選擇 (Yamaha Sections)</span>
+        <span style="font-size: 0.75rem; color: #94a3b8; font-weight: normal;">點擊即可無縫切換播放段落</span>
+      </div>
+      <div id="section-buttons" class="section-grid">
+        <!-- 動態渲染各段落按鈕 -->
+      </div>
+    </section>
+
+    <!-- 8 伴奏聲部混音盤 -->
+    <section class="mixer-panel">
+      <div class="panel-header">
+        <span>8 大伴奏聲部狀態與混音盤 (8-Part Arranger Mixer)</span>
+        <span style="font-size: 0.75rem; color: #94a3b8; font-weight: normal;">即時發聲 LED 閃爍 / 靜音 / 獨奏 / 音量</span>
+      </div>
+      <div id="mixer-grid" class="mixer-grid">
+        <!-- 動態渲染 8 個聲部卡片 -->
+      </div>
+    </section>
+
+  </main>
+
+  <script type="module" src="/src/player/player-app.ts"></script>
+</body>
+</html>
