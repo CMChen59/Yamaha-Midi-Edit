@@ -461,7 +461,7 @@ export class CreatorApp {
   /**
    * 發送動態伴奏音軌的 Web MIDI 音符觸發 (支援 SFF2/SFF1 雙向鏡像廣播)
    */
-  private sendMidiDynamicTrackTrigger(partId: string, note: number, velocity: number = 100, durMs: number = 350, sourceCh?: number, midiTimestamp?: number) {
+  private sendMidiDynamicTrackTrigger(partId: string, note: number, velocity: number = 100, durMs: number = 350, _sourceCh?: number, midiTimestamp?: number) {
     if (this.isChannelEffectiveMuted(partId)) return;
     if (midiTimestamp === undefined) {
       this.mixerPanel?.triggerVuMeter(partId, velocity);
@@ -472,23 +472,11 @@ export class CreatorApp {
         const ch = this.state.midiRoutingMode === 'direct_ch1' ? 0 : config.channel;
         if (midiTimestamp !== undefined) {
           midiManager.sendNoteOn(ch, note, velocity, midiTimestamp);
-          if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
-            midiManager.sendNoteOn(sourceCh, note, velocity, midiTimestamp);
-          }
           midiManager.sendNoteOff(ch, note, midiTimestamp + durMs);
-          if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
-            midiManager.sendNoteOff(sourceCh, note, midiTimestamp + durMs);
-          }
         } else {
           midiManager.sendNoteOn(ch, note, velocity);
-          if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
-            midiManager.sendNoteOn(sourceCh, note, velocity);
-          }
           setTimeout(() => {
             midiManager.sendNoteOff(ch, note);
-            if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
-              midiManager.sendNoteOff(sourceCh, note);
-            }
           }, durMs);
         }
       }
@@ -1493,57 +1481,33 @@ export class CreatorApp {
     }
   }
 
-  private sendMidiBassTrigger(note: number, velocity: number = 100, durMs: number = 240, sourceCh?: number, midiTimestamp?: number) {
+  private sendMidiBassTrigger(note: number, velocity: number = 100, durMs: number = 240, _sourceCh?: number, midiTimestamp?: number) {
     if (this.isChannelEffectiveMuted('bass')) return;
     if (this.state.isMidiConnected) {
       const ch = this.state.midiRoutingMode === 'direct_ch1' ? 0 : 10;
       if (midiTimestamp !== undefined) {
         midiManager.sendNoteOn(ch, note, velocity, midiTimestamp);
-        if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
-          midiManager.sendNoteOn(sourceCh, note, velocity, midiTimestamp);
-        }
         midiManager.sendNoteOff(ch, note, midiTimestamp + durMs);
-        if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
-          midiManager.sendNoteOff(sourceCh, note, midiTimestamp + durMs);
-        }
       } else {
         midiManager.sendNoteOn(ch, note, velocity);
-        if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
-          midiManager.sendNoteOn(sourceCh, note, velocity);
-        }
         setTimeout(() => {
           midiManager.sendNoteOff(ch, note);
-          if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
-            midiManager.sendNoteOff(sourceCh, note);
-          }
         }, durMs);
       }
     }
   }
 
-  private sendMidiChordTrigger(note: number, velocity: number = 100, durMs: number = 350, sourceCh?: number, midiTimestamp?: number) {
+  private sendMidiChordTrigger(note: number, velocity: number = 100, durMs: number = 350, _sourceCh?: number, midiTimestamp?: number) {
     if (this.isChannelEffectiveMuted('chord')) return;
     if (this.state.isMidiConnected) {
       const ch = this.state.midiRoutingMode === 'direct_ch1' ? 0 : 11;
       if (midiTimestamp !== undefined) {
         midiManager.sendNoteOn(ch, note, velocity, midiTimestamp);
-        if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
-          midiManager.sendNoteOn(sourceCh, note, velocity, midiTimestamp);
-        }
         midiManager.sendNoteOff(ch, note, midiTimestamp + durMs);
-        if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
-          midiManager.sendNoteOff(sourceCh, note, midiTimestamp + durMs);
-        }
       } else {
         midiManager.sendNoteOn(ch, note, velocity);
-        if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
-          midiManager.sendNoteOn(sourceCh, note, velocity);
-        }
         setTimeout(() => {
           midiManager.sendNoteOff(ch, note);
-          if (sourceCh !== undefined && sourceCh !== ch && this.state.midiRoutingMode !== 'direct_ch1') {
-            midiManager.sendNoteOff(sourceCh, note);
-          }
         }, durMs);
       }
     }

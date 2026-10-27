@@ -163,6 +163,8 @@ export class ChordSynth {
    */
   public playNote(note: number, velocity: number = 100, durationMs: number = 450, when?: number) {
     if (ChordSynth.muted || this.isInstanceMuted) return;
+    // 濾除 Yamaha MegaVoice 特效/雜音鍵 (吉他/琴類的滑弦、打板音常映射於 > 108，軟體振盪器會產生極高頻刺耳聲)
+    if (note < 12 || note > 108) return;
     this.initAudio();
     if (!this.ctx || !this.masterGain) return;
 

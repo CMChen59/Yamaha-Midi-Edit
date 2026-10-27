@@ -494,15 +494,40 @@ export class StyLoader {
         ev => ev.type === 'noteOn' && (ev.velocity ?? 0) > 0 && ev.absTick >= secStart && ev.absTick < secEnd
       );
 
+      // SFF2 vs SFF1 獨佔分流判斷：
+      // Yamaha 原廠伴奏同時含有 SFF2 (8~15) 與 SFF1 (0~7) 兩套鏡像音軌。
+      // 若該段落已具備 SFF2 通道音符，則不可混入 SFF1 通道音符，防止雙重發聲與半音互斥衝突！
+      const secChannelNotes = new Set<number>();
+      for (const ev of secNotes) {
+        if (ev.channel !== undefined) secChannelNotes.add(ev.channel);
+      }
+      const activeBassCh = secChannelNotes.has(10) ? 10 : (secChannelNotes.has(1) ? 1 : undefined);
+      const activeChord1Ch = secChannelNotes.has(11) ? 11 : (secChannelNotes.has(2) ? 2 : undefined);
+      const activeChord2Ch = secChannelNotes.has(12) ? 12 : (secChannelNotes.has(3) ? 3 : undefined);
+      const activePadCh = secChannelNotes.has(13) ? 13 : (secChannelNotes.has(4) ? 4 : undefined);
+      const activePhrase1Ch = secChannelNotes.has(14) ? 14 : (secChannelNotes.has(5) ? 5 : undefined);
+      const activePhrase2Ch = secChannelNotes.has(15) ? 15 : (secChannelNotes.has(6) ? 6 : undefined);
+      const hasSff2Drums = secChannelNotes.has(9) || secChannelNotes.has(8);
+
       const msPerTick = (60000 / (bpm * division));
 
       for (let noteIdx = 0; noteIdx < secNotes.length; noteIdx++) {
         const ev = secNotes[noteIdx];
+        const ch = ev.channel ?? 0;
+
+        // 通道獨佔防重疊過濾 (SFF2 優先，避免雙重伴奏疊加)
+        if ((ch === 1 || ch === 10) && activeBassCh !== undefined && ch !== activeBassCh) continue;
+        if ((ch === 2 || ch === 11) && activeChord1Ch !== undefined && ch !== activeChord1Ch) continue;
+        if ((ch === 3 || ch === 12) && activeChord2Ch !== undefined && ch !== activeChord2Ch) continue;
+        if ((ch === 4 || ch === 13) && activePadCh !== undefined && ch !== activePadCh) continue;
+        if ((ch === 5 || ch === 14) && activePhrase1Ch !== undefined && ch !== activePhrase1Ch) continue;
+        if ((ch === 6 || ch === 15) && activePhrase2Ch !== undefined && ch !== activePhrase2Ch) continue;
+        if ((ch === 0 || ch === 7) && hasSff2Drums) continue;
+
         const relTick = ev.absTick - secStart;
         const step = Math.round(relTick / ticksPerStep);
         if (step < 0 || step >= totalSteps) continue;
 
-        const ch = ev.channel ?? 0;
         const note = ev.noteNumber ?? 60;
         const velocity = Math.max(1, Math.min(127, ev.velocity ?? 100));
 

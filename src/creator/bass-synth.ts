@@ -146,6 +146,8 @@ export class BassSynth {
 
   public playNote(note: number, velocity: number = 100, durationMs: number = 240, when?: number) {
     if (BassSynth.muted || this.isInstanceMuted) return;
+    // 濾除 Yamaha MegaVoice 雜音/非正常貝斯音 (Bass 正常範圍約 24~84，雜音鍵常 mapped 於 > 96)
+    if (note < 18 || note > 96) return;
     this.initAudio();
     if (!this.ctx || !this.masterGain) return;
 

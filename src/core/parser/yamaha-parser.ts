@@ -73,6 +73,7 @@ export class YamahaParser {
     const sections: YamahaSection[] = [];
     const partsMap: Map<number, YamahaTrackInfo> = new Map();
     let bpm = 120;
+    let initialBpm: number | null = null;
     let timeSignature = { numerator: 4, denominator: 4 };
 
     // Yamaha Pad 專屬配置
@@ -186,7 +187,11 @@ export class YamahaParser {
           // Tempo (0x51)
           if (metaType === 0x51 && metaLength === 3) {
             const microsecondsPerQuarter = (metaData[0] << 16) | (metaData[1] << 8) | metaData[2];
-            bpm = Math.round(60000000 / microsecondsPerQuarter);
+            const currentBpm = Math.round(60000000 / microsecondsPerQuarter);
+            if (initialBpm === null) {
+              initialBpm = currentBpm;
+            }
+            bpm = currentBpm;
           }
 
           // Time Signature (0x58)
@@ -348,7 +353,7 @@ export class YamahaParser {
       format: fallbackFormat,
       midiFormat,
       division,
-      bpm,
+      bpm: initialBpm ?? bpm,
       timeSignature,
       sections,
       tracks,
