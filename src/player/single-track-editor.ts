@@ -31,7 +31,8 @@ export class SingleTrackEditor {
   private partLabel: string = 'Rhythm 1';
 
   // 縮放與網格維度
-  private pixelsPerBar: number = 260;
+  private pixelsPerBar: number = 240;
+  private isUserZoomed: boolean = false;
   private rowHeight: number = 24;
   private rows: EditorRowInfo[] = [];
 
@@ -48,6 +49,26 @@ export class SingleTrackEditor {
 
   constructor(container: HTMLElement) {
     this.container = container;
+    window.addEventListener('resize', () => {
+      if (!this.isUserZoomed && this.events.length > 0) {
+        const next = this.calculateFitBarsWidth(4);
+        if (Math.abs(next - this.pixelsPerBar) > 4) {
+          this.pixelsPerBar = next;
+          this.render();
+        }
+      }
+    });
+  }
+
+  /**
+   * 計算保證可視區域「至少完整容納指定小節數 (預設 4 小節)」之像素寬度
+   */
+  public calculateFitBarsWidth(barsToFit: number = 4): number {
+    const containerWidth = this.container.clientWidth || 1160;
+    const keyColWidth = 140;
+    const scrollbarSafety = 32;
+    const available = Math.max(640, containerWidth - keyColWidth - scrollbarSafety);
+    return Math.max(160, Math.floor(available / Math.max(1, barsToFit)));
   }
 
   /**
@@ -74,6 +95,10 @@ export class SingleTrackEditor {
     this.timeSignature = timeSignature || { numerator: 4, denominator: 4 };
     this.voiceInfo = voiceInfo;
     this.selectedEventIndex = null;
+
+    if (!this.isUserZoomed) {
+      this.pixelsPerBar = this.calculateFitBarsWidth(4);
+    }
 
     this.calculateRows();
     this.render();
@@ -175,6 +200,8 @@ export class SingleTrackEditor {
         </div>
 
         <div class="editor-zoom-btns">
+          <button id="ed-btn-fit-4" class="editor-mini-btn ${!this.isUserZoomed ? 'active' : ''}" title="保證視野內完整呈現 4 個小節">🎯 4 小節</button>
+          <button id="ed-btn-fit-all" class="editor-mini-btn" title="縮放至完整段落小節">全曲</button>
           <button id="ed-btn-zoom-out" class="editor-mini-btn" title="縮小時間軸">🔍 -</button>
           <button id="ed-btn-zoom-in" class="editor-mini-btn" title="放大時間軸">🔍 +</button>
         </div>
@@ -372,16 +399,32 @@ export class SingleTrackEditor {
     }
 
     // 縮放按鈕
+    const btnFit4 = this.container.querySelector('#ed-btn-fit-4');
+    const btnFitAll = this.container.querySelector('#ed-btn-fit-all');
     const btnZoomIn = this.container.querySelector('#ed-btn-zoom-in');
     const btnZoomOut = this.container.querySelector('#ed-btn-zoom-out');
 
+    btnFit4?.addEventListener('click', () => {
+      this.pixelsPerBar = this.calculateFitBarsWidth(4);
+      this.isUserZoomed = false;
+      this.render();
+    });
+
+    btnFitAll?.addEventListener('click', () => {
+      this.pixelsPerBar = this.calculateFitBarsWidth(this.totalBars);
+      this.isUserZoomed = true;
+      this.render();
+    });
+
     btnZoomIn?.addEventListener('click', () => {
-      this.pixelsPerBar = Math.min(600, this.pixelsPerBar + 60);
+      this.pixelsPerBar = Math.min(600, this.pixelsPerBar + 30);
+      this.isUserZoomed = true;
       this.render();
     });
 
     btnZoomOut?.addEventListener('click', () => {
-      this.pixelsPerBar = Math.max(140, this.pixelsPerBar - 60);
+      this.pixelsPerBar = Math.max(120, this.pixelsPerBar - 30);
+      this.isUserZoomed = true;
       this.render();
     });
 
