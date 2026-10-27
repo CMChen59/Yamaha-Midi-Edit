@@ -137,6 +137,13 @@ export class StyPlaybackEngine {
     this.outputMode = mode;
     if (mode === 'webaudio' && this.isPlaying) {
       midiManager.panicAllChannels();
+    } else if (mode === 'midi' && this.isPlaying) {
+      // 立即初始化琴端音色
+      for (const [ch, voice] of this.partVoices.entries()) {
+        midiManager.sendVoiceChange(ch, { msb: voice.msb, lsb: voice.lsb, pc: voice.pc });
+        const vol = this.getChannelVolume(ch);
+        midiManager.sendControlChange(ch, 7, vol);
+      }
     }
   }
 
@@ -158,6 +165,10 @@ export class StyPlaybackEngine {
     } else {
       this.mutedChannels.delete(channel);
     }
+
+    if (this.outputMode === 'midi') {
+      midiManager.sendControlChange(channel, 7, mute ? 0 : this.getChannelVolume(channel));
+    }
   }
 
   public isChannelMuted(channel: number): boolean {
@@ -169,6 +180,12 @@ export class StyPlaybackEngine {
 
   public setChannelSolo(channel: number | null) {
     this.soloChannel = channel;
+    if (this.outputMode === 'midi') {
+      for (let ch = 8; ch <= 15; ch++) {
+        const effectiveMute = this.isChannelMuted(ch);
+        midiManager.sendControlChange(ch, 7, effectiveMute ? 0 : this.getChannelVolume(ch));
+      }
+    }
   }
 
   public getChannelSolo(): number | null {
@@ -182,6 +199,12 @@ export class StyPlaybackEngine {
     if (synth) synth.setVolume(clamped);
     if (channel === 10) bassSynth.setVolume(clamped);
     if (channel === 8 || channel === 9) drumSynth.setVolume(clamped);
+
+    if (this.outputMode === 'midi') {
+      if (!this.isChannelMuted(channel)) {
+        midiManager.sendControlChange(channel, 7, clamped);
+      }
+    }
   }
 
   public getChannelVolume(channel: number): number {
@@ -466,6 +489,16 @@ export class StyPlaybackEngine {
     }
 
     this.isPlaying = true;
+
+    // 若為 MIDI 模式，初始化琴端 8 大聲部音色與音量
+    if (this.outputMode === 'midi') {
+      midiManager.panicAllChannels();
+      for (const [ch, voice] of this.partVoices.entries()) {
+        midiManager.sendVoiceChange(ch, { msb: voice.msb, lsb: voice.lsb, pc: voice.pc });
+        const isMuted = this.isChannelMuted(ch);
+        midiManager.sendControlChange(ch, 7, isMuted ? 0 : this.getChannelVolume(ch));
+      }
+    }
 
     const division = this.parsed?.division || 480;
     const ticksPerSec = (this.bpm * division) / 60;

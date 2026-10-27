@@ -131,7 +131,7 @@
       border: 2px dashed rgba(56, 189, 248, 0.35);
       border-radius: 12px;
       background: rgba(30, 41, 59, 0.4);
-      padding: 22px 20px;
+      padding: 20px;
       text-align: center;
       cursor: pointer;
       transition: all 0.2s;
@@ -190,7 +190,7 @@
       background: var(--bg-panel);
       border: 1px solid var(--border-color);
       border-radius: 10px;
-      padding: 16px 20px;
+      padding: 14px 20px;
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -210,23 +210,12 @@
       margin-top: 4px;
     }
 
-    .audio-output-select {
-      background: #0f172a;
-      color: #fff;
-      border: 1px solid var(--border-color);
-      padding: 8px 12px;
-      border-radius: 6px;
-      font-size: 0.85rem;
-      outline: none;
-      cursor: pointer;
-    }
-
-    /* 段落選擇矩陣 */
-    .section-matrix-panel {
+    /* 聲音發聲來源選擇 (Audio Output Routing) */
+    .output-panel {
       background: var(--bg-panel);
       border: 1px solid var(--border-color);
-      border-radius: 10px;
-      padding: 18px 20px;
+      border-radius: 12px;
+      padding: 16px 20px;
     }
 
     .panel-header {
@@ -239,6 +228,123 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
+    }
+
+    .output-tabs-container {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 12px;
+    }
+
+    .output-card-btn {
+      background: var(--bg-card);
+      border: 2px solid var(--border-color);
+      border-radius: 10px;
+      padding: 14px 18px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      cursor: pointer;
+      color: var(--text-main);
+      text-align: left;
+      transition: all 0.2s;
+    }
+
+    .output-card-btn:hover {
+      border-color: rgba(56, 189, 248, 0.4);
+      background: rgba(56, 189, 248, 0.06);
+    }
+
+    .output-card-btn.active {
+      border-color: var(--accent-green);
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(6, 182, 212, 0.1));
+      box-shadow: 0 0 14px rgba(16, 185, 129, 0.25);
+    }
+
+    .output-card-icon {
+      font-size: 32px;
+      flex-shrink: 0;
+    }
+
+    .output-card-info {
+      flex: 1;
+    }
+
+    .output-card-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .output-card-sub {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .output-check {
+      font-size: 1.1rem;
+      color: var(--accent-green);
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .output-card-btn.active .output-check {
+      opacity: 1;
+    }
+
+    .midi-drawer {
+      background: rgba(9, 13, 22, 0.85);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin-top: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .midi-drawer-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .btn-drawer {
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--accent);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .btn-drawer:hover {
+      background: rgba(56, 189, 248, 0.3);
+      border-color: var(--accent);
+    }
+
+    .midi-hint-box {
+      background: rgba(56, 189, 248, 0.06);
+      border-left: 3px solid var(--accent);
+      border-radius: 4px;
+      padding: 10px 14px;
+      font-size: 0.8rem;
+      color: #cbd5e1;
+      line-height: 1.6;
+    }
+
+    /* 段落選擇矩陣 */
+    .section-matrix-panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 18px 20px;
     }
 
     .section-grid {
@@ -532,6 +638,17 @@
       accent-color: var(--part-accent, var(--accent));
       cursor: pointer;
     }
+
+    .audio-output-select {
+      background: #0f172a;
+      color: #fff;
+      border: 1px solid var(--border-color);
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      outline: none;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -575,10 +692,52 @@
         <div id="style-title" class="style-title">準備就緒</div>
         <div id="style-info" class="style-info">請載入 STY 檔案以開始播放</div>
       </div>
-      <div>
-        <select id="select-audio-output" class="audio-output-select">
-          <option value="webaudio">🔊 瀏覽器 Web Audio 軟體合成器</option>
-        </select>
+    </section>
+
+    <!-- 聲音發聲來源選擇 (Audio Output Routing) -->
+    <section class="output-panel">
+      <div class="panel-header">
+        <span>聲音發聲來源選擇 (Audio Output Routing)</span>
+        <span id="output-current-status" style="font-size: 0.78rem; color: #38bdf8; font-weight: normal;">🔊 當前輸出：電腦喇叭 / 耳機 (Web Audio)</span>
+      </div>
+      <div class="output-tabs-container">
+        <button id="btn-output-webaudio" class="output-card-btn active">
+          <div class="output-card-icon">🔊</div>
+          <div class="output-card-info">
+            <div class="output-card-title">電腦喇叭 / 耳機 (Web Audio)</div>
+            <div class="output-card-sub">瀏覽器內建多樂器軟體合成 (免接線、隨選隨聽)</div>
+          </div>
+          <div class="output-check">✔</div>
+        </button>
+
+        <button id="btn-output-midi" class="output-card-btn">
+          <div class="output-card-icon">🎹</div>
+          <div class="output-card-info">
+            <div class="output-card-title">Yamaha 實體電子琴 (PSR-SX920 Web MIDI)</div>
+            <div class="output-card-sub">直通電子琴旗艦 AWM2 音源，聆聽原廠最高音質伴奏！</div>
+          </div>
+          <div class="output-check">✔</div>
+        </button>
+      </div>
+
+      <!-- 琴端專屬設定抽屜 (切換至實體琴發聲時自動展開) -->
+      <div id="midi-drawer" class="midi-drawer" style="display: none;">
+        <div class="midi-drawer-controls">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <label for="select-midi-port" style="font-size: 0.82rem; color: #94a3b8; font-weight: bold;">MIDI 輸出埠：</label>
+            <select id="select-midi-port" class="audio-output-select" style="min-width: 220px;"></select>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button id="btn-refresh-midi" class="btn-drawer">🔄 重新整理設備</button>
+            <button id="btn-test-piano" class="btn-drawer" style="background: rgba(16, 185, 129, 0.2); border-color: #10b981; color: #34d399;">🎵 琴端發聲測試</button>
+          </div>
+        </div>
+        <div class="midi-hint-box">
+          <div style="font-weight: bold; color: #38bdf8; margin-bottom: 4px;">💡 PSR-SX920 琴端發聲設定重點：</div>
+          <div>1. 請在琴右側螢幕旁按下 <strong>[MENU]</strong> ➔ 點擊螢幕上的 <strong>[MIDI]</strong> 選單。</div>
+          <div>2. 在左側預設模板中選擇 <strong style="color: #fff;">「Song」</strong>（最推薦）或 <strong style="color: #fff;">「All Parts」</strong>，琴端即可立即解鎖 8 大伴奏聲部，直接聆聽旗艦音源！</div>
+          <div>3. 請確認琴上的總音量旋鈕與 <strong>[STYLE-ACMP]</strong> 伴奏音量滑桿已開啟。</div>
+        </div>
       </div>
     </section>
 

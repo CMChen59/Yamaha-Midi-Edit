@@ -41,9 +41,17 @@ export class PlayerApp {
   private labelPosition!: HTMLElement;
   private labelStyleTitle!: HTMLElement;
   private labelStyleInfo!: HTMLElement;
-  private selectAudioOutput!: HTMLSelectElement;
   private mixerContainer!: HTMLElement;
   private midiStatusPill!: HTMLElement;
+
+  // 聲音輸出控制
+  private btnOutputWebAudio!: HTMLButtonElement;
+  private btnOutputMidi!: HTMLButtonElement;
+  private midiDrawer!: HTMLElement;
+  private selectMidiPort!: HTMLSelectElement;
+  private btnRefreshMidi!: HTMLButtonElement;
+  private btnTestPiano!: HTMLButtonElement;
+  private outputCurrentStatus!: HTMLElement;
 
   constructor() {
     document.addEventListener('DOMContentLoaded', () => this.init());
@@ -72,9 +80,17 @@ export class PlayerApp {
     this.labelPosition = document.getElementById('label-position')!;
     this.labelStyleTitle = document.getElementById('style-title')!;
     this.labelStyleInfo = document.getElementById('style-info')!;
-    this.selectAudioOutput = document.getElementById('select-audio-output') as HTMLSelectElement;
     this.mixerContainer = document.getElementById('mixer-grid')!;
     this.midiStatusPill = document.getElementById('midi-status-pill')!;
+
+    // 聲音輸出控制元件
+    this.btnOutputWebAudio = document.getElementById('btn-output-webaudio') as HTMLButtonElement;
+    this.btnOutputMidi = document.getElementById('btn-output-midi') as HTMLButtonElement;
+    this.midiDrawer = document.getElementById('midi-drawer')!;
+    this.selectMidiPort = document.getElementById('select-midi-port') as HTMLSelectElement;
+    this.btnRefreshMidi = document.getElementById('btn-refresh-midi') as HTMLButtonElement;
+    this.btnTestPiano = document.getElementById('btn-test-piano') as HTMLButtonElement;
+    this.outputCurrentStatus = document.getElementById('output-current-status')!;
   }
 
   private setupEventListeners() {
@@ -157,11 +173,84 @@ export class PlayerApp {
       styPlaybackEngine.setBpm(this.baseBpm);
     });
 
-    // 音訊輸出選擇
-    this.selectAudioOutput.addEventListener('change', () => {
-      const mode = this.selectAudioOutput.value as 'webaudio' | 'midi';
-      styPlaybackEngine.setOutputMode(mode);
+    // 聲音輸出模式切換
+    this.btnOutputWebAudio.addEventListener('click', () => {
+      this.setOutputMode('webaudio');
     });
+
+    this.btnOutputMidi.addEventListener('click', async () => {
+      await this.setOutputMode('midi');
+    });
+
+    this.selectMidiPort.addEventListener('change', () => {
+      if (this.selectMidiPort.value) {
+        midiManager.selectOutput(this.selectMidiPort.value);
+        const name = midiManager.getSelectedOutput()?.name || 'MIDI';
+        this.midiStatusPill.textContent = `🟢 已連線: ${name}`;
+        this.outputCurrentStatus.textContent = `🎹 當前輸出：實體電子琴 (${name})`;
+      }
+    });
+
+    this.btnRefreshMidi.addEventListener('click', async () => {
+      await this.refreshMidiPorts();
+    });
+
+    this.btnTestPiano.addEventListener('click', () => {
+      midiManager.playTestChime(0);
+    });
+  }
+
+  private async setOutputMode(mode: 'webaudio' | 'midi') {
+    if (mode === 'webaudio') {
+      this.btnOutputWebAudio.classList.add('active');
+      this.btnOutputMidi.classList.remove('active');
+      this.midiDrawer.style.display = 'none';
+      this.outputCurrentStatus.textContent = '🔊 當前輸出：電腦喇叭 / 耳機 (Web Audio)';
+      styPlaybackEngine.setOutputMode('webaudio');
+    } else {
+      this.btnOutputMidi.classList.add('active');
+      this.btnOutputWebAudio.classList.remove('active');
+      this.midiDrawer.style.display = 'flex';
+      await this.refreshMidiPorts();
+      const selected = midiManager.getSelectedOutput();
+      const name = selected?.name || 'PSR-SX920';
+      this.outputCurrentStatus.textContent = `🎹 當前輸出：實體電子琴 (${name})`;
+      styPlaybackEngine.setOutputMode('midi');
+    }
+  }
+
+  private async refreshMidiPorts() {
+    if (!midiManager.isSupported()) {
+      this.midiStatusPill.textContent = '❌ 瀏覽器不支援 Web MIDI';
+      return;
+    }
+    await midiManager.requestAccess();
+    const ports = midiManager.getAvailableOutputs();
+    this.selectMidiPort.innerHTML = '';
+
+    if (ports.length === 0) {
+      this.midiStatusPill.textContent = '⚪ 未偵測到 MIDI 設備';
+      this.midiStatusPill.classList.remove('connected');
+      const opt = document.createElement('option');
+      opt.textContent = '無可用 MIDI 設備 (請接上 USB 線)';
+      opt.disabled = true;
+      opt.selected = true;
+      this.selectMidiPort.appendChild(opt);
+    } else {
+      const selected = midiManager.getSelectedOutput();
+      ports.forEach((p) => {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = p.name + (p.isRecommended ? ' (推薦 Yamaha 設備)' : '');
+        if (selected && selected.id === p.id) {
+          opt.selected = true;
+        }
+        this.selectMidiPort.appendChild(opt);
+      });
+      const name = selected?.name || ports[0].name;
+      this.midiStatusPill.textContent = `🟢 已連線: ${name}`;
+      this.midiStatusPill.classList.add('connected');
+    }
   }
 
   private adjustBpm(delta: number) {
@@ -402,11 +491,6 @@ export class PlayerApp {
         const name = selectedOut.name || 'MIDI Output';
         this.midiStatusPill.textContent = `🟢 已連線: ${name}`;
         this.midiStatusPill.classList.add('connected');
-        // 新增 MIDI 選項至下拉選單
-        const opt = document.createElement('option');
-        opt.value = 'midi';
-        opt.textContent = `🎹 PSR-SX920 Web MIDI (${name})`;
-        this.selectAudioOutput.appendChild(opt);
       } else {
         this.midiStatusPill.textContent = '⚪ 未偵測到 MIDI 輸出埠';
       }
