@@ -51,24 +51,9 @@ export class SingleTrackEditor {
     this.container = container;
     window.addEventListener('resize', () => {
       if (!this.isUserZoomed && this.events.length > 0) {
-        const next = this.calculateFitBarsWidth(4);
-        if (Math.abs(next - this.pixelsPerBar) > 4) {
-          this.pixelsPerBar = next;
-          this.render();
-        }
+        this.render();
       }
     });
-  }
-
-  /**
-   * 計算保證可視區域「至少完整容納指定小節數 (預設 4 小節)」之像素寬度
-   */
-  public calculateFitBarsWidth(barsToFit: number = 4): number {
-    const containerWidth = this.container.clientWidth || 1160;
-    const keyColWidth = 140;
-    const scrollbarSafety = 32;
-    const available = Math.max(640, containerWidth - keyColWidth - scrollbarSafety);
-    return Math.max(160, Math.floor(available / Math.max(1, barsToFit)));
   }
 
   /**
@@ -95,10 +80,6 @@ export class SingleTrackEditor {
     this.timeSignature = timeSignature || { numerator: 4, denominator: 4 };
     this.voiceInfo = voiceInfo;
     this.selectedEventIndex = null;
-
-    if (!this.isUserZoomed) {
-      this.pixelsPerBar = this.calculateFitBarsWidth(4);
-    }
 
     this.calculateRows();
     this.render();
@@ -176,9 +157,6 @@ export class SingleTrackEditor {
     this.container.innerHTML = '';
     this.container.style.setProperty('--part-accent', this.partAccentColor);
 
-    const totalWidthPx = this.totalBars * this.pixelsPerBar;
-    const beatsPerBar = this.timeSignature.numerator || 4;
-
     // 1. 建立頂部工具列 (含樂器、拍號、力度拉桿與數字輸入框)
     const toolbar = document.createElement('div');
     toolbar.className = 'editor-toolbar';
@@ -210,10 +188,23 @@ export class SingleTrackEditor {
 
     this.container.appendChild(toolbar);
 
-    // 2. 建立主編輯捲動工作區
+    // 2. 建立主編輯捲動工作區並先掛載至 DOM，以便取得真實精確的 viewport clientWidth
     const scrollWrap = document.createElement('div');
     scrollWrap.className = 'editor-viewport-wrap';
+    this.container.appendChild(scrollWrap);
     this.gridScrollEl = scrollWrap;
+
+    // 🔥 核心修復：在 DOM 掛載後直接測量 scrollWrap 實際 clientWidth (已精確扣除右側垂直捲軸)
+    // 預留 keyCol (135px) + 右側邊框與緩衝 (12px)
+    const keyColWidth = 135;
+    const safetyMargin = 12;
+    if (!this.isUserZoomed && scrollWrap.clientWidth > 0) {
+      const availableCanvasWidth = Math.max(480, scrollWrap.clientWidth - keyColWidth - safetyMargin);
+      this.pixelsPerBar = Math.floor(availableCanvasWidth / 4);
+    }
+
+    const totalWidthPx = this.totalBars * this.pixelsPerBar;
+    const beatsPerBar = this.timeSignature.numerator || 4;
 
     // 左側固定琴鍵 / 打擊樂名稱欄
     const keyCol = document.createElement('div');
@@ -405,14 +396,16 @@ export class SingleTrackEditor {
     const btnZoomOut = this.container.querySelector('#ed-btn-zoom-out');
 
     btnFit4?.addEventListener('click', () => {
-      this.pixelsPerBar = this.calculateFitBarsWidth(4);
       this.isUserZoomed = false;
       this.render();
     });
 
     btnFitAll?.addEventListener('click', () => {
-      this.pixelsPerBar = this.calculateFitBarsWidth(this.totalBars);
       this.isUserZoomed = true;
+      if (this.gridScrollEl && this.gridScrollEl.clientWidth > 0) {
+        const availableCanvasWidth = Math.max(480, this.gridScrollEl.clientWidth - 135 - 12);
+        this.pixelsPerBar = Math.max(80, Math.floor(availableCanvasWidth / Math.max(1, this.totalBars)));
+      }
       this.render();
     });
 
