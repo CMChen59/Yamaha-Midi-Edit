@@ -3,6 +3,7 @@ import { styPlaybackEngine } from './sty-playback-engine';
 import { midiManager } from '../core/audio/midi-manager';
 import type { YamahaFileParsed } from '../core/models/types';
 import { getSharedAudioContext } from '../creator/shared-audio-context';
+import { SingleTrackEditor } from './single-track-editor';
 
 // Yamaha 標準 8 伴奏聲部定義
 interface PartDef {
@@ -54,6 +55,9 @@ export class PlayerApp {
   private btnBannerSolo!: HTMLButtonElement;
   private btnBannerMute!: HTMLButtonElement;
 
+  // 🎹 單軌專注編輯工作台 (Phase 2 & 3: 展開音符、拍子、樂器、力度拉桿與數字輸入)
+  private trackEditor!: SingleTrackEditor;
+
   // 聲音輸出控制
   private btnOutputWebAudio!: HTMLButtonElement;
   private btnOutputMidi!: HTMLButtonElement;
@@ -72,6 +76,10 @@ export class PlayerApp {
     this.setupEventListeners();
     this.setupEngineCallbacks();
     this.renderMixer();
+
+    const editorEl = document.getElementById('single-track-editor')!;
+    this.trackEditor = new SingleTrackEditor(editorEl);
+
     this.setFocusedChannel(8); // 預設聚焦 CH 9 Rhythm 1
     this.initMidi();
 
@@ -187,6 +195,7 @@ export class PlayerApp {
     this.btnStop.addEventListener('click', () => {
       styPlaybackEngine.stop();
       this.updatePlayStateUI();
+      this.trackEditor?.updatePlayhead(0);
       const totalBars = styPlaybackEngine.getTotalBars();
       this.labelPosition.textContent = `小節 01 / ${totalBars.toString().padStart(2, '0')} | 拍 1.0 | Tick 000000`;
     });
@@ -326,6 +335,7 @@ export class PlayerApp {
       const totalStr = totalBars.toString().padStart(2, '0');
       const tickStr = tick.toString().padStart(6, '0');
       this.labelPosition.textContent = `小節 ${barStr} / ${totalStr} | 拍 ${beat.toFixed(1)} | Tick ${tickStr}`;
+      this.trackEditor?.updatePlayhead(tick);
     });
 
     // 發聲活動 LED
@@ -471,6 +481,7 @@ export class PlayerApp {
 
     // 更新當前聚焦聲部的音符統計與資訊
     this.updateFocusedBanner();
+    this.refreshTrackEditor();
   }
 
   public setFocusedChannel(channel: number) {
@@ -492,6 +503,30 @@ export class PlayerApp {
 
     this.updateFocusedBanner();
     this.updatePlayStateUI();
+    this.refreshTrackEditor();
+  }
+
+  private refreshTrackEditor() {
+    if (!this.trackEditor) return;
+    const part = YAMAHA_PARTS.find(p => p.channel === this.focusedChannel) || YAMAHA_PARTS[0];
+    const events = styPlaybackEngine.getChannelEvents(this.focusedChannel);
+    const totalTicks = styPlaybackEngine.getTotalSectionTicks();
+    const totalBars = styPlaybackEngine.getTotalBars();
+    const division = this.currentParsed?.division || 480;
+    const timeSig = this.currentParsed?.timeSignature || { numerator: 4, denominator: 4 };
+    const voiceInfo = styPlaybackEngine.getPartVoices().get(this.focusedChannel) || null;
+
+    this.trackEditor.loadTrack(
+      this.focusedChannel,
+      part.label,
+      part.color,
+      events,
+      totalTicks,
+      totalBars,
+      division,
+      timeSig,
+      voiceInfo
+    );
   }
 
   public updateFocusedBanner() {

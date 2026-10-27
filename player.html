@@ -830,6 +830,365 @@
       outline: none;
       cursor: pointer;
     }
+
+    /* 🎹 單軌專注編輯工作台 (Phase 2 & 3: 展開音符、拍子、樂器、力度拉桿與數字輸入) */
+    .single-track-editor-panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: all 0.25s ease;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+    }
+
+    .editor-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .editor-toolbar-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .editor-track-badge {
+      font-size: 0.8rem;
+      font-weight: 800;
+      color: #0f172a;
+      padding: 4px 10px;
+      border-radius: 6px;
+      letter-spacing: 0.5px;
+    }
+
+    .editor-voice-tag {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--accent);
+      background: rgba(56, 189, 248, 0.1);
+      padding: 4px 8px;
+      border-radius: 4px;
+      border: 1px solid rgba(56, 189, 248, 0.2);
+    }
+
+    .editor-meta-pill {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.05);
+      padding: 4px 8px;
+      border-radius: 4px;
+    }
+
+    .editor-toolbar-right {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    /* 🎛️ 力度 (Velocity) 拉桿 + 數字框雙向連動 */
+    .editor-vel-box {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255, 255, 255, 0.04);
+      padding: 4px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--border-color);
+    }
+
+    .editor-vel-label {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #cbd5e1;
+    }
+
+    .editor-vel-slider {
+      width: 100px;
+      cursor: pointer;
+      accent-color: var(--part-accent, var(--accent));
+    }
+
+    .editor-vel-input {
+      width: 48px;
+      background: #090d16;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      color: #38bdf8;
+      font-family: monospace;
+      font-weight: 700;
+      font-size: 0.85rem;
+      padding: 2px 4px;
+      text-align: center;
+    }
+
+    .editor-vel-status {
+      font-size: 0.72rem;
+      color: var(--accent-green);
+      font-weight: 600;
+      min-width: 110px;
+    }
+
+    .editor-zoom-btns {
+      display: flex;
+      gap: 4px;
+    }
+
+    .editor-mini-btn {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .editor-mini-btn:hover {
+      background: rgba(56, 189, 248, 0.2);
+      border-color: var(--accent);
+    }
+
+    /* 捲動視窗 */
+    .editor-viewport-wrap {
+      display: flex;
+      overflow-x: auto;
+      overflow-y: auto;
+      max-height: 440px;
+      background: #060910;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      position: relative;
+    }
+
+    /* 左側琴鍵列 */
+    .editor-key-column {
+      position: sticky;
+      left: 0;
+      z-index: 10;
+      background: #090d16;
+      border-right: 1px solid var(--border-color);
+      box-shadow: 2px 0 8px rgba(0, 0, 0, 0.5);
+      flex-shrink: 0;
+      width: 140px;
+    }
+
+    .editor-corner-cell {
+      height: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border-color);
+      background: #0d1322;
+    }
+
+    .editor-key-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 8px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      transition: background 0.1s;
+      user-select: none;
+    }
+
+    .editor-key-row.is-white-key {
+      background: #111827;
+      color: #e2e8f0;
+    }
+
+    .editor-key-row.is-white-key:hover {
+      background: #1e293b;
+      color: #fff;
+    }
+
+    .editor-key-row.is-black-key {
+      background: #090d16;
+      color: #94a3b8;
+    }
+
+    .editor-key-row.is-black-key:hover {
+      background: #172033;
+      color: #38bdf8;
+    }
+
+    .key-name.is-root {
+      color: #38bdf8;
+      font-weight: 800;
+    }
+
+    .key-badge {
+      font-size: 0.55rem;
+      background: rgba(56, 189, 248, 0.2);
+      color: #38bdf8;
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-weight: 700;
+    }
+
+    .key-icon {
+      font-size: 0.85rem;
+      margin-right: 4px;
+    }
+
+    .key-sub {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      font-family: monospace;
+    }
+
+    /* 右側時間標尺與音符層 */
+    .editor-canvas-wrap {
+      position: relative;
+      flex-shrink: 0;
+    }
+
+    .editor-time-ruler {
+      height: 38px;
+      background: #0d1322;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      position: sticky;
+      top: 0;
+      z-index: 8;
+    }
+
+    .ruler-bar-cell {
+      border-right: 1px solid rgba(255, 255, 255, 0.2);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 4px 6px 2px 6px;
+      box-sizing: border-box;
+    }
+
+    .ruler-bar-title {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #38bdf8;
+    }
+
+    .ruler-beats-row {
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .ruler-beat-marker {
+      font-size: 0.62rem;
+      font-family: monospace;
+      color: var(--text-muted);
+    }
+
+    .editor-grid-content {
+      position: relative;
+      background: #060910;
+    }
+
+    .grid-row-bg {
+      position: absolute;
+      left: 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+      box-sizing: border-box;
+      pointer-events: none;
+    }
+
+    .grid-row-bg.row-black {
+      background: rgba(0, 0, 0, 0.25);
+    }
+
+    .grid-v-line {
+      position: absolute;
+      top: 0;
+      width: 1px;
+      pointer-events: none;
+      box-sizing: border-box;
+    }
+
+    .grid-v-line.bar-line {
+      background: rgba(255, 255, 255, 0.15);
+      z-index: 1;
+    }
+
+    .grid-v-line.beat-line {
+      background: rgba(255, 255, 255, 0.05);
+      z-index: 1;
+    }
+
+    /* 音符方塊 (Note Block) */
+    .editor-note-block {
+      position: absolute;
+      border-radius: 4px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      padding: 0 4px;
+      overflow: hidden;
+      white-space: nowrap;
+      z-index: 2;
+      transition: transform 0.1s, box-shadow 0.15s;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      box-sizing: border-box;
+    }
+
+    .editor-note-block:hover {
+      transform: scaleY(1.08);
+      border-color: #fff;
+      z-index: 4;
+    }
+
+    .editor-note-block.is-selected {
+      border: 2px solid #ffffff !important;
+      box-shadow: 0 0 14px #ffffff, 0 0 8px var(--part-accent) !important;
+      z-index: 6 !important;
+      opacity: 1 !important;
+    }
+
+    .note-block-text {
+      font-size: 0.65rem;
+      font-weight: 700;
+      color: #fff;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+      pointer-events: none;
+      user-select: none;
+    }
+
+    /* 播放游標線 (GPU 加速) */
+    .editor-playhead {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 2px;
+      background: #38bdf8;
+      box-shadow: 0 0 10px #38bdf8;
+      z-index: 9;
+      pointer-events: none;
+      will-change: transform;
+    }
+
+    .playhead-cap {
+      width: 0;
+      height: 0;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-top: 8px solid #38bdf8;
+      margin-left: -5px;
+    }
   </style>
 </head>
 <body>
@@ -983,6 +1342,11 @@
         <button id="btn-banner-solo" class="btn-banner-action">🎧 獨奏此軌 (Solo)</button>
         <button id="btn-banner-mute" class="btn-banner-action">🔇 靜音此軌 (Mute)</button>
       </div>
+    </section>
+
+    <!-- 🎹 單軌專注編輯工作台 (Phase 2 & 3: 展開音符、拍子、樂器、力度拉桿與數字輸入) -->
+    <section id="single-track-editor" class="single-track-editor-panel">
+      <!-- 由 SingleTrackEditor 動態渲染 -->
     </section>
 
   </main>

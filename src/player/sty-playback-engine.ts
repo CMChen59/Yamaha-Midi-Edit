@@ -476,12 +476,41 @@ export class StyPlaybackEngine {
     return this.totalBars;
   }
 
+  public getTotalSectionTicks(): number {
+    return this.totalSectionTicks;
+  }
+
   public getSectionEvents(): PlaybackNoteEvent[] {
     return this.sectionEvents;
   }
 
   public getChannelEvents(channel: number): PlaybackNoteEvent[] {
     return this.sectionEvents.filter(e => e.channel === channel);
+  }
+
+  public getChordSynth(channel: number): ChordSynth | undefined {
+    return this.chordSynths.get(channel);
+  }
+
+  /**
+   * 即時單音試聽 (支援 Web Audio 與 PSR-SX920 Web MIDI)
+   */
+  public previewNote(channel: number, note: number, velocity: number = 100, durMs: number = 250) {
+    if (this.outputMode === 'midi') {
+      if (midiManager.getSelectedOutput()) {
+        midiManager.sendNoteOn(channel, note, velocity);
+        setTimeout(() => midiManager.sendNoteOff(channel, note), durMs);
+      }
+    } else {
+      if (channel === 8 || channel === 9) {
+        drumSynth.playNote(note, velocity);
+      } else if (channel === 10) {
+        bassSynth.playNote(note, velocity, durMs);
+      } else {
+        const synth = this.chordSynths.get(channel);
+        if (synth) synth.playNote(note, velocity, durMs);
+      }
+    }
   }
 
   /**
