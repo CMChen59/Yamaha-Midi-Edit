@@ -479,7 +479,7 @@ export class PlayerApp {
       b.classList.toggle('active', sec?.toLowerCase() === name.toLowerCase());
     });
 
-    // 更新各聲部的真實解析音色名稱
+    // 更新各聲部的真實解析音色名稱與原廠預設混音音量
     const voices = styPlaybackEngine.getPartVoices();
     YAMAHA_PARTS.forEach((part) => {
       const voiceEl = document.getElementById(`part-voice-${part.channel}`);
@@ -488,6 +488,13 @@ export class PlayerApp {
         voiceEl.textContent = info.voiceName;
         voiceEl.title = `${info.voiceName} (Category: ${info.category}, MSB: ${info.msb}, LSB: ${info.lsb}, PC: ${info.pc + 1})`;
       }
+
+      // 同步更新混音台音量滑桿與數值徽章
+      const vol = styPlaybackEngine.getChannelVolume(part.channel);
+      const slider = document.getElementById(`vol-${part.channel}`) as HTMLInputElement;
+      const txt = document.getElementById(`vol-txt-${part.channel}`);
+      if (slider) slider.value = vol.toString();
+      if (txt) txt.textContent = vol.toString();
     });
 
     const totalBars = styPlaybackEngine.getTotalBars();

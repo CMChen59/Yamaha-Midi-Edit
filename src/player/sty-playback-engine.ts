@@ -23,6 +23,25 @@ export interface PartVoiceInfo {
   pc: number;
   voiceName: string;
   category: string;
+  defaultVolume?: number;
+  defaultPan?: number;
+  defaultReverb?: number;
+  defaultChorus?: number;
+}
+
+export interface PlaybackCCEvent {
+  relTick: number;          // 相對於段落起始的 Tick
+  channel: number;          // 目的 MIDI Channel (標準 8~15)
+  sourceChannel: number;    // 原始 MIDI 檔案中的來源 Channel (0~15)
+  controller: number;       // CC 編號 (例如 11 Expression, 1 Modulation)
+  value: number;            // 0~127
+}
+
+export interface PlaybackPitchBendEvent {
+  relTick: number;
+  channel: number;
+  sourceChannel: number;
+  value: number;            // 0~16383
 }
 
 export interface PlaybackState {
@@ -44,6 +63,8 @@ export class StyPlaybackEngine {
   private parsed: YamahaFileParsed | null = null;
   private currentSection: YamahaSection | null = null;
   private sectionEvents: PlaybackNoteEvent[] = [];
+  private sectionCCEvents: PlaybackCCEvent[] = [];
+  private sectionPitchBendEvents: PlaybackPitchBendEvent[] = [];
   private totalSectionTicks: number = 0;
   private totalBars: number = 1;
 
@@ -88,6 +109,8 @@ export class StyPlaybackEngine {
     this.bpm = parsed.bpm || 120;
     this.currentSection = null;
     this.sectionEvents = [];
+    this.sectionCCEvents = [];
+    this.sectionPitchBendEvents = [];
     this.partVoices.clear();
   }
 
@@ -138,11 +161,15 @@ export class StyPlaybackEngine {
     if (mode === 'webaudio' && this.isPlaying) {
       midiManager.panicAllChannels();
     } else if (mode === 'midi' && this.isPlaying) {
-      // 立即初始化琴端音色
+      // 立即初始化琴端音色與控制器
       for (const [ch, voice] of this.partVoices.entries()) {
         midiManager.sendVoiceChange(ch, { msb: voice.msb, lsb: voice.lsb, pc: voice.pc });
         const vol = this.getChannelVolume(ch);
         midiManager.sendControlChange(ch, 7, vol);
+        if (voice.defaultPan !== undefined) {
+          midiManager.sendControlChange(ch, 10, voice.defaultPan);
+        }
+        midiManager.sendControlChange(ch, 11, 127);
       }
     }
   }
@@ -258,16 +285,18 @@ export class StyPlaybackEngine {
     }
     flatEvents.sort((a, b) => a.absTick - b.absTick);
 
-    // 收集通道音色 (MSB, LSB, PC)
-    const rawVoices: Record<number, { msb: number; lsb: number; pc: number }> = {};
+    // 收集通道音色 (MSB, LSB, PC) 與軌道全域參數
+    const rawTrackParams: Record<number, { msb: number; lsb: number; pc: number; volume?: number; pan?: number; reverb?: number; chorus?: number }> = {};
     for (const p of this.parsed.parts) {
-      if (p.programChange !== undefined) {
-        rawVoices[p.channel] = {
-          msb: p.bankMsb ?? 0,
-          lsb: p.bankLsb ?? 0,
-          pc: p.programChange,
-        };
-      }
+      rawTrackParams[p.channel] = {
+        msb: p.bankMsb ?? 0,
+        lsb: p.bankLsb ?? 0,
+        pc: p.programChange ?? 0,
+        volume: p.volume,
+        pan: p.pan,
+        reverb: p.reverb,
+        chorus: p.chorus,
+      };
     }
 
     for (const item of flatEvents) {
@@ -275,15 +304,16 @@ export class StyPlaybackEngine {
         const ev = item.ev;
         const ch = ev.channel;
         if (ch !== undefined) {
+          if (!rawTrackParams[ch]) rawTrackParams[ch] = { msb: 0, lsb: 0, pc: 0 };
           if (ev.type === 'controlChange' && ev.controller !== undefined && ev.value !== undefined) {
-            if (ev.controller === 0 || ev.controller === 32) {
-              if (!rawVoices[ch]) rawVoices[ch] = { msb: 0, lsb: 0, pc: 0 };
-              if (ev.controller === 0) rawVoices[ch].msb = ev.value;
-              if (ev.controller === 32) rawVoices[ch].lsb = ev.value;
-            }
+            if (ev.controller === 0) rawTrackParams[ch].msb = ev.value;
+            if (ev.controller === 32) rawTrackParams[ch].lsb = ev.value;
+            if (ev.controller === 7) rawTrackParams[ch].volume = ev.value;
+            if (ev.controller === 10) rawTrackParams[ch].pan = ev.value;
+            if (ev.controller === 91) rawTrackParams[ch].reverb = ev.value;
+            if (ev.controller === 93) rawTrackParams[ch].chorus = ev.value;
           } else if (ev.type === 'programChange' && ev.program !== undefined) {
-            if (!rawVoices[ch]) rawVoices[ch] = { msb: 0, lsb: 0, pc: ev.program };
-            else rawVoices[ch].pc = ev.program;
+            rawTrackParams[ch].pc = ev.program;
           }
         }
       }
@@ -311,67 +341,90 @@ export class StyPlaybackEngine {
 
     // 4. 偵測段落內各目標聲部 (8~15) 是否同時具有原生 SFF2 軌道 (8~15)
     // 進行 Per-Part 精準仲裁：若目標聲部已經有原生 SFF2，則排除 SFF1 (0~7) 鏡像音軌，避免半音重複！
-    const notesInSec = flatEvents.filter(
-      item => item.absTick >= startTick && item.absTick < endTick &&
-      (item.ev.type === 'noteOn' || item.ev.type === 'noteOff')
+    const secEvents = flatEvents.filter(
+      item => item.absTick >= startTick && item.absTick < endTick
     );
 
     const destPartsWithSff2 = new Set<number>();
-    for (const item of notesInSec) {
-      const srcCh = item.ev.channel ?? 0;
-      if (srcCh >= 8 && srcCh <= 15) {
-        const dest = resolveDestChannel(srcCh);
-        destPartsWithSff2.add(dest);
+    for (const item of secEvents) {
+      if (item.ev.type === 'noteOn' || item.ev.type === 'noteOff') {
+        const srcCh = item.ev.channel ?? 0;
+        if (srcCh >= 8 && srcCh <= 15) {
+          const dest = resolveDestChannel(srcCh);
+          destPartsWithSff2.add(dest);
+        }
       }
     }
 
-    // 5. 組合 NoteOn 與其長度
+    // 5. 組合 NoteOn 與其長度，以及收集段落內的 CC 控制器與滑音事件
     const rawNoteEvents: PlaybackNoteEvent[] = [];
+    const rawCCEvents: PlaybackCCEvent[] = [];
+    const rawPitchBendEvents: PlaybackPitchBendEvent[] = [];
     const noteOnMap: Map<string, { absTick: number; ev: MidiEvent; destCh: number; srcCh: number }> = new Map();
 
-    for (const item of notesInSec) {
+    for (const item of secEvents) {
       const { absTick, ev } = item;
       const srcCh = ev.channel ?? 0;
       const destCh = resolveDestChannel(srcCh);
 
-      // 若該目標聲部 (destCh) 已經有原生的 SFF2 (8~15) 音符，且當前音符來自 SFF1 (0~7) 鏡像，則跳過以防雙重發聲
+      // 若該目標聲部 (destCh) 已經有原生的 SFF2 (8~15) 音符，且當前事件來自 SFF1 (0~7) 鏡像，則跳過以防雙重發聲
       if (srcCh < 8 && destPartsWithSff2.has(destCh)) {
         continue;
       }
 
-      const note = ev.noteNumber ?? 0;
-      const key = `${destCh}_${note}`;
+      if (ev.type === 'noteOn' || ev.type === 'noteOff') {
+        const note = ev.noteNumber ?? 0;
+        const key = `${destCh}_${note}`;
 
-      if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
-        if (noteOnMap.has(key)) {
-          const prev = noteOnMap.get(key)!;
-          const durTicks = Math.max(24, absTick - prev.absTick);
-          rawNoteEvents.push({
-            relTick: prev.absTick - startTick,
-            channel: prev.destCh,
-            sourceChannel: prev.srcCh,
-            noteNumber: note,
-            velocity: prev.ev.velocity ?? 100,
-            durationTicks: durTicks,
-            durationMs: (durTicks / division) * (60 / this.bpm) * 1000,
+        if (ev.type === 'noteOn' && (ev.velocity ?? 0) > 0) {
+          if (noteOnMap.has(key)) {
+            const prev = noteOnMap.get(key)!;
+            const durTicks = Math.max(24, absTick - prev.absTick);
+            rawNoteEvents.push({
+              relTick: prev.absTick - startTick,
+              channel: prev.destCh,
+              sourceChannel: prev.srcCh,
+              noteNumber: note,
+              velocity: prev.ev.velocity ?? 100,
+              durationTicks: durTicks,
+              durationMs: (durTicks / division) * (60 / this.bpm) * 1000,
+            });
+          }
+          noteOnMap.set(key, { absTick, ev, destCh, srcCh });
+        } else if (ev.type === 'noteOff' || (ev.type === 'noteOn' && (ev.velocity ?? 0) === 0)) {
+          if (noteOnMap.has(key)) {
+            const prev = noteOnMap.get(key)!;
+            const durTicks = Math.max(24, absTick - prev.absTick);
+            rawNoteEvents.push({
+              relTick: prev.absTick - startTick,
+              channel: prev.destCh,
+              sourceChannel: prev.srcCh,
+              noteNumber: note,
+              velocity: prev.ev.velocity ?? 100,
+              durationTicks: durTicks,
+              durationMs: (durTicks / division) * (60 / this.bpm) * 1000,
+            });
+            noteOnMap.delete(key);
+          }
+        }
+      } else if (ev.type === 'controlChange' && ev.controller !== undefined && ev.value !== undefined) {
+        // 排除 Bank Select (0, 32)，其餘 CC（如 CC 11 Expression, CC 1 Modulation, CC 74 等）均保留排程
+        if (ev.controller !== 0 && ev.controller !== 32) {
+          rawCCEvents.push({
+            relTick: absTick - startTick,
+            channel: destCh,
+            sourceChannel: srcCh,
+            controller: ev.controller,
+            value: ev.value,
           });
         }
-        noteOnMap.set(key, { absTick, ev, destCh, srcCh });
-      } else if (ev.type === 'noteOff' || (ev.type === 'noteOn' && (ev.velocity ?? 0) === 0)) {
-        if (noteOnMap.has(key)) {
-          const prev = noteOnMap.get(key)!;
-          const durTicks = Math.max(24, absTick - prev.absTick);
-          rawNoteEvents.push({
-            relTick: prev.absTick - startTick,
-            channel: prev.destCh,
-            sourceChannel: prev.srcCh,
-            noteNumber: note,
-            velocity: prev.ev.velocity ?? 100,
-            durationTicks: durTicks,
-            durationMs: (durTicks / division) * (60 / this.bpm) * 1000,
-          });
-          noteOnMap.delete(key);
-        }
+      } else if (ev.type === 'pitchBend' && ev.value !== undefined) {
+        rawPitchBendEvents.push({
+          relTick: absTick - startTick,
+          channel: destCh,
+          sourceChannel: srcCh,
+          value: ev.value,
+        });
       }
     }
 
@@ -391,39 +444,77 @@ export class StyPlaybackEngine {
     });
 
     rawNoteEvents.sort((a, b) => a.relTick - b.relTick);
+    rawCCEvents.sort((a, b) => a.relTick - b.relTick);
+    rawPitchBendEvents.sort((a, b) => a.relTick - b.relTick);
+
     this.sectionEvents = rawNoteEvents;
+    this.sectionCCEvents = rawCCEvents;
+    this.sectionPitchBendEvents = rawPitchBendEvents;
 
     // 6. 為每個目標聲部 (8~15) 建立音色資訊並設定各 ChannelSynth 音色類別
-    this.setupPartVoices(rawVoices, casmSecMap);
+    this.setupPartVoices(rawTrackParams, casmSecMap);
 
     if (wasPlaying) this.play();
     return true;
   }
 
-  private setupPartVoices(rawVoices: Record<number, { msb: number; lsb: number; pc: number }>, casmSecMap?: Record<number, number>) {
+  private setupPartVoices(
+    rawParams: Record<number, { msb: number; lsb: number; pc: number; volume?: number; pan?: number; reverb?: number; chorus?: number }>,
+    casmSecMap?: Record<number, number>
+  ) {
     this.partVoices.clear();
 
-    // 映射各聲部音色
+    // 1. 建立反向映射表：destCh -> 候選 srcCh 清單
+    const destToSrcList: Record<number, number[]> = {};
+    if (casmSecMap) {
+      for (const [srcStr, dst] of Object.entries(casmSecMap)) {
+        const src = parseInt(srcStr, 10);
+        if (!destToSrcList[dst]) destToSrcList[dst] = [];
+        destToSrcList[dst].push(src);
+      }
+    }
+
+    // 2. 統計當前段落中，哪些來源軌道 (srcCh) 實際上有演奏音符
+    const srcChWithNotes = new Set<number>();
+    for (const ne of this.sectionEvents) {
+      srcChWithNotes.add(ne.sourceChannel);
+    }
+
+    // 3. 映射各目標聲部 (8~15)
     for (let destCh = 8; destCh <= 15; destCh++) {
-      // 找出指向此 destCh 的 sourceChannel
-      let matchedSrc = destCh;
-      if (!rawVoices[destCh]) {
-        // 從 CASM 或預設 SFF1 尋找
-        for (const [srcStr, dst] of Object.entries(casmSecMap || {})) {
-          if (dst === destCh && rawVoices[parseInt(srcStr, 10)]) {
-            matchedSrc = parseInt(srcStr, 10);
-            break;
-          }
-        }
-        if (!rawVoices[matchedSrc]) {
-          // 嘗試 SFF1 預設映射反推
-          const sff1FallbackMap: Record<number, number> = { 10: 1, 11: 2, 12: 3, 13: 4, 14: 5, 15: 6, 8: 0, 9: 9 };
-          const fb = sff1FallbackMap[destCh];
-          if (fb !== undefined && rawVoices[fb]) matchedSrc = fb;
+      let matchedSrc: number | undefined;
+
+      const casmCandidates = destToSrcList[destCh] || [];
+      // 優先權 1：CASM 映射中，當前段落實際有音符發聲的來源軌道
+      const activeCasmSrc = casmCandidates.find(src => srcChWithNotes.has(src) && rawParams[src]);
+      if (activeCasmSrc !== undefined) {
+        matchedSrc = activeCasmSrc;
+      }
+
+      // 優先權 2：CASM 映射中任一有定義音色的來源軌道
+      if (matchedSrc === undefined) {
+        const anyCasmSrc = casmCandidates.find(src => rawParams[src]);
+        if (anyCasmSrc !== undefined) {
+          matchedSrc = anyCasmSrc;
         }
       }
 
-      const v = rawVoices[matchedSrc] || rawVoices[destCh] || { msb: 0, lsb: 0, pc: 0 };
+      // 優先權 3：原生 SFF2 直通軌 (當 destCh 本身有音符或定義)
+      if (matchedSrc === undefined && rawParams[destCh]) {
+        matchedSrc = destCh;
+      }
+
+      // 優先權 4：SFF1 預設映射反推
+      if (matchedSrc === undefined) {
+        const sff1FallbackMap: Record<number, number> = { 10: 1, 11: 2, 12: 3, 13: 4, 14: 5, 15: 6, 8: 0, 9: 9 };
+        const fb = sff1FallbackMap[destCh];
+        if (fb !== undefined && rawParams[fb]) {
+          matchedSrc = fb;
+        }
+      }
+
+      const finalSrc = matchedSrc !== undefined ? matchedSrc : destCh;
+      const v = rawParams[finalSrc] || rawParams[destCh] || { msb: 0, lsb: 0, pc: 0 };
       const found = findYamahaVoice(v.msb, v.lsb, v.pc);
       const name = found ? (found.chineseName ? `${found.name} (${found.chineseName})` : found.name) : `Voice (${v.msb}-${v.lsb}-${v.pc + 1})`;
       const category = found?.category || this.inferCategoryByChannel(destCh);
@@ -435,8 +526,17 @@ export class StyPlaybackEngine {
         pc: v.pc,
         voiceName: name,
         category,
+        defaultVolume: v.volume,
+        defaultPan: v.pan,
+        defaultReverb: v.reverb,
+        defaultChorus: v.chorus,
       };
       this.partVoices.set(destCh, info);
+
+      // 自動將原廠預設音量套用至混音台 (若無則預設 100)
+      if (v.volume !== undefined) {
+        this.channelVolumes.set(destCh, v.volume);
+      }
 
       // 設定該聲部專屬合成器之音色類別
       const synth = this.chordSynths.get(destCh);
@@ -535,13 +635,19 @@ export class StyPlaybackEngine {
 
     this.isPlaying = true;
 
-    // 若為 MIDI 模式，初始化琴端 8 大聲部音色與音量
+    // 若為 MIDI 模式，初始化琴端 8 大聲部音色、音量與預設控制器狀態
     if (this.outputMode === 'midi') {
       midiManager.panicAllChannels();
       for (const [ch, voice] of this.partVoices.entries()) {
         midiManager.sendVoiceChange(ch, { msb: voice.msb, lsb: voice.lsb, pc: voice.pc });
         const isMuted = this.isChannelMuted(ch);
         midiManager.sendControlChange(ch, 7, isMuted ? 0 : this.getChannelVolume(ch));
+        if (voice.defaultPan !== undefined) {
+          midiManager.sendControlChange(ch, 10, voice.defaultPan);
+        }
+        midiManager.sendControlChange(ch, 11, 127);
+        midiManager.sendControlChange(ch, 1, 0);
+        midiManager.sendPitchBend(ch, 8192);
       }
     }
 
@@ -572,6 +678,15 @@ export class StyPlaybackEngine {
           const loopCount = Math.floor(currentAbsoluteTick / this.totalSectionTicks);
           this.playbackStartAudioTime += (this.totalSectionTicks * loopCount) / ticksPerSec;
           this.lastScheduledTick = -1;
+          // 循環重置 CC 11 表情與滑音，避免淡出尾音殘留
+          if (this.outputMode === 'midi') {
+            for (let ch = 8; ch <= 15; ch++) {
+              if (!this.isChannelMuted(ch)) {
+                midiManager.sendControlChange(ch, 11, 127);
+                midiManager.sendPitchBend(ch, 8192);
+              }
+            }
+          }
         } else {
           this.stop();
           return;
@@ -607,6 +722,34 @@ export class StyPlaybackEngine {
             this.playWebAudioNote(event.channel, event.noteNumber, scaledVel, durMs, eventAudioTime);
           } else {
             this.playMidiNote(event.channel, event.noteNumber, scaledVel, durMs, eventAudioTime, nowAudioTime);
+          }
+        }
+      }
+
+      // 排程 [lastScheduledTick + 1, windowEndTick] 範圍內的 CC 控制器事件 (如 CC 11 Expression, CC 1 Modulation)
+      for (const ccEv of this.sectionCCEvents) {
+        const evTick = ccEv.relTick;
+        if (evTick > this.lastScheduledTick && evTick <= windowEndTick) {
+          if (this.isChannelMuted(ccEv.channel)) continue;
+          if (this.outputMode === 'midi') {
+            const eventAudioTime = this.playbackStartAudioTime + (evTick / ticksPerSec);
+            const deltaMs = Math.max(0, (eventAudioTime - nowAudioTime) * 1000);
+            const midiTimestamp = performance.now() + deltaMs;
+            midiManager.sendControlChange(ccEv.channel, ccEv.controller, ccEv.value, midiTimestamp);
+          }
+        }
+      }
+
+      // 排程 [lastScheduledTick + 1, windowEndTick] 範圍內的滑音 (Pitch Bend) 事件
+      for (const pbEv of this.sectionPitchBendEvents) {
+        const evTick = pbEv.relTick;
+        if (evTick > this.lastScheduledTick && evTick <= windowEndTick) {
+          if (this.isChannelMuted(pbEv.channel)) continue;
+          if (this.outputMode === 'midi') {
+            const eventAudioTime = this.playbackStartAudioTime + (evTick / ticksPerSec);
+            const deltaMs = Math.max(0, (eventAudioTime - nowAudioTime) * 1000);
+            const midiTimestamp = performance.now() + deltaMs;
+            midiManager.sendPitchBend(pbEv.channel, pbEv.value, midiTimestamp);
           }
         }
       }
@@ -662,6 +805,10 @@ export class StyPlaybackEngine {
     }
     if (this.outputMode === 'midi') {
       midiManager.panicAllChannels();
+      for (let ch = 8; ch <= 15; ch++) {
+        midiManager.sendControlChange(ch, 11, 127);
+        midiManager.sendPitchBend(ch, 8192);
+      }
     }
   }
 
